@@ -1,0 +1,162 @@
+// Package whatsapp is the Meta WhatsApp Cloud API client.
+//
+// Dry-run mode: with no token configured, outbound messages are
+// appended to data/outbox.jsonl and logged, so the whole flow runs
+// locally with no credentials. The simulator reads the outbox to show
+// the conversation.
+package whatsapp
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/valormarc/hackathon-agent/internal/datadir"
+)
+
+const graphVersion = "v21.0"
+
+// Result reports how a send went: DryRun when the message was logged
+// to the outbox instead of sent, otherwise the Graph API status.
+type Result struct {
+	DryRun bool
+	Status int
+}
+
+type outboxRecord struct {
+	At     string `json:"at"`
+	To     string `json:"to"`
+	Body   string `json:"body"`
+	DryRun bool   `json:"dryRun,omitempty"`
+	// Kind is "image" for an image send (empty means a plain text
+	// message, as before). MediaRef is the media reference the
+	// image carries; Body holds its caption.
+	Kind     string `json:"kind,omitempty"`
+	MediaRef string `json:"mediaRef,omitempty"`
+}
+
+type sendPayload struct {
+	MessagingProduct string `json:"messaging_product"`
+	To               string `json:"to"`
+	Type             string `json:"type"`
+	Text             struct {
+		Body string `json:"body"`
+	} `json:"text"`
+}
+
+type imageSendPayload struct {
+	MessagingProduct string `json:"messaging_product"`
+	To               string `json:"to"`
+	Type             string `json:"type"`
+	Image            struct {
+		ID      string `json:"id"`
+		Caption string `json:"caption,omitempty"`
+	} `json:"image"`
+}
+
+func nowISO() string {
+	return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
+}
+
+func appendOutbox(rec outboxRecord) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(rec)
+	f, err := os.OpenFile(datadir.Path("outbox.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.Write(buf.Bytes())
+}
+
+// post delivers one prepared payload to the Graph API and writes
+// the outbox record either way, mirroring SendText's discipline:
+// the outbox is the record of what the agent tried to say.
+func post(record outboxRecord, payload any) Result {
+	token := os.Getenv("WHATSAPP_TOKEN")
+	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")
+	data, _ := json.Marshal(payload)
+	url := fmt.Sprintf("https://graph.facebook.com/%s/%s/messages", graphVersion, phoneID)
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(string(data)))
+	if err != nil {
+		appendOutbox(record)
+		return Result{}
+	}
+	req.Header.Set("authorization", "Bearer "+token)
+	req.Header.Set("content-type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		appendOutbox(record)
+		return Result{}
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		text, _ := io.ReadAll(res.Body)
+		fmt.Fprintf(os.Stderr, "WhatsApp send failed: %d %s\n", res.StatusCode, string(text))
+	}
+	appendOutbox(record)
+	return Result{Status: res.StatusCode}
+}
+
+// SendText sends one text message, or logs it to the outbox in
+// dry-run mode when no token or phone number id is configured.
+func SendText(to, body string) Result {
+	token := os.Getenv("WHATSAPP_TOKEN")
+	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")
+	_ = os.MkdirAll(datadir.Dir(), 0o755)
+	record := outboxRecord{At: nowISO(), To: to, Body: body}
+
+	if token == "" || phoneID == "" {
+		dry := record
+		dry.DryRun = true
+		appendOutbox(dry)
+		fmt.Printf("[dry-run -> %s] %s\n", to, body)
+		return Result{DryRun: true}
+	}
+
+	payload := sendPayload{MessagingProduct: "whatsapp", To: to, Type: "text"}
+	payload.Text.Body = body
+	return post(record, payload)
+}
+
+// SendImage sends one image message carrying a media reference,
+// with the caption as its text, or logs it to the outbox in dry-run
+// mode (an entry of kind "image" with the reference and caption,
+// which is what tests assert against).
+//
+// Live-mode limitation, stated plainly: the reference this is used
+// with is the media id from the buyer's own inbound message, and
+// WhatsApp does not promise that an id received on one message can
+// be re-sent as-is by this number. A fully robust live flow would
+// download the buyer's media and re-upload it under our own number
+// first, then send the fresh id. That download and re-upload step
+// is not built here; in live mode the send is attempted with the
+// received reference and recorded in the outbox either way, so the
+// merchant always has the claim text even if the picture itself
+// needs the follow-up work.
+func SendImage(to, mediaRef, caption string) Result {
+	token := os.Getenv("WHATSAPP_TOKEN")
+	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")
+	_ = os.MkdirAll(datadir.Dir(), 0o755)
+	record := outboxRecord{At: nowISO(), To: to, Body: caption, Kind: "image", MediaRef: mediaRef}
+
+	if token == "" || phoneID == "" {
+		dry := record
+		dry.DryRun = true
+		appendOutbox(dry)
+		fmt.Printf("[dry-run image -> %s] %s (media %s)\n", to, caption, mediaRef)
+		return Result{DryRun: true}
+	}
+
+	payload := imageSendPayload{MessagingProduct: "whatsapp", To: to, Type: "image"}
+	payload.Image.ID = mediaRef
+	payload.Image.Caption = caption
+	return post(record, payload)
+}
