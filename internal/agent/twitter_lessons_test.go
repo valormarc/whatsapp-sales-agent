@@ -568,3 +568,99 @@ func TestSellerVoiceInPromptAndRotatingReplies(t *testing.T) {
 		t.Fatalf("rotated holding replies moved the price: %q then %q", first, second)
 	}
 }
+
+func TestRestatedPriceConfirmsThePendingClose(t *testing.T) {
+	// The confirmation question is open and the buyer answers
+	// in her own words, by naming the figure. A first answer
+	// naming the delivery fee is not the price and only earns
+	// the plain re-ask; the restated price after it confirms,
+	// it does not get the sale let go.
+	dir, c := setupTwitterShops(t)
+	buyer := "233550006021"
+
+	c.say(t, buyer, "SHOP-AMA")
+	c.replies(t, buyer)
+	c.say(t, buyer, "Tilapia smoked")
+	c.last(t, buyer)
+	c.say(t, buyer, "I'll take it")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "GH₵180") || !strings.Contains(got, "Shall I send the payment link?") {
+		t.Fatalf("confirmation quote = %q, want the price and the question", got)
+	}
+	c.say(t, buyer, "I will pay 15")
+	got = strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "Say yes or no") || strings.Contains(got, "yours for") {
+		t.Fatalf("fee figure at the confirmation = %q, want the plain re-ask and no deal", got)
+	}
+	c.say(t, buyer, "I will pay 180")
+	got = strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "yours for GH₵180") || !strings.Contains(got, "How do you want to get it?") {
+		t.Fatalf("restated price at the confirmation = %q, want the deal and the fulfilment question", got)
+	}
+	if ordersCount(t, dir) != 0 {
+		t.Fatal("the restated price recorded an order before fulfilment was settled")
+	}
+	c.say(t, buyer, "I will come and pick it up myself")
+	got = strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "Pay here") || !strings.Contains(got, "GH₵180") {
+		t.Fatalf("close after the restated price = %q, want the link at 180", got)
+	}
+	orders := ordersOnDisk(t, dir)
+	if len(orders) != 1 || orders[0]["price"] != 180.0 || orders[0]["total"] != 180.0 {
+		t.Fatalf("orders = %v, want one order at 180", orders)
+	}
+}
+
+func TestRestatedTotalConfirmsWhenMerchantTakesDeliveryMoney(t *testing.T) {
+	// Where the merchant takes the delivery money, the quote
+	// names the price and the fee side by side, and a buyer
+	// who answers with the two added together has confirmed:
+	// the fulfilment step then settles how the goods reach
+	// her, at the quoted price.
+	_, c := setupTwitterShops(t)
+	buyer := "233550006022"
+
+	c.say(t, buyer, "SHOP-EFUA")
+	c.replies(t, buyer)
+	c.say(t, buyer, "Handmade Beaded Bag")
+	c.last(t, buyer)
+	c.say(t, buyer, "I'll buy it")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "GH₵850") || !strings.Contains(got, "Shall I send the payment link?") {
+		t.Fatalf("confirmation quote = %q, want the price and the question", got)
+	}
+	c.say(t, buyer, "I will pay 875")
+	got = strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "yours for GH₵850") || !strings.Contains(got, "How do you want to get it?") {
+		t.Fatalf("restated total at the confirmation = %q, want the deal at the quoted price and the fulfilment question", got)
+	}
+}
+
+func TestDifferentFigureIsNotAConfirmation(t *testing.T) {
+	// Only the quoted figure confirms. A different figure is
+	// an unclear answer like any other: the question is
+	// re-asked once, plainly, and a no after it still leaves
+	// the item on the shelf with nothing recorded.
+	dir, c := setupTwitterShops(t)
+	buyer := "233550006023"
+
+	c.say(t, buyer, "SHOP-AMA")
+	c.replies(t, buyer)
+	c.say(t, buyer, "Tilapia smoked")
+	c.last(t, buyer)
+	c.say(t, buyer, "I'll take it")
+	c.replies(t, buyer)
+	c.say(t, buyer, "I will pay 150")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "Say yes or no") || strings.Contains(got, "yours for") {
+		t.Fatalf("different figure at the confirmation = %q, want the plain re-ask and no deal", got)
+	}
+	c.say(t, buyer, "no")
+	got = strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "here whenever you are ready") {
+		t.Fatalf("no after the re-ask = %q, want the item left on the shelf", got)
+	}
+	if ordersCount(t, dir) != 0 {
+		t.Fatal("an unconfirmed close recorded an order")
+	}
+}

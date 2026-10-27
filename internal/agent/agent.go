@@ -1371,7 +1371,10 @@ func HandleInbound(in Inbound) {
 	// else is re-asked once, plainly, and then left open rather
 	// than chased. A bare "ok" at THIS step is the clear yes,
 	// because the question was explicit; everywhere else it is
-	// only ever an acknowledgement.
+	// only ever an acknowledgement. A restated figure is a yes
+	// too: a buyer who answers by naming the quoted price ("I
+	// will pay 165") has confirmed in her own words, and she is
+	// not made to translate herself into a bare yes.
 	if s.PendingClose {
 		name := ""
 		if s.Product != nil {
@@ -1379,6 +1382,10 @@ func HandleInbound(in Inbound) {
 		}
 		switch {
 		case isClearYes(lower):
+			price := s.ClosePrice
+			s.PendingClose = false
+			beginFulfilment(from, s, price)
+		case restatesQuotedPrice(msg, s, merchant):
 			price := s.ClosePrice
 			s.PendingClose = false
 			beginFulfilment(from, s, price)
@@ -1739,6 +1746,28 @@ func recommendForNeed(shopID, lower string) *catalogue.Product {
 		}
 	}
 	return best
+}
+
+// restatesQuotedPrice reports whether the buyer's words name the
+// very figure she was quoted at the confirmation step: the close
+// price itself, or, where the merchant takes the delivery money,
+// the close price plus the delivery fee that was quoted beside
+// it. Any other figure is not a confirmation: it is re-asked
+// about, the way any other unclear answer is.
+func restatesQuotedPrice(msg string, s *Session, merchant *catalogue.Merchant) bool {
+	offer := parseOffer(msg)
+	if offer == nil {
+		return false
+	}
+	if *offer == s.ClosePrice {
+		return true
+	}
+	if deliveryPaidToOf(merchant) == "merchant" {
+		if fee := deliveryFeeOf(merchant); fee > 0 && *offer == s.ClosePrice+fee {
+			return true
+		}
+	}
+	return false
 }
 
 // clearPendingClose ends an open confirmation question without a
