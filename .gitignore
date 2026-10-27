@@ -34,3 +34,11 @@ go.work.sum
 .env
 .env.*
 *.log
+
+# The built agent binary and its runtime books
+/agent
+data/outbox.jsonl
+data/sessions.json
+data/daybook.json
+data/orders.json
+data/wants.json
