@@ -44,6 +44,11 @@ type OnboardingFlow struct {
 	// photo.go). A guided flow leaves both unset.
 	Photo    bool
 	PhotoRef string
+	// SizeNote is a size lifted out of the seller's typed name
+	// line ("BLACK NYLON SHIRT @250GHS SIZE XXL"). It is not part
+	// of the name; it rides into the description when she answers
+	// that step, and it is never asked about on its own.
+	SizeNote string
 }
 
 var (
@@ -217,7 +222,13 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 
 	switch flow.Step {
 	case "name":
-		name := strings.TrimSpace(text)
+		// Her line is read the way a person reads it: a price
+		// riding in it (@250GHS, 250 cedis) is her list price and
+		// is never asked for again, and a size riding in it is
+		// lifted out of the name to ride with the description.
+		// What was read is told back to her in one short message,
+		// so nothing is ever taken from her words in silence.
+		name, price, sizeNote := parseTypedNameLine(text)
 		if name == "" {
 			whatsapp.SendText(from, "What is the product called?")
 			return
@@ -227,6 +238,20 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			return
 		}
 		flow.Name = name
+		flow.SizeNote = sizeNote
+		if price > 0 {
+			flow.ListPrice = price
+		}
+		var read []string
+		if price > 0 {
+			read = append(read, "I took the price from your line: "+money.GHS(price)+".")
+		}
+		if sizeNote != "" {
+			read = append(read, "I have noted the size, "+strings.TrimPrefix(sizeNote, "Size ")+", with the description.")
+		}
+		if len(read) > 0 {
+			whatsapp.SendText(from, strings.Join(read, " "))
+		}
 		gotoNextOnboardingStep(from, flow)
 
 	case "description":
@@ -236,6 +261,12 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			return
 		}
 		flow.Description = description
+		if flow.SizeNote != "" {
+			if !strings.Contains(strings.ToLower(description), "size") {
+				flow.Description = strings.TrimSuffix(description, ".") + ". " + flow.SizeNote + "."
+			}
+			flow.SizeNote = ""
+		}
 		gotoNextOnboardingStep(from, flow)
 
 	case "list":
