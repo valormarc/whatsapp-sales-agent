@@ -117,6 +117,15 @@ type Session struct {
 	Shelves int
 	Acks    int
 
+	// Lane state: how many clear off-topic turns in a row this
+	// buyer has spent outside the shop (general knowledge, sums,
+	// essays and the like), and whether the lane has closed on
+	// her. While it is closed her off-topic turns are not answered
+	// at all, so they cost the merchant nothing; any turn about
+	// the shop reopens it. See the lane block in HandleInbound.
+	OffTopic   int
+	LaneClosed bool
+
 	// Merchant-only chat state: an in-progress onboarding flow, or a
 	// removal waiting for her yes. Only ever set on the merchant's own
 	// session; customers never reach the code that reads them.
@@ -1101,7 +1110,7 @@ var (
 	greetingRe = regexp.MustCompile(`^(hi|hello|hey|good (morning|afternoon|evening))\b`)
 	// wantRe catches the bare want, the way buyers open in the real
 	// selling groups: "tv needed", "I need one", "who sells bags".
-	wantRe = regexp.MustCompile(`(needed|need|want|looking for|searching for|who sells|who has)`)
+	wantRe = regexp.MustCompile(`(needed|need|want|looking for|searching for|who sells|who has|any plug|a plug|plug for)`)
 	// picRe catches the buyer's other first move: "send pic".
 	picRe = regexp.MustCompile(`(\bpic\b|pics|photo|picture|image)`)
 	// buyIntentRe catches commitment words with no price in them:
@@ -1128,7 +1137,50 @@ var (
 	haveYouGotRe  = regexp.MustCompile(`^have you got (.+)$`)
 	doYouSellRe   = regexp.MustCompile(`^(?:do you sell|are you selling) (.+)$`)
 	isAvailableRe = regexp.MustCompile(`^is (.+?) available$`)
+	// The lane patterns: clear off-topic asks, the ones people put
+	// to any AI they can reach — meanings, sums, public figures,
+	// capitals, homework, jokes, the weather. Narrow on purpose,
+	// and the lane block only ever tries them on a message with no
+	// shop signal in it at all, so nothing the shop can answer is
+	// ever steered away from the shop.
+	arithmeticRe = regexp.MustCompile(`\d+\s*[-+*/x]\s*\d+`)
+	offTopicRe   = regexp.MustCompile(`(who is|who was|who won|what is the meaning|what does .+ mean|meaning of|capital of|president of|prime minister of|how old is|tell me a joke|write (me )?(an? )?(essay|poem|story|letter|cv|code|program)|translate .+ (to|into)|what is the weather|weather (today|now)|news today)`)
 )
+
+// availabilityFramed reports whether the buyer asked in the
+// availability frame ("is X available", "do you have X"): in the
+// real groups a seller answers that question with the plain words
+// "Still available", and the agent leads with them too.
+func availabilityFramed(lower string) bool {
+	text := strings.TrimRight(strings.TrimSpace(lower), ".?!")
+	return isAvailableRe.MatchString(text) || doYouHaveRe.MatchString(text) ||
+		haveYouGotRe.MatchString(text) || doYouSellRe.MatchString(text)
+}
+
+// laneStrike answers one clear off-topic turn, in the shape the
+// merchant's money deserves: the first turn earns one short steer
+// naming the agent's work, with the shelf offered; the second a
+// briefer repeat; the third closes the lane politely. After that
+// the buyer's off-topic turns are met with silence (see the lane
+// block in HandleInbound) until she talks about the shop again.
+// Nothing here lectures and nothing answers the question itself:
+// answering even the easy ones teaches the whole market to come
+// back with more, and every answer is bought with the merchant's
+// money and spoken in her name.
+func laneStrike(from string, s *Session, merchant *catalogue.Merchant) {
+	s.OffTopic++
+	switch {
+	case s.OffTopic == 1:
+		sendPieces(from,
+			"That one is outside my work here. I sell for "+merchant.Name+": the goods, their prices and delivery.",
+			"Tell me what you are after and I will sort you out.\n"+productListText(merchant.ID))
+	case s.OffTopic == 2:
+		whatsapp.SendText(from, "I only handle the shop here: what we sell, prices and delivery. Name an item and I will price it for you.")
+	default:
+		s.LaneClosed = true
+		whatsapp.SendText(from, "I will be here when you need something from the shop.")
+	}
+}
 
 // Inbound is one inbound WhatsApp message.
 type Inbound struct {
@@ -1546,6 +1598,44 @@ func HandleInbound(in Inbound) {
 		}
 	}
 
+	// The lane. People put general questions to any AI they can
+	// reach: what a word means, a sum, who the president is. This
+	// agent works for the merchant and answers only about her
+	// shop, so a clear off-topic turn is steered back (laneStrike)
+	// and never answered itself. The check runs only when the
+	// message carries no shop signal at all: anything naming a
+	// product, a price, a want, a delivery or an availability ask
+	// is the shop's business and is handled by the branches below,
+	// never steered. A bare figure is not a shop signal here on
+	// purpose: "what is 5 + 5" carries figures, but it is a sum,
+	// not an offer, and the arithmetic pattern settles it.
+	{
+		_, namedAsk := unstockedAsk(lower)
+		shopish := catalogue.FindProduct(shopID, lower) != nil ||
+			intentRe.MatchString(lower) || howMuchRe.MatchString(lower) ||
+			wantRe.MatchString(lower) || needRe.MatchString(lower) ||
+			greetingRe.MatchString(lower) || buyIntentRe.MatchString(lower) ||
+			picRe.MatchString(lower) || deliveryRe.MatchString(lower) ||
+			totalRe.MatchString(lower) || namedAsk
+		switch {
+		case s.LaneClosed && !shopish && (parseOffer(lower) == nil || arithmeticRe.MatchString(lower) || offTopicRe.MatchString(lower)):
+			// The lane is closed on this buyer: her off-topic
+			// turns cost the merchant nothing, not even a reply.
+			// A plain figure still falls through below: a number
+			// after all that silence is a buyer trying to buy.
+			return
+		case !shopish && (arithmeticRe.MatchString(lower) || offTopicRe.MatchString(lower)):
+			laneStrike(from, s, merchant)
+			return
+		case shopish || parseOffer(lower) != nil:
+			// Talk about the shop reopens the lane and clears
+			// the strikes, the way a returning customer is just
+			// a customer again.
+			s.OffTopic = 0
+			s.LaneClosed = false
+		}
+	}
+
 	// A buyer who jumps straight to an offer, the way people actually
 	// talk: a price named in the same breath as an item, or a price
 	// right after looking at one item, is an offer for that item. She
@@ -1628,7 +1718,15 @@ func HandleInbound(in Inbound) {
 			s.Qty, s.Unit = 0, ""
 		}
 		s.LastViewed = product
-		whatsapp.SendText(from, product.Name+": "+product.Description+" It goes for "+money.GHS(product.ListPrice)+". Want to make an offer?")
+		view := product.Name + ": " + product.Description + " It goes for " + money.GHS(product.ListPrice) + ". Want to make an offer?"
+		if availabilityFramed(lower) {
+			// She asked in the availability frame, so the
+			// answer leads with the market's own plain words
+			// for it, then the goods.
+			sendPieces(from, "Still available.", view)
+		} else {
+			whatsapp.SendText(from, view)
+		}
 		return
 	}
 
@@ -1681,7 +1779,7 @@ func HandleInbound(in Inbound) {
 			// beaded bag): answer the item itself, and never
 			// write a want for goods already in the shop.
 			s.LastViewed = p
-			whatsapp.SendText(from, p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+". Want to make an offer?")
+			sendPieces(from, "Still available.", p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+". Want to make an offer?")
 			return
 		}
 		recordWantAndOfferShelf(from, s, msg)
@@ -2018,7 +2116,7 @@ func alertWaitingBuyers(merchantID string, product catalogue.Product) {
 			continue
 		}
 		told[w.Buyer] = true
-		whatsapp.SendText(w.Buyer, "Good news, "+product.Name+" is now at "+shop.Name+", "+money.GHS(product.ListPrice)+". Reply to buy.")
+		whatsapp.SendText(w.Buyer, product.Name+" is back in stock at "+shop.Name+", "+money.GHS(product.ListPrice)+". Reply to buy.")
 	}
 }
 

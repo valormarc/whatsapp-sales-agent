@@ -410,7 +410,7 @@ func TestAddingTheWantedProductAlertsTheWaitingBuyerOnce(t *testing.T) {
 	// buyer hears, in that moment.
 	onboardForTest(t, c, ownerAma, "TV", "32 inch digital television.", "1050", "900")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if strings.Count(got, "Good news") != 1 || !strings.Contains(got, "TV is now at Ama's Stall, GH₵1050. Reply to buy.") {
+	if strings.Count(got, "back in stock") != 1 || !strings.Contains(got, "TV is back in stock at Ama's Stall, GH₵1050. Reply to buy.") {
 		t.Fatalf("want alert = %q, want exactly one alert with the product, shop and price", got)
 	}
 

@@ -46,7 +46,7 @@ func TestDoYouHaveAnUnstockedItemRecordsTheWant(t *testing.T) {
 	// sourcing buyer in my chats never got.
 	onboardForTest(t, c, ownerAma, "Rice Cooker", "Electric rice cooker, 2 litres.", "300", "250")
 	got = strings.Join(c.replies(t, buyer), "\n")
-	if strings.Count(got, "Good news") != 1 || !strings.Contains(got, "Rice Cooker is now at Ama's Stall, GH₵300. Reply to buy.") {
+	if strings.Count(got, "back in stock") != 1 || !strings.Contains(got, "Rice Cooker is back in stock at Ama's Stall, GH₵300. Reply to buy.") {
 		t.Fatalf("want alert = %q, want exactly one alert naming the product, shop and price", got)
 	}
 }

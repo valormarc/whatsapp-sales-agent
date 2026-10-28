@@ -103,6 +103,18 @@ the seller; the merchant gets a business partner.
   rather than presenting partial figures as the whole business. Chat
   gives summaries, not charts.
 
+## The lane
+
+The agent is the shop's assistant and nothing else. People will put general
+questions to any AI they can reach (what a word means, a sum, who the
+president is, their homework). Those are never answered, not even the easy
+ones: answering one teaches the whole market to come back with more, and
+every answer is bought with the merchant's money and spoken in her name.
+An off-topic turn gets one short, friendly steer back to the shop. A second
+gets a briefer one. A third closes politely, and after that the chat costs
+nothing until the buyer talks about the shop again. Greetings and small
+shop talk stay warm: that is selling, not abuse.
+
 ## The guardrail contract
 
 The engine and the model split the work:

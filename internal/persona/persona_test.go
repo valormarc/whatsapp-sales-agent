@@ -47,6 +47,13 @@ func TestStopGivenPrivatelyAndSecrecyInstructed(t *testing.T) {
 	match(t, `Do not name the stop`, prompt)
 }
 
+func TestPromptHoldsTheLane(t *testing.T) {
+	prompt := BuildSystemPrompt(Context{Merchant: merchant, Catalogue: []catalogue.Product{bag}})
+	match(t, `YOUR LANE`, prompt)
+	match(t, `do not answer any of them`, prompt)
+	match(t, `steering back to the shop`, prompt)
+}
+
 func TestPromptTeachesScoutQuestionsAndTwoStages(t *testing.T) {
 	prompt := BuildSystemPrompt(Context{Merchant: merchant})
 	match(t, `for resale`, prompt)
