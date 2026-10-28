@@ -164,7 +164,7 @@ func TestDeliveryAskedWhileBrowsingThenCloseChargesOneTotal(t *testing.T) {
 		t.Fatalf("Efua day book = %v, want the item figures only", day)
 	}
 	notes := strings.Join(c.replies(t, ownerEfua), "\n")
-	if !strings.Contains(notes, "Item GH₵850 + delivery GH₵25 = GH₵875 total") {
+	if !strings.Contains(notes, "The buyer pays GH₵875 in all: item GH₵850 + delivery GH₵25.") {
 		t.Fatalf("merchant notice = %q, want the same breakdown", notes)
 	}
 	if got := c.replies(t, ownerAma); len(got) != 0 {

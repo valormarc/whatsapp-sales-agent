@@ -211,21 +211,37 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	}
 	sendPieces(from, pieces...)
 	if merchantPhone != "" {
-		// A measured sale is named by its amount, so the merchant
-		// knows what to cut: "Sold: 3 yards of Ankara Fabric
-		// (6 yards) at GH₵210." The figures behind it are the
-		// scaled ones the haggle ran on, list included.
-		what := p.Name + " sold for " + money.GHS(price)
+		// The notice is the seller's receipt for the sale, and it
+		// is laid out the way she reads on her phone: the goods
+		// and the money first, then the order's own details with
+		// labels, then the day so far. One message, short lines,
+		// nothing buried inside a paragraph. A measured sale is
+		// named by its amount, so the merchant knows what to cut
+		// ("3 yards of Ankara Fabric (6 yards)"), and the figures
+		// behind it are the scaled ones the haggle ran on, list
+		// included.
+		var lines []string
+		lines = append(lines, "New order", "")
 		if s.Qty > 0 {
-			what = "Sold: " + qtyLabel(p, s.Qty) + " at " + money.GHS(price)
+			lines = append(lines, "*"+qtyLabel(p, s.Qty)+"*")
+		} else {
+			lines = append(lines, "*"+p.Name+"*")
 		}
-		notice := "New order: " + what + " (list " + money.GHS(p.ListPrice) + ", margin given away " + money.GHS(haggle.MarginGivenAway(p.ListPrice, price)) + ")."
+		margin := haggle.MarginGivenAway(p.ListPrice, price)
+		sold := "Sold for " + money.GHS(price) + " (list " + money.GHS(p.ListPrice) + ", "
+		if margin > 0 {
+			sold += money.GHS(margin) + " given away)"
+		} else {
+			sold += "nothing given away)"
+		}
+		lines = append(lines, sold)
 		if chargedFee > 0 {
-			notice += " Item " + money.GHS(price) + " + delivery " + money.GHS(deliveryFee) + " = " + money.GHS(total) + " total, which is what the buyer pays."
+			lines = append(lines, "The buyer pays "+money.GHS(total)+" in all: item "+money.GHS(price)+" + delivery "+money.GHS(deliveryFee)+".")
 		}
+		lines = append(lines, "", "Ref: "+reference, "Buyer: "+from)
 		switch f.Mode {
 		case "delivery":
-			line := " Delivery: "
+			line := "Delivery: "
 			note := ""
 			rawNote := ""
 			if merchant != nil {
@@ -248,33 +264,36 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 				// buyer's to hand to the carrier on arrival,
 				// and the notice says so in as many words, so
 				// she never counts it as hers.
-				line += ". The " + money.GHS(deliveryFee) + " delivery is hers to pay " + carrierTarget(rawNote) + " on arrival; your money is the " + money.GHS(price)
+				line += ". The " + money.GHS(deliveryFee) + " delivery is hers to pay " + carrierTarget(rawNote) + " on arrival; your money is the " + money.GHS(price) + "."
 			case chargedFee > 0:
-				line += ", fee " + money.GHS(deliveryFee) + " included in the total"
+				line += ", fee " + money.GHS(deliveryFee) + " included in the total."
+			default:
+				line += "."
 			}
-			notice += line + "."
+			lines = append(lines, line)
 		case "pickup":
 			if f.Collector != "" {
-				notice += " A collector is coming for it: " + f.Collector + "."
+				lines = append(lines, "Pickup: a collector is coming for it: "+f.Collector+".")
 			} else {
-				notice += " The buyer will come and pick it up herself."
+				lines = append(lines, "Pickup: the buyer will come and pick it up herself.")
 			}
 		case "meet":
-			notice += " The buyer wants to meet at " + f.Location + " to collect it."
+			lines = append(lines, "Meet up: the buyer wants to meet at "+f.Location+" to collect it.")
 		case "arranged":
 			if f.Location != "" {
-				notice += " Delivery to be arranged with the buyer (she is in " + f.Location + ")."
+				lines = append(lines, "Delivery: to be arranged with the buyer. She is in "+f.Location+".")
 			} else {
-				notice += " Delivery to be arranged with the buyer; no location given."
+				lines = append(lines, "Delivery: to be arranged with the buyer. No location given.")
 			}
 		}
 		if f.PackageName != "" {
-			notice += " Package name: " + f.PackageName + "."
+			lines = append(lines, "Package name: "+f.PackageName+".")
 		}
 		if f.Note != "" {
-			notice += " Buyer's message: " + f.Note + "."
+			lines = append(lines, "Buyer's message: "+f.Note+".")
 		}
-		notice += " Buyer: " + from + ". Ref: " + reference + ". Day book: " + insights.DayReportText(day)
-		whatsapp.SendText(merchantPhone, notice)
+		lines = append(lines, "")
+		lines = append(lines, insights.DayReportLines(day)...)
+		whatsapp.SendText(merchantPhone, strings.Join(lines, "\n"))
 	}
 }

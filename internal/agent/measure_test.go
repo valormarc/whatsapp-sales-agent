@@ -158,7 +158,7 @@ func TestOfferWithQuantityHagglesOnScaledFigures(t *testing.T) {
 			t.Fatalf("opening %q: day book = %+v, want 1 sale, GH₵200 in, GH₵25 given away off the scaled list 225", opening, day)
 		}
 		notes := strings.Join(c.replies(t, merchant), "\n")
-		if !strings.Contains(notes, "Sold: 3 yards of Ankara Fabric (6 yards) at GH₵200") {
+		if !strings.Contains(notes, "*3 yards of Ankara Fabric (6 yards)*\nSold for GH₵200") {
 			t.Fatalf("opening %q: merchant notice should name the cut, got %q", opening, notes)
 		}
 		_ = dir

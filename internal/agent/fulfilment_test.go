@@ -153,7 +153,7 @@ func TestFulfilmentPickupPaysNoFee(t *testing.T) {
 		t.Fatalf("a pickup recorded a delivery fee: %v", orders[0])
 	}
 	notes := strings.Join(c.replies(t, ownerEfua), "\n")
-	if !strings.Contains(notes, "The buyer will come and pick it up herself.") {
+	if !strings.Contains(notes, "Pickup: the buyer will come and pick it up herself.") {
 		t.Fatalf("merchant notice = %q, want the pickup line", notes)
 	}
 }
@@ -184,7 +184,7 @@ func TestFulfilmentMeetUpWithPlaceInTheMessage(t *testing.T) {
 		t.Fatalf("a meet-up recorded a delivery fee: %v", orders[0])
 	}
 	notes := strings.Join(c.replies(t, ownerAma), "\n")
-	if !strings.Contains(notes, "The buyer wants to meet at Circle to collect it.") {
+	if !strings.Contains(notes, "Meet up: the buyer wants to meet at Circle to collect it.") {
 		t.Fatalf("merchant notice = %q, want the meet-up line for the seller to judge", notes)
 	}
 }
@@ -241,7 +241,7 @@ func TestFulfilmentCollectorNamedInTheMessage(t *testing.T) {
 	// The seller needs to know who to hand the goods to: the
 	// notice carries the collector, by name.
 	notes := strings.Join(c.replies(t, ownerEfua), "\n")
-	if !strings.Contains(notes, "A collector is coming for it: my brother Kwame.") {
+	if !strings.Contains(notes, "Pickup: a collector is coming for it: my brother Kwame.") {
 		t.Fatalf("merchant notice = %q, want the collector named", notes)
 	}
 }
@@ -274,7 +274,7 @@ func TestFulfilmentCollectorUnnamedThenNamed(t *testing.T) {
 		t.Fatalf("orders = %v, want the rider recorded as collector", orders)
 	}
 	notes := strings.Join(c.replies(t, ownerEfua), "\n")
-	if !strings.Contains(notes, "A collector is coming for it: My rider.") {
+	if !strings.Contains(notes, "Pickup: a collector is coming for it: My rider.") {
 		t.Fatalf("merchant notice = %q, want the collector carried to the seller", notes)
 	}
 }
@@ -407,7 +407,7 @@ func TestFulfilmentNoTermsDeclinedLocationStillCompletes(t *testing.T) {
 		t.Fatalf("a location was invented for a buyer who declined: %v", orders[0])
 	}
 	notes := strings.Join(c.replies(t, ownerAma), "\n")
-	if !strings.Contains(notes, "Delivery to be arranged with the buyer; no location given.") {
+	if !strings.Contains(notes, "Delivery: to be arranged with the buyer. No location given.") {
 		t.Fatalf("merchant notice = %q, want the no-location line", notes)
 	}
 }
