@@ -34,6 +34,7 @@ func setupChat(t *testing.T, merchantNumber, catalogueJSON string) string {
 	sessionsMu.Lock()
 	sessions = map[string]*Session{}
 	bindings = map[string]string{}
+	doorShown = map[string]bool{}
 	sessionsMu.Unlock()
 	dir := t.TempDir()
 	t.Chdir(dir)

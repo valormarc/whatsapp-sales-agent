@@ -66,6 +66,13 @@ type webhookPayload struct {
 						ID      string `json:"id"`
 						Caption string `json:"caption"`
 					} `json:"image"`
+					Interactive *struct {
+						Type        string `json:"type"`
+						ButtonReply *struct {
+							ID    string `json:"id"`
+							Title string `json:"title"`
+						} `json:"button_reply"`
+					} `json:"interactive"`
 				} `json:"messages"`
 			} `json:"value"`
 		} `json:"changes"`
@@ -144,6 +151,18 @@ func Handler() http.Handler {
 								caption = msg.Image.Caption
 							}
 							agent.HandleInbound(agent.Inbound{From: msg.From, ImageID: imageID, Caption: caption, MessageID: msg.ID})
+						case "interactive":
+							// A tap on a reply button the agent sent.
+							// Only the button's id travels inward; the
+							// agent decides what a tap means, and a tap
+							// on anything it does not know is ignored.
+							buttonID := ""
+							if msg.Interactive != nil && msg.Interactive.ButtonReply != nil {
+								buttonID = msg.Interactive.ButtonReply.ID
+							}
+							if buttonID != "" {
+								agent.HandleInbound(agent.Inbound{From: msg.From, ButtonID: buttonID, MessageID: msg.ID})
+							}
 						}
 					}()
 				}

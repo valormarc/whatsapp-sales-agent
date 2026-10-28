@@ -148,6 +148,10 @@ var (
 	// her later messages, which carry no shop code, stay in the shop
 	// her link brought her to until she enters another shop's code.
 	bindings = map[string]string{} // buyer phone -> shopID
+	// doorShown records which unknown numbers have already been
+	// offered the front door buttons, so the buttons greet a
+	// stranger once, on her first hello, and never nag her again.
+	doorShown = map[string]bool{}
 )
 
 func sessionKey(shopID, from string) string {
@@ -1189,6 +1193,10 @@ type Inbound struct {
 	ImageID   string
 	Caption   string
 	MessageID string
+	// ButtonID is set when the message is a tap on a reply button
+	// the agent sent (an interactive button_reply webhook), and
+	// empty for every typed message.
+	ButtonID string
 }
 
 func lastN(msgs []model.Message, n int) []model.Message {
@@ -1221,6 +1229,21 @@ var (
 // sold, no catalogue is shown and no product is named, so the agent
 // can never sell her one shop's goods under another shop's name.
 const askShopText = "Hello, and welcome. I sell for many shops on this one number, so I need to know whose shop you have come for. Send me the shop code the seller shared with you, for example SHOP-EFUA, or tell me the shop name."
+
+// doorText is the front door a stranger meets on a bare greeting:
+// one short message carrying two reply buttons, Buy and Sell, so
+// her first step is a tap instead of homework. It lives only here,
+// at the cold door: a merchant is known by her number and a buyer
+// by her shop link, and neither of them is ever shown it. Typing
+// still works exactly as it always did; the buttons are a
+// shortcut, never a gate.
+const doorText = "Hello, and welcome. I sell for many shops on this one number. If you came to buy, tap Buy and send me the shop code the seller shared with you. If you want to sell, tap Sell and we will open your shop."
+
+// bareGreetingRe matches a message that is only a greeting, the
+// knock the door answers: hi, hello, good morning and their kin,
+// with nothing else in it. (greetingRe above is the looser
+// starts-with-a-greeting matcher used inside a shop.)
+var bareGreetingRe = regexp.MustCompile(`^(hi+|hello|hey+|good (morning|afternoon|evening)|akwaaba)[\s!.]*$`)
 
 // parseShopEntry finds the shop a buyer's message enters, and what
 // of the message is left once the entry marker is taken out. The
@@ -1323,6 +1346,26 @@ func HandleInbound(in Inbound) {
 		return
 	}
 
+	// A tap on the front door buttons. The buttons are only ever
+	// shown to a number the agent does not know, with no shop
+	// resolved; a merchant never sees them (her number is her key,
+	// handled above) and a buyer who arrived by a shop's link never
+	// sees them either (her shop resolves below before any door is
+	// offered). A tap while her own signup is under way changes
+	// nothing: the signup owns her attention until it ends.
+	if in.ButtonID != "" {
+		if pre, ok := sessions[sessionKey("", from)]; ok && pre.Signup != nil {
+			return
+		}
+		switch in.ButtonID {
+		case "door_sell":
+			startSignup(from)
+		case "door_buy":
+			whatsapp.SendText(from, askShopText)
+		}
+		return
+	}
+
 	msg := strings.TrimSpace(in.Text)
 	lower := strings.ToLower(msg)
 
@@ -1365,10 +1408,21 @@ func HandleInbound(in Inbound) {
 	}
 
 	// No shop resolved: the only other door is opening a shop of her
-	// own; anything else gets the ask, and nothing is sold.
+	// own; anything else gets the ask, and nothing is sold. A bare
+	// greeting from a number the agent has never greeted gets the
+	// front door once, with its Buy and Sell buttons; every other
+	// message gets the plain ask, exactly as before.
 	if boundID == "" {
 		if sellIntentRe.MatchString(lower) {
 			startSignup(from)
+			return
+		}
+		if bareGreetingRe.MatchString(lower) && !doorShown[from] {
+			doorShown[from] = true
+			whatsapp.SendButtons(from, doorText, []whatsapp.Button{
+				{ID: "door_buy", Title: "I came to buy"},
+				{ID: "door_sell", Title: "I want to sell"},
+			})
 			return
 		}
 		whatsapp.SendText(from, askShopText)

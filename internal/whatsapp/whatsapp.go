@@ -39,6 +39,9 @@ type outboxRecord struct {
 	// image carries; Body holds its caption.
 	Kind     string `json:"kind,omitempty"`
 	MediaRef string `json:"mediaRef,omitempty"`
+	// Buttons holds the reply button titles of an interactive
+	// buttons message (Kind "buttons"); Body holds its text.
+	Buttons []string `json:"buttons,omitempty"`
 }
 
 type sendPayload struct {
@@ -151,6 +154,76 @@ func DownloadMedia(mediaID string) (string, bool) {
 		mime = "image/jpeg"
 	}
 	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(bytesData), true
+}
+
+// Button is one reply button on an interactive buttons message.
+// The title is what the reader sees and taps; the id is what the
+// tap reports back in the webhook.
+type Button struct {
+	ID    string
+	Title string
+}
+
+type buttonsPayload struct {
+	MessagingProduct string `json:"messaging_product"`
+	To               string `json:"to"`
+	Type             string `json:"type"`
+	Interactive      struct {
+		Type string `json:"type"`
+		Body struct {
+			Text string `json:"text"`
+		} `json:"body"`
+		Action struct {
+			Buttons []struct {
+				Type  string `json:"type"`
+				Reply struct {
+					ID    string `json:"id"`
+					Title string `json:"title"`
+				} `json:"reply"`
+			} `json:"buttons"`
+		} `json:"action"`
+	} `json:"interactive"`
+}
+
+// SendButtons sends one interactive reply-buttons message (the
+// reader taps a button instead of typing), or logs it to the
+// outbox in dry-run mode with its button titles recorded, so tests
+// and simulators see exactly what a phone would show.
+func SendButtons(to, body string, buttons []Button) Result {
+	token := os.Getenv("WHATSAPP_TOKEN")
+	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")
+	_ = os.MkdirAll(datadir.Dir(), 0o755)
+	titles := make([]string, 0, len(buttons))
+	for _, b := range buttons {
+		titles = append(titles, b.Title)
+	}
+	record := outboxRecord{At: nowISO(), To: to, Body: body, Kind: "buttons", Buttons: titles}
+
+	if token == "" || phoneID == "" {
+		dry := record
+		dry.DryRun = true
+		appendOutbox(dry)
+		fmt.Printf("[dry-run buttons -> %s] %s (%s)\n", to, body, strings.Join(titles, " | "))
+		return Result{DryRun: true}
+	}
+
+	payload := buttonsPayload{MessagingProduct: "whatsapp", To: to, Type: "interactive"}
+	payload.Interactive.Type = "reply_button"
+	payload.Interactive.Body.Text = body
+	for _, b := range buttons {
+		var btn struct {
+			Type  string `json:"type"`
+			Reply struct {
+				ID    string `json:"id"`
+				Title string `json:"title"`
+			} `json:"reply"`
+		}
+		btn.Type = "reply"
+		btn.Reply.ID = b.ID
+		btn.Reply.Title = b.Title
+		payload.Interactive.Action.Buttons = append(payload.Interactive.Action.Buttons, btn)
+	}
+	return post(record, payload)
 }
 
 // SendText sends one text message, or logs it to the outbox in
