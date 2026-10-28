@@ -283,15 +283,27 @@ func carrierTarget(note string) string {
 func answerMerchantDayQuestion(from, text, merchantID string) {
 	merchant := catalogue.GetMerchant(merchantID)
 	day := daybook.Default.GetDayState(merchantID, daybook.Options{Allowance: merchant.DailyGiveawayAllowance})
+	answered := false
 	if model.Enabled() {
 		sys := persona.BuildMerchantPrompt(*merchant, day)
 		reply := model.Chat([]model.Message{{Role: "user", Content: text}}, model.Options{System: &sys})
 		if reply != nil {
 			whatsapp.SendText(from, *reply)
-			return
+			answered = true
 		}
 	}
-	whatsapp.SendText(from, "Here is today so far. "+insights.DayReportText(day)+" Ask me any time and I will pull the same figures for you.")
+	if !answered {
+		whatsapp.SendText(from, "Here is today so far. "+insights.DayReportText(day)+" Ask me any time and I will pull the same figures for you.")
+	}
+	// A shop that never set its daily giveaway allowance hears
+	// its own figures back as GH₵0 of GH₵0, and its agent has
+	// nothing to give away when buyers bargain. The day answer
+	// is where she meets those figures, so the prompt rides
+	// here, in plain words with the command itself spelled out,
+	// until the day she sets one.
+	if merchant.DailyGiveawayAllowance <= 0 {
+		whatsapp.SendText(from, "One thing: you have not set a daily giveaway allowance, so it stands at GH₵0 and I have nothing to give away when buyers bargain. To set it, say: set allowance 300.")
+	}
 }
 
 func productListText(merchantID string) string {

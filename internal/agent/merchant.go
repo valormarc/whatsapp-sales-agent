@@ -56,6 +56,19 @@ type OnboardingFlow struct {
 	// of the name; it rides into the description when she answers
 	// that step, and it is never asked about on its own.
 	SizeNote string
+	// PriceNeedsConfirm and PriceConfirmed are the intake gate.
+	// A price harvested from her words that the harvest itself
+	// doubts (see harvestDoubt) is read back to her as a question
+	// and must be confirmed in her own words before the walk goes
+	// on, so a misread can never ride silently to the shelf. A
+	// price she typed as a direct answer to the price question
+	// is her own statement and is never gated.
+	PriceNeedsConfirm bool
+	PriceConfirmed    bool
+	// DupName is the shop's existing product that a new listing's
+	// name has clashed with, held while she decides between
+	// replacing it and renaming hers (step "dupchoice").
+	DupName string
 }
 
 var (
@@ -201,6 +214,29 @@ var priceCorrectionRe = regexp.MustCompile(`^(?:the\s+)?(?:list\s+)?price\s+(?:i
 // price itself, it settles the last price step as fixed.
 var fixedPriceRe = regexp.MustCompile(`\b(non[-\s]?negotiable|not negotiable|no negotiation|fixed price|price is fixed|price is final|final price|no bargaining|no haggling|same price)\b|^fixed$|^same$`)
 
+var replaceRe = regexp.MustCompile(`^replace\b`)
+
+// enterDupChoice parks a flow whose name is already on the shelf
+// and puts the choice to her: this listing replaces the old one,
+// or it carries a different name. It returns true when the name
+// clashed and the flow is parked, so the caller stops there. A
+// name clash is never a dead end: a seller who pastes a corrected
+// advert over a bad listing needs a way through, not an order to
+// invent a new name for the same goods.
+func enterDupChoice(from string, s *Session, flow *OnboardingFlow) bool {
+	if flow.Name == "" {
+		return false
+	}
+	existing := catalogue.FindByName(s.MerchantID, flow.Name)
+	if existing == nil {
+		return false
+	}
+	flow.DupName = existing.Name
+	flow.Step = "dupchoice"
+	whatsapp.SendText(from, "You already sell something called "+existing.Name+". Shall this new listing replace the old one? Say replace, or give this one a different name. Say cancel to drop it.")
+	return true
+}
+
 // advanceOnboarding feeds one merchant message to the onboarding flow.
 func advanceOnboarding(from string, s *Session, text, lower string) {
 	flow := s.Onboarding
@@ -213,10 +249,14 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 
 	// A price correction owns the message wherever the flow is
 	// standing, the list step itself aside (there her message is
-	// simply the price). Correcting the price clears a last price that
+	// simply the price) and the duplicate choice aside (there her
+	// message is spoken for). Correcting the price clears a last price that
 	// no longer sits below it, so she is never left defending a
-	// last price against a price she has already replaced.
-	if flow.Step != "list" && flow.Name != "" {
+	// last price against a price she has already replaced. A
+	// correction is also her own statement of the price, so it
+	// settles the intake gate: a price she has just stated in so
+	// many words is never read back to her for confirmation.
+	if flow.Step != "list" && flow.Step != "dupchoice" && flow.Name != "" {
 		if m := priceCorrectionRe.FindStringSubmatch(lower); m != nil {
 			tail := m[1]
 			if tail == "" {
@@ -224,6 +264,8 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			}
 			if amount := parseOffer(tail); amount != nil && *amount > 0 {
 				flow.ListPrice = *amount
+				flow.PriceNeedsConfirm = false
+				flow.PriceConfirmed = true
 				if flow.FloorPrice >= *amount {
 					flow.FloorPrice = 0
 					flow.Fixed = false
@@ -236,6 +278,70 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 	}
 
 	switch flow.Step {
+	case "dupchoice":
+		// Her answer to the name clash: replace the old listing,
+		// keep it and rename this one, or drop the whole thing
+		// (cancel is handled before the switch). Anything else
+		// she sends is read as the new name she is offering.
+		switch {
+		case replaceRe.MatchString(controlWord(lower)):
+			if _, err := catalogue.RemoveProduct(s.MerchantID, flow.DupName); err != nil {
+				whatsapp.SendText(from, "I could not take the old "+flow.DupName+" off the shelf: "+err.Error()+". Give this one a different name instead, or say cancel.")
+				return
+			}
+			flow.DupName = ""
+			whatsapp.SendText(from, "Done, the old one is off the shelf. This listing takes its place.")
+			gotoNextOnboardingStep(from, flow)
+		case isClearNo(lower):
+			whatsapp.SendText(from, "Alright, the old one stays. What name should this new one carry?")
+		default:
+			name, _, _ := parseTypedNameLine(text, flow.ListPrice)
+			if name == "" {
+				whatsapp.SendText(from, "Say replace to swap the old one out, or give this listing a different name.")
+				return
+			}
+			flow.Name = name
+			if enterDupChoice(from, s, flow) {
+				return
+			}
+			flow.DupName = ""
+			gotoNextOnboardingStep(from, flow)
+		}
+
+	case "confirmprice":
+		// The intake gate. The price below was harvested from her
+		// words and the harvest doubts it; nothing moves until
+		// she settles it in her own words: yes keeps it, a figure
+		// replaces it, no throws it out and asks her to type the
+		// price plainly. A correction in the "price is X" shape
+		// never reaches this case: the hook above the switch
+		// takes it first and settles the gate as it corrects.
+		switch {
+		case isClearYes(lower):
+			flow.PriceConfirmed = true
+			flow.PriceNeedsConfirm = false
+			gotoNextOnboardingStep(from, flow)
+		case isClearNo(lower):
+			flow.ListPrice = 0
+			flow.PriceNeedsConfirm = false
+			flow.Step = "list"
+			whatsapp.SendText(from, "Alright, that price is out. What is the list price for "+flow.Name+", in cedis? For example, "+money.GHS(450)+".")
+		default:
+			if amount := parseOffer(lower); amount != nil && *amount > 0 {
+				flow.ListPrice = *amount
+				flow.PriceConfirmed = true
+				flow.PriceNeedsConfirm = false
+				if flow.FloorPrice >= *amount {
+					flow.FloorPrice = 0
+					flow.Fixed = false
+				}
+				whatsapp.SendText(from, "Noted: the price for "+flow.Name+" is "+money.GHS(*amount)+".")
+				gotoNextOnboardingStep(from, flow)
+				return
+			}
+			whatsapp.SendText(from, "I read the price as "+money.GHS(flow.ListPrice)+". Is that right? Say yes, or give me the right price.")
+		}
+
 	case "name":
 		// A whole advert pasted in one message is read whole:
 		// she copied the advert she already posts everywhere
@@ -246,13 +352,11 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		// advert did not carry. What was read is told back to
 		// her, so nothing is taken from her words in silence.
 		if draft, note, isAdvert := parsePastedAdvert(text); isAdvert {
-			if draft.Name != "" && catalogue.FindByName(s.MerchantID, draft.Name) != nil {
-				whatsapp.SendText(from, "You already sell something called "+draft.Name+". Give this one a different name, or say cancel to stop.")
-				return
-			}
 			flow.Name = draft.Name
 			if draft.ListPrice > 0 {
 				flow.ListPrice = draft.ListPrice
+				flow.PriceNeedsConfirm = draft.PriceDoubted
+				flow.PriceConfirmed = false
 			}
 			if draft.Description != "" {
 				flow.Description = draft.Description
@@ -266,6 +370,9 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 				} else {
 					flow.SizeNote = note
 				}
+			}
+			if enterDupChoice(from, s, flow) {
+				return
 			}
 			var read []string
 			if draft.ListPrice > 0 {
@@ -296,14 +403,20 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			whatsapp.SendText(from, "What is the product called?")
 			return
 		}
-		if catalogue.FindByName(s.MerchantID, name) != nil {
-			whatsapp.SendText(from, "You already sell something called "+name+". Give this one a different name, or say cancel to stop.")
-			return
-		}
+		hadPrice := flow.ListPrice > 0
 		flow.Name = name
 		flow.SizeNote = sizeNote
 		if price > 0 {
 			flow.ListPrice = price
+			if !hadPrice {
+				if _, span, ok := throwPrice(text); ok {
+					flow.PriceNeedsConfirm = harvestDoubt(text, price, span)
+					flow.PriceConfirmed = false
+				}
+			}
+		}
+		if enterDupChoice(from, s, flow) {
+			return
 		}
 		var read []string
 		if price > 0 {
@@ -354,11 +467,11 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			return
 		}
 		if amount == nil || *amount <= 0 {
-			whatsapp.SendText(from, "I could not read that as a price. What is your last price for "+flow.Name+", in cedis? Or say non-negotiable if the price does not move.")
+			whatsapp.SendText(from, "I could not read that as a price. What is your last price for "+flow.Name+", in cedis? Or say non-negotiable if the price does not move. If the list price itself is wrong, correct it like this: price is 500.")
 			return
 		}
 		if *amount > flow.ListPrice {
-			whatsapp.SendText(from, "Your last price cannot sit above your price of "+money.GHS(flow.ListPrice)+": the last price is the lowest you will go, not a higher one. If "+money.GHS(flow.ListPrice)+" is final, say non-negotiable. Otherwise, what is your last price below "+money.GHS(flow.ListPrice)+"?")
+			whatsapp.SendText(from, "Your last price cannot sit above your price of "+money.GHS(flow.ListPrice)+": the last price is the lowest you will go, not a higher one. If "+money.GHS(flow.ListPrice)+" is final, say non-negotiable. Otherwise, what is your last price below "+money.GHS(flow.ListPrice)+"? If the list price itself is wrong, correct it like this: price is 500.")
 			return
 		}
 		if *amount == flow.ListPrice {
@@ -462,6 +575,15 @@ func gotoNextOnboardingStep(from string, flow *OnboardingFlow) {
 		flow.Step = "description"
 	case flow.ListPrice <= 0:
 		flow.Step = "list"
+	case flow.PriceNeedsConfirm && !flow.PriceConfirmed:
+		// The gate stands here, inside the walk itself, before
+		// the last price, the measure and the summary: a doubted
+		// harvested price is confirmed in her own words first,
+		// so it cannot ride through the remaining steps and onto
+		// the shelf on the strength of a misread.
+		flow.Step = "confirmprice"
+		whatsapp.SendText(from, "One check before I go on. I read the price for "+flow.Name+" as "+money.GHS(flow.ListPrice)+", from your own words. Is that the right price? Say yes, or give me the right price.")
+		return
 	case flow.FloorPrice <= 0:
 		flow.Step = "lastprice"
 	case flow.Unit == "" && flow.BaseQty <= 0:
@@ -489,7 +611,7 @@ func askOnboardingStep(from string, flow *OnboardingFlow) {
 	case "list":
 		whatsapp.SendText(from, "What is the list price for "+flow.Name+"? This is the price customers see first. Give it in cedis, for example 450.")
 	case "lastprice":
-		whatsapp.SendText(from, "Now, if a customer bargains, what is your last price for "+flow.Name+"? That is the lowest I can go. I will never sell below it, and the customer will never see it. If the price does not move at all, just say non-negotiable.")
+		whatsapp.SendText(from, "Now, if a customer bargains, what is your last price for "+flow.Name+"? That is the lowest I can go. I will never sell below it, and the customer will never see it. If the price does not move at all, just say non-negotiable. If the list price itself is wrong, correct it like this: price is 500.")
 	case "measure":
 		whatsapp.SendText(from, "Do you sell the "+flow.Name+" by measure, like by the yard, litre or kilo, or only as a whole?")
 	}

@@ -69,6 +69,7 @@ func parsePastedAdvert(text string) (draft throwDraft, sizeNote string, ok bool)
 	rest := trimmed
 	if price, span, found := throwPrice(trimmed); found {
 		draft.ListPrice = price
+		draft.PriceDoubted = harvestDoubt(trimmed, price, span)
 		rest = trimmed[:span[0]] + " " + trimmed[span[1]:]
 	}
 	if q, found := parseQuantity(trimmed); found {

@@ -125,6 +125,16 @@ one question at a time, and the advert she already has is the whole
 answer. The agent separates it herself, and figures keep the commas
 sellers write them with: "Ghc 1,500" is fifteen hundred cedis.
 
+What is read is a proposal, not a fact, and the intake carries its
+own check. A harvested price the harvest itself doubts (a fragment
+of a bigger figure, a number lifted out of a spec line) is read back
+to her as a question and confirmed in her own words before the walk
+goes on; an unconfirmed draft never reaches the shelf. A name that
+is already on the shelf offers her replace or rename, never a dead
+end. And the last price question names its own escape: if the list
+price itself is wrong, she can correct it in one line, and the
+agent says so in the question.
+
 ## Her last price
 
 The agent asks for the lowest price in the seller's own words: her

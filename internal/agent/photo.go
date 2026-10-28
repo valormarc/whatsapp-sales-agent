@@ -58,6 +58,35 @@ type throwDraft struct {
 	ListPrice   float64
 	Unit        string
 	BaseQty     float64
+	// PriceDoubted marks a read price the harvest itself does
+	// not trust (see harvestDoubt): the walk confirms it with
+	// the seller before the listing can go any further.
+	PriceDoubted bool
+}
+
+// harvestDoubt judges a price read out of the seller's own text
+// before the walk trusts it. Two reads are doubted. A price so
+// small it is far more likely a fragment of a bigger figure than
+// the price of the goods she just described: the laptop read at
+// GH₵1 off a "Ghc 1,500" line. And an unmarked figure harvested
+// from among other figures, where a model number or a
+// specification stands in the same place a price would: the
+// 5550 read off a laptop's name line. A figure she marked
+// herself (@250, 250 ghs) is her own statement and is trusted,
+// and so is an unmarked figure with nothing competing beside it.
+func harvestDoubt(caption string, price float64, span []int) bool {
+	if price <= 5 {
+		return true
+	}
+	if span == nil || span[0] < 0 || span[1] > len(caption) {
+		return false
+	}
+	marked := strings.ToLower(caption[span[0]:span[1]])
+	if strings.ContainsAny(marked, "@₵") || strings.Contains(marked, "gh") || strings.Contains(marked, "cedi") {
+		return false
+	}
+	rest := caption[:span[0]] + " " + caption[span[1]:]
+	return len(numbersIn(rest)) > 0
 }
 
 // figurePattern is one money figure as sellers write it,
@@ -227,6 +256,7 @@ func throwDraftFromCaption(caption string) throwDraft {
 	rest := caption
 	if price, span, ok := throwPrice(caption); ok {
 		d.ListPrice = price
+		d.PriceDoubted = harvestDoubt(caption, price, span)
 		rest = strings.TrimSpace(caption[:span[0]] + " " + caption[span[1]:])
 	}
 	if q, ok := parseQuantity(caption); ok {
@@ -343,6 +373,10 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	}
 	if flow.ListPrice <= 0 {
 		flow.ListPrice = draft.ListPrice
+		if draft.ListPrice > 0 {
+			flow.PriceNeedsConfirm = draft.PriceDoubted
+			flow.PriceConfirmed = false
+		}
 	}
 	if flow.Unit == "" && draft.Unit != "" {
 		flow.Unit, flow.BaseQty = draft.Unit, draft.BaseQty
