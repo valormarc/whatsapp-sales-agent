@@ -156,3 +156,43 @@ func TestUnpaidWatchAlertsOnceAndOnlyWhenDue(t *testing.T) {
 		t.Fatalf("the merchant's second alerts should cover the two newly due orders only, got %v", merchantNotes2)
 	}
 }
+
+func TestUnpaidWatchHealsALandedPaymentInsteadOfReminding(t *testing.T) {
+	merchant := "233550001801"
+	dir := setupChat(t, merchant, shopWithBag)
+	t.Setenv("SEEV_SECRET_KEY", "sk_test_fake")
+	fakeSeevReadback(t, "completed", 87500)
+	c := &chat{dir: dir}
+	now := time.Date(2026, 10, 28, 12, 0, 0, 0, time.UTC)
+	ref := "PAY-WATCH-HEAL"
+	orders.Default.RecordOrder("TEST-2001", orders.Order{
+		From: "233550001802", Status: "pending", MerchantID: MerchantID,
+		CreatedAt:   now.Add(-2 * time.Hour).Format(time.RFC3339),
+		ProductName: "Handmade Beaded Bag", Price: 875, Total: 875,
+		ProviderRef: &ref, PaymentPath: "seev",
+	})
+
+	CheckUnpaidOrders(now)
+
+	// The payment had landed; only its news was missing. The
+	// watch settles it the way any verified payment settles,
+	// and nobody is told the money never came.
+	if got := orders.Default.GetOrder("TEST-2001"); got == nil || got.Status != "paid" {
+		t.Fatalf("order = %+v, want paid", got)
+	}
+	buyerNotes := c.replies(t, "233550001802")
+	if len(buyerNotes) != 1 || !strings.Contains(buyerNotes[0], "Payment received, thank you") {
+		t.Fatalf("buyer notes = %v", buyerNotes)
+	}
+	merchantNotes := c.replies(t, merchant)
+	if len(merchantNotes) != 1 || !strings.Contains(merchantNotes[0], "Payment received") {
+		t.Fatalf("merchant notes = %v", merchantNotes)
+	}
+	for _, notes := range [][]string{buyerNotes, merchantNotes} {
+		for _, n := range notes {
+			if strings.Contains(n, "has not come through") || strings.Contains(n, "not received yet") {
+				t.Fatalf("a landed payment must never draw the unpaid alert: %q", n)
+			}
+		}
+	}
+}

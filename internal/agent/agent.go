@@ -149,6 +149,11 @@ type Session struct {
 	// explain the right thing instead of guessing.
 	LastMerchantNote string
 
+	// LastNoteMsgID is the WhatsApp id of the message that
+	// carried LastMerchantNote, so a reply quoting that exact
+	// message is recognised as pointing at it.
+	LastNoteMsgID string
+
 	// Signup is a new merchant's open-a-shop flow, held on the
 	// pre-shop session until her shop exists; then she gets a normal
 	// owner session in her own shop.
@@ -320,9 +325,10 @@ func answerMerchantDayQuestion(from, text, merchantID string) {
 	// until the day she sets one.
 	if merchant.DailyGiveawayAllowance <= 0 {
 		note := "One thing: you have not set a daily giveaway allowance, so it stands at GH₵0 and I have nothing to give away when buyers bargain. To set it, say: set allowance 300."
-		whatsapp.SendText(from, note)
+		res := whatsapp.SendText(from, note)
 		if s, ok := sessions[sessionKey(merchantID, from)]; ok {
 			s.LastMerchantNote = note
+			s.LastNoteMsgID = res.MessageID
 		}
 	}
 }
@@ -346,6 +352,12 @@ type Inbound struct {
 	// the agent sent (an interactive button_reply webhook), and
 	// empty for every typed message.
 	ButtonID string
+	// ContextID is the id of the agent's own message this one
+	// quotes, when the sender replied with a quote. It tells the
+	// agent what a message points at when its words alone do
+	// not: a merchant quoting the allowance note is talking
+	// about the note, whatever words she adds.
+	ContextID string
 }
 
 func lastN(msgs []model.Message, n int) []model.Message {
@@ -411,7 +423,7 @@ func HandleInbound(in Inbound) {
 
 	// The merchant herself gets merchant mode for her own shop.
 	if shop := ownerShopFor(from); shop != nil {
-		handleMerchantMessage(from, strings.TrimSpace(in.Text), shop.ID)
+		handleMerchantMessageCtx(from, strings.TrimSpace(in.Text), shop.ID, in.ContextID)
 		return
 	}
 

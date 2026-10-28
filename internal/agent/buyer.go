@@ -87,7 +87,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// request (the net's shape; the thinking above serves the
 	// request first whenever it can be read).
 	if s.Stage == "agreed" && linkRe.MatchString(lower) {
-		whatsapp.SendText(from, "Here is your payment link: "+s.PaymentURL)
+		whatsapp.SendText(from, "Pay here to complete your order: "+s.PaymentURL)
 		return
 	}
 

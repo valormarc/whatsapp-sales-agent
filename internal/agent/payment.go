@@ -157,9 +157,17 @@ func createClaim(from string, merchant *catalogue.Merchant, order *orders.Order,
 		sendPieces(phone, pieces...)
 		if hasShot && screenshotRef != "" {
 			// The screenshot travels with its claim summary as
-			// the caption, through the ordinary send path (see
-			// whatsapp.SendImage for what live mode still needs).
-			whatsapp.SendImage(phone, screenshotRef, summary)
+			// the caption. Media a buyer sent belongs to her
+			// conversation and its id is not guaranteed to send
+			// onward from this number, so the picture is first
+			// refreshed under our own number (downloaded and
+			// uploaded again); when that cannot be done, the
+			// received reference is attempted as before.
+			ref := screenshotRef
+			if fresh, ok := whatsapp.RefreshMediaRef(screenshotRef); ok {
+				ref = fresh
+			}
+			whatsapp.SendImage(phone, ref, summary)
 		}
 	}
 	whatsapp.SendText(from, "I have sent it to "+merchant.Name+" to confirm. I will tell you the moment she does.")

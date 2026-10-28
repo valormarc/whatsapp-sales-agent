@@ -129,6 +129,17 @@ func isClearNo(lower string) bool {
 // empty shelf, the first-run greeting; then catalogue commands; and
 // only then her day questions, answered from the day book as before.
 func handleMerchantMessage(from, text, merchantID string) {
+	handleMerchantMessageCtx(from, text, merchantID, "")
+}
+
+// handleMerchantMessageCtx is the merchant dispatcher with the
+// inbound message's quote context: when her message quotes the
+// allowance note the agent sent her, she is pointing at the
+// note, and the note's figures are never read as a command she
+// is giving (the same protection the explain guard gives her
+// words, extended to the case where her words alone do not say
+// it: the quote says it).
+func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	merchant := catalogue.GetMerchant(merchantID)
 	if merchant == nil {
 		return
@@ -197,7 +208,10 @@ func handleMerchantMessage(from, text, merchantID string) {
 	// quoted figures as an instruction once set her allowance
 	// to a number she never chose. Questions skip the commands
 	// and go to the thinking, which explains from the facts.
-	if !explainRe.MatchString(lower) && handleMerchantCommand(from, s, merchant, text, lower) {
+	// The same holds when the quote itself does the pointing:
+	// a reply quoting the note is about the note.
+	quotingNote := contextID != "" && s.LastNoteMsgID != "" && contextID == s.LastNoteMsgID
+	if !explainRe.MatchString(lower) && !quotingNote && handleMerchantCommand(from, s, merchant, text, lower) {
 		return
 	}
 
@@ -405,7 +419,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 				read = append(read, "I took the price from your message: "+money.GHS(draft.ListPrice)+".")
 			}
 			if draft.Name != "" && draft.Description != "" {
-				read = append(read, "I have taken the first line as the name, and the rest as the description.")
+				read = append(read, "I have read it as \""+draft.Name+"\", with the details under it as the description.")
 			} else if draft.Name == "" && draft.Description != "" {
 				read = append(read, "I have taken your words as the description.")
 			}

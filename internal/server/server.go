@@ -59,6 +59,13 @@ type webhookPayload struct {
 					From string `json:"from"`
 					ID   string `json:"id"`
 					Type string `json:"type"`
+					// Context is present when the message quotes
+					// an earlier one: its id names the quoted
+					// message, which is how the agent knows what
+					// a reply points at.
+					Context *struct {
+						ID string `json:"id"`
+					} `json:"context"`
 					Text *struct {
 						Body string `json:"body"`
 					} `json:"text"`
@@ -139,13 +146,17 @@ func Handler() http.Handler {
 								fmt.Fprintf(os.Stderr, "inbound handling failed: %v\n", rec)
 							}
 						}()
+						contextID := ""
+						if msg.Context != nil {
+							contextID = msg.Context.ID
+						}
 						switch msg.Type {
 						case "text":
 							body := ""
 							if msg.Text != nil {
 								body = msg.Text.Body
 							}
-							agent.HandleInbound(agent.Inbound{From: msg.From, Text: body, MessageID: msg.ID})
+							agent.HandleInbound(agent.Inbound{From: msg.From, Text: body, MessageID: msg.ID, ContextID: contextID})
 						case "image":
 							var imageID, caption string
 							if msg.Image != nil {

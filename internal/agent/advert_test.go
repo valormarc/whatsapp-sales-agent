@@ -59,7 +59,7 @@ func TestPastedAdvertIsReadInOneGo(t *testing.T) {
 	if !strings.Contains(replies, "I took the price from your message: GH₵1500") {
 		t.Fatalf("the advert's price should be read whole and told back, got %q", replies)
 	}
-	if !strings.Contains(replies, "first line as the name") {
+	if !strings.Contains(replies, "I have read it as") {
 		t.Fatalf("the split should be told back, got %q", replies)
 	}
 	// Everything the advert carried is settled, so the only
@@ -116,5 +116,39 @@ func TestPastedWriteUpSingleLineAsksOnlyTheName(t *testing.T) {
 	p := catalogue.FindByName(MerchantID, "HP EliteBook 840")
 	if p == nil || p.Name != "HP EliteBook 840" || p.ListPrice != 4500 || p.FloorPrice != 3900 {
 		t.Fatalf("saved product = %+v, want the laptop named whole at 4500 with last price 3900", p)
+	}
+}
+
+func TestSloganLineIsNotTheProductName(t *testing.T) {
+	// The shape that reached the live shelf: a decorated
+	// shout over a laptop advert. The shout is not the name,
+	// the laptop line is, and its spec segments read as
+	// description, not as part of the name.
+	draft, _, ok := parsePastedAdvert("*🔥OTUMFOU😂*\nHP EliteBook 840 G5, Core i7, 16GB RAM, 512GB SSD\nPrice: Ghc 3,499")
+	if !ok {
+		t.Fatal("the advert must be read")
+	}
+	if draft.Name != "HP EliteBook 840 G5" {
+		t.Fatalf("name = %q, want the laptop line without its spec segments", draft.Name)
+	}
+	if !strings.Contains(draft.Description, "Core i7") || strings.Contains(draft.Description, "OTUMFOU") {
+		t.Fatalf("description = %q", draft.Description)
+	}
+	if draft.ListPrice != 3499 {
+		t.Fatalf("price = %v, want 3499", draft.ListPrice)
+	}
+}
+
+func TestBareOneWordNameSurvives(t *testing.T) {
+	draft, _, ok := parsePastedAdvert("Tilapia\nFresh from the lake, smoked today\nGH₵120")
+	if !ok || draft.Name != "Tilapia" {
+		t.Fatalf("a bare one-word name is a name: %+v ok=%v", draft, ok)
+	}
+}
+
+func TestDecoratedNameIsCleanedForTheShelf(t *testing.T) {
+	name, _, _ := parseTypedNameLine("🔥BLACK NYLON SHIRT🔥", 0)
+	if name != "BLACK NYLON SHIRT" {
+		t.Fatalf("name = %q", name)
 	}
 }

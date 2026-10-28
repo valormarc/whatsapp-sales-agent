@@ -128,3 +128,33 @@ func TestVoiceGuardRefusesPidginAndTitles(t *testing.T) {
 		t.Fatal("a draft addressing the owner as Madam must never be sent")
 	}
 }
+
+func TestQuotingTheAllowanceNoteIsNotACommand(t *testing.T) {
+	owner := "233550003101"
+	fixture := `{"merchants":{"demo":{"id":"demo","name":"Test Shop","shopCode":"TEST","dailyGiveawayAllowance":0,"products":[{"id":"beaded-bag","name":"Handmade Beaded Bag","description":"Hand-beaded evening bag.","listPrice":850,"floorPrice":680,"stock":3}]}}}`
+	dir := setupChat(t, owner, fixture)
+	c := &chat{dir: dir}
+	shop := catalogue.GetMerchant(MerchantID)
+	if shop == nil || shop.DailyGiveawayAllowance != 0 {
+		t.Fatal("the fixture shop must start with no allowance set")
+	}
+	note := "One thing: you have not set a daily giveaway allowance, so it stands at GH\u20b50. To set it, say: set allowance 300"
+
+	sessions[sessionKey(shop.ID, owner)] = &Session{Stage: "merchant", MerchantID: shop.ID, LastNoteMsgID: "wamid.NOTE1"}
+	HandleInbound(Inbound{From: owner, ContextID: "wamid.NOTE1", Text: note})
+	if got := catalogue.GetMerchant(shop.ID); got.DailyGiveawayAllowance != 0 {
+		t.Fatalf("a quoted note executed as a command: allowance = %v", got.DailyGiveawayAllowance)
+	}
+	for _, r := range c.replies(t, owner) {
+		if strings.Contains(r, "allowance is now") {
+			t.Fatalf("the quote was executed: %q", r)
+		}
+	}
+
+	// The same words typed plainly, with no quote, are her
+	// command and do set it: the quote is the whole difference.
+	HandleInbound(Inbound{From: owner, Text: "set allowance 300"})
+	if got := catalogue.GetMerchant(shop.ID); got.DailyGiveawayAllowance != 300 {
+		t.Fatalf("a plainly typed command must still work: allowance = %v", got.DailyGiveawayAllowance)
+	}
+}

@@ -7,6 +7,7 @@ package agent
 import (
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // sizePhraseRe lifts a size out of a product line: "SIZE XXL",
@@ -79,13 +80,84 @@ func parsePastedAdvert(text string) (draft throwDraft, sizeNote string, ok bool)
 	if len(restLines) == 0 {
 		return draft, "", true
 	}
+	// A slogan is not a name. Adverts open with a shout line,
+	// a single decorated word over the goods ("*🔥OTUMFOU😂*"),
+	// and taking it as the product's name puts the shout on
+	// the shelf and in front of every buyer. When the first
+	// line is a decorated single word and a later line reads
+	// like a product, the shout is dropped and the product
+	// line becomes the name.
+	if len(restLines) > 1 && isSloganLine(restLines[0], restLines[1:]) {
+		restLines = restLines[1:]
+	}
 	name, _, note := parseTypedNameLine(restLines[0], draft.ListPrice)
+	// A name line carrying its details comma by comma gives
+	// the name alone to the shelf: the first part is the name,
+	// the rest belongs with the description, where a buyer can
+	// read it as the detail it is.
+	descLines := []string{}
+	if idx := strings.Index(name, ","); idx >= 0 {
+		for _, seg := range strings.Split(name[idx+1:], ",") {
+			if seg = strings.TrimSpace(seg); seg != "" {
+				descLines = append(descLines, seg)
+			}
+		}
+		name = strings.TrimSpace(name[:idx])
+	}
 	draft.Name = name
 	sizeNote = note
-	if len(restLines) > 1 {
-		draft.Description = strings.Join(restLines[1:], "\n")
+	for _, line := range restLines[1:] {
+		descLines = append(descLines, trimDecorEdges(line))
+	}
+	if len(descLines) > 0 {
+		draft.Description = strings.Join(descLines, "\n")
 	}
 	return draft, sizeNote, true
+}
+
+// cleanNameText tidies a product name for the shelf: symbol
+// characters (emoji, stars, decorative marks) come out, the
+// spacing is collapsed, and her own words stay exactly hers.
+// A name is what a buyer reads first; it is never presented
+// wearing the advert's decoration.
+func cleanNameText(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '-' || r == '&' || r == '\'' || r == '.' || r == '/' || r == ',' {
+			b.WriteRune(r)
+		} else if unicode.IsSpace(r) {
+			b.WriteRune(' ')
+		}
+	}
+	return strings.Join(strings.Fields(b.String()), " ")
+}
+
+// isSloganLine reads a decorated shout line: after cleaning
+// it is a single word, the raw line carries decoration the
+// clean form lost, and a later line reads like a product (two
+// or more words). A bare one-word name with no decoration is
+// a name, and a decorated word with no product line under it
+// is kept as the name, cleaned.
+func isSloganLine(raw string, later []string) bool {
+	cleaned := cleanNameText(raw)
+	if cleaned == "" || strings.Contains(cleaned, " ") || raw == cleaned {
+		return false
+	}
+	for _, line := range later {
+		if len(strings.Fields(cleanNameText(line))) >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+// trimDecorEdges takes decoration off the ends of a
+// description line (stars, emoji, rules) while leaving her
+// words and their own punctuation inside the line untouched.
+func trimDecorEdges(line string) string {
+	return strings.TrimFunc(line, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
 }
 
 // parseTypedNameLine reads the seller's name line and returns the
@@ -115,7 +187,7 @@ func parseTypedNameLine(text string, settled float64) (name string, price float6
 		sizeNote = "Size " + strings.ToUpper(rest[m[2]:m[3]])
 		rest = rest[:m[0]] + " " + rest[m[1]:]
 	}
-	name = strings.Join(strings.Fields(rest), " ")
+	name = cleanNameText(rest)
 	name = strings.Trim(name, " ,.-")
 	return name, price, sizeNote
 }

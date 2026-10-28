@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"strings"
@@ -27,6 +28,10 @@ const graphVersion = "v21.0"
 type Result struct {
 	DryRun bool
 	Status int
+	// MessageID is the id WhatsApp gave the sent message, when
+	// the API returned one. It lets the agent recognise a later
+	// reply that quotes this message.
+	MessageID string
 }
 
 type outboxRecord struct {
@@ -101,12 +106,21 @@ func post(record outboxRecord, payload any) Result {
 		return Result{}
 	}
 	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		text, _ := io.ReadAll(res.Body)
-		fmt.Fprintf(os.Stderr, "WhatsApp send failed: %d %s\n", res.StatusCode, string(text))
+		fmt.Fprintf(os.Stderr, "WhatsApp send failed: %d %s\n", res.StatusCode, string(body))
 	}
 	appendOutbox(record)
-	return Result{Status: res.StatusCode}
+	result := Result{Status: res.StatusCode}
+	var sent struct {
+		Messages []struct {
+			ID string `json:"id"`
+		} `json:"messages"`
+	}
+	if json.Unmarshal(body, &sent) == nil && len(sent.Messages) > 0 {
+		result.MessageID = sent.Messages[0].ID
+	}
+	return result
 }
 
 // DownloadMedia fetches the bytes behind an inbound media id and
@@ -116,9 +130,21 @@ func post(record outboxRecord, payload any) Result {
 // failure, including dry-run mode with no token configured,
 // returns false, and callers carry on without the picture itself.
 func DownloadMedia(mediaID string) (string, bool) {
+	data, mime, ok := DownloadMediaBytes(mediaID)
+	if !ok {
+		return "", false
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data), true
+}
+
+// DownloadMediaBytes fetches the raw bytes behind an inbound
+// media id, with their content type. Any failure, including
+// dry-run mode with no token configured, returns false, and
+// callers carry on without the picture itself.
+func DownloadMediaBytes(mediaID string) (data []byte, mimeType string, ok bool) {
 	token := os.Getenv("WHATSAPP_TOKEN")
 	if token == "" || mediaID == "" {
-		return "", false
+		return nil, "", false
 	}
 	get := func(url string) ([]byte, int, error) {
 		req, err := http.NewRequest(http.MethodGet, url, nil)
@@ -136,24 +162,90 @@ func DownloadMedia(mediaID string) (string, bool) {
 	}
 	meta, status, err := get(fmt.Sprintf("https://graph.facebook.com/%s/%s", graphVersion, mediaID))
 	if err != nil || status < 200 || status >= 300 {
-		return "", false
+		return nil, "", false
 	}
 	var info struct {
 		URL      string `json:"url"`
 		MimeType string `json:"mime_type"`
 	}
 	if err := json.Unmarshal(meta, &info); err != nil || info.URL == "" {
-		return "", false
+		return nil, "", false
 	}
 	bytesData, status, err := get(info.URL)
 	if err != nil || status < 200 || status >= 300 || len(bytesData) == 0 {
-		return "", false
+		return nil, "", false
 	}
 	mime := info.MimeType
 	if mime == "" {
 		mime = "image/jpeg"
 	}
-	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(bytesData), true
+	return bytesData, mime, true
+}
+
+// UploadMedia posts bytes to the number's own media store and
+// returns the fresh media id WhatsApp assigns them. Media a
+// customer sent belongs to her conversation; the id is not
+// guaranteed to be sendable onward from our number, so sending
+// a received picture to someone else goes through this upload
+// and carries the fresh id.
+func UploadMedia(data []byte, mime string) (string, bool) {
+	token := os.Getenv("WHATSAPP_TOKEN")
+	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")
+	if token == "" || phoneID == "" || len(data) == 0 {
+		return "", false
+	}
+	buf := &bytes.Buffer{}
+	mw := multipart.NewWriter(buf)
+	if err := mw.WriteField("messaging_product", "whatsapp"); err != nil {
+		return "", false
+	}
+	if err := mw.WriteField("type", mime); err != nil {
+		return "", false
+	}
+	part, err := mw.CreateFormFile("file", "image")
+	if err != nil {
+		return "", false
+	}
+	if _, err := part.Write(data); err != nil {
+		return "", false
+	}
+	if err := mw.Close(); err != nil {
+		return "", false
+	}
+	url := fmt.Sprintf("https://graph.facebook.com/%s/%s/media", graphVersion, phoneID)
+	req, err := http.NewRequest(http.MethodPost, url, buf)
+	if err != nil {
+		return "", false
+	}
+	req.Header.Set("authorization", "Bearer "+token)
+	req.Header.Set("content-type", mw.FormDataContentType())
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", false
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return "", false
+	}
+	var out struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil || out.ID == "" {
+		return "", false
+	}
+	return out.ID, true
+}
+
+// RefreshMediaRef turns a received media id into one of our
+// own: the bytes are downloaded and uploaded under this number,
+// and the fresh id is returned. Any failure returns false and
+// the caller falls back to the received reference.
+func RefreshMediaRef(mediaID string) (string, bool) {
+	data, mime, ok := DownloadMediaBytes(mediaID)
+	if !ok {
+		return "", false
+	}
+	return UploadMedia(data, mime)
 }
 
 // Button is one reply button on an interactive buttons message.
@@ -263,16 +355,13 @@ func SendText(to, body string) Result {
 // mode (an entry of kind "image" with the reference and caption,
 // which is what tests assert against).
 //
-// Live-mode limitation, stated plainly: the reference this is used
-// with is the media id from the buyer's own inbound message, and
+// The reference sent is expected to be one of this number's own
+// media ids: callers forwarding a picture a customer sent refresh
+// it first with RefreshMediaRef (download and re-upload), because
 // WhatsApp does not promise that an id received on one message can
-// be re-sent as-is by this number. A fully robust live flow would
-// download the buyer's media and re-upload it under our own number
-// first, then send the fresh id. That download and re-upload step
-// is not built here; in live mode the send is attempted with the
-// received reference and recorded in the outbox either way, so the
-// merchant always has the claim text even if the picture itself
-// needs the follow-up work.
+// be re-sent as-is by this number. The send is recorded in the
+// outbox either way, so the merchant always has the claim text
+// even if the picture itself fails.
 func SendImage(to, mediaRef, caption string) Result {
 	token := os.Getenv("WHATSAPP_TOKEN")
 	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")

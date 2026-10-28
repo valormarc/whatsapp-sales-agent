@@ -100,8 +100,12 @@ the seller; the merchant gets a business partner.
   link payment lands, the merchant hears it at once, with the fee and
   what settles to her MoMo. When a payment fails, both sides hear it.
   When a payment is simply never made, the order does not sit in
-  silence: after a grace of thirty minutes the buyer is reminded and
-  the merchant is told, once each, and the order stays open.
+  silence: after a grace of thirty minutes the payment is read back
+  first, and a payment that landed without its news ever arriving
+  is settled there and then, like any verified payment. Only a
+  payment that truly never came through is surfaced: the buyer is
+  reminded and the merchant is told, once each, and the order
+  stays open.
 - A buyer's word that she has paid is verified by whoever can see the
   money. For a link payment that is the agent itself: it reads the
   session back from the payment service and confirms or corrects her
