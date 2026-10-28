@@ -96,6 +96,12 @@ the seller; the merchant gets a business partner.
   deep discounts, or whose final price keeps ending conversations).
 - Unprompted, it sends the sale notification with the day report, and an
   end of day summary, all in the day language of principle 4.
+- Every payment outcome is reported to the people it belongs to. When a
+  link payment lands, the merchant hears it at once, with the fee and
+  what settles to her MoMo. When a payment fails, both sides hear it.
+  When a payment is simply never made, the order does not sit in
+  silence: after a grace of thirty minutes the buyer is reminded and
+  the merchant is told, once each, and the order stays open.
 - Walk-aways are recorded in the day book, not treated as failures: a
   pattern of them on one product is pricing information for the merchant.
 - Honesty limits: the agent only knows what flowed through it, so side

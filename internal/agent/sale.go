@@ -5,6 +5,8 @@ package agent
 
 import (
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/checkout"
@@ -14,7 +16,6 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
-	"strings"
 )
 
 // completeSale finishes a sale whose fulfilment is settled: the
@@ -80,6 +81,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	}
 	orders.Default.RecordOrder(reference, orders.Order{
 		From:           from,
+		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
 		ProductName:    p.Name,
 		Price:          price,
 		DeliveryFee:    deliveryFee,

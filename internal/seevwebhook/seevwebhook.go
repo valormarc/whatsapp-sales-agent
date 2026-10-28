@@ -86,7 +86,7 @@ func Handle(rawBody, timestamp, signature string) int {
 			"Your payment for the "+order.ProductName+" did not go through, so nothing has been charged. The shop has been told, and you can try the link again or talk to the shop here.",
 		)
 		notifyMerchant(order,
-			"Payment failed: "+order.ProductName+" at "+money.GHS(order.Price)+" for buyer "+order.From+". Ref: "+order.Reference+". Nothing was charged.",
+			"Payment failed\n\n*"+order.ProductName+"*\nThe buyer's payment of "+money.GHS(order.Price)+" did not go through. Nothing was charged.\n\nRef: "+order.Reference+"\nBuyer: "+order.From,
 		)
 		return 200
 	}
@@ -136,7 +136,7 @@ func Handle(rawBody, timestamp, signature string) int {
 		"Payment received, thank you. Your "+order.ProductName+" is confirmed at "+money.GHS(charged)+". The shop has your order and will take it from here.",
 	)
 	notifyMerchant(order,
-		"Payment received: "+order.ProductName+" at "+money.GHS(charged)+". Seev fee "+money.GHS(s.Fee)+", so "+money.GHS(s.Net)+" settles to your MoMo tomorrow. Buyer: "+order.From+". Ref: "+order.Reference+".",
+		"Payment received\n\n*"+order.ProductName+"*\n"+money.GHS(charged)+" paid in full by the buyer.\nSeev fee "+money.GHS(s.Fee)+", so "+money.GHS(s.Net)+" settles to your MoMo tomorrow.\n\nRef: "+order.Reference+"\nBuyer: "+order.From,
 	)
 	return 200
 }

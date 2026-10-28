@@ -8,6 +8,7 @@ package orders
 import (
 	"encoding/json"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -97,6 +98,32 @@ type Order struct {
 	ClaimedAt      string  `json:"claimedAt,omitempty"`
 	ClaimShot      bool    `json:"claimScreenshot,omitempty"`
 	ScreenshotRef  string  `json:"screenshotRef,omitempty"`
+
+	// CreatedAt is when the order was placed, RFC3339. Orders
+	// placed before this field existed carry none; the unpaid
+	// watch stamps those on first sight rather than treating
+	// them as ancient.
+	CreatedAt string `json:"createdAt,omitempty"`
+	// UnpaidAlerted marks that the unpaid watch has already
+	// told both sides about this order sitting unpaid, so it
+	// alerts once and never nags.
+	UnpaidAlerted bool `json:"unpaidAlerted,omitempty"`
+}
+
+// All returns every order in the book, in reference order, for
+// the sweeps that walk the whole book (the unpaid watch).
+func (b *Book) All() []Order {
+	all := b.loadAll()
+	refs := make([]string, 0, len(all))
+	for ref := range all {
+		refs = append(refs, ref)
+	}
+	sort.Strings(refs)
+	out := make([]Order, 0, len(refs))
+	for _, ref := range refs {
+		out = append(out, all[ref])
+	}
+	return out
 }
 
 // Charged is the amount the buyer was actually charged for this

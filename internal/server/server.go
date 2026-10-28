@@ -202,6 +202,7 @@ func Port() int {
 // Run starts the server and blocks.
 func Run() error {
 	port := Port()
+	agent.StartUnpaidWatch()
 	fmt.Printf("hackathon-agent listening on :%d\n", port)
 	return http.ListenAndServe(":"+strconv.Itoa(port), Handler())
 }
