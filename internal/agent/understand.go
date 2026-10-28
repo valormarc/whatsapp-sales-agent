@@ -59,6 +59,8 @@ const (
 	intentPaymentClaim   = "payment_claim"   // she says she has paid directly: a claim, never proof
 	intentItem           = "item"            // she is asking about a product on the shelf
 	intentOrderStatus    = "order_status"    // she is asking after an order she already made
+	intentOrderPayment   = "order_payment"   // the owner asks about the payment on an order
+	intentAskBuyer       = "ask_buyer"       // the owner tells the agent to ask her buyer
 	intentShelf          = "shelf"           // she wants to see what the shop has
 	intentAsk            = "ask"             // a question the facts can answer
 	intentOffTopic       = "offtopic"        // nothing to do with the shop
@@ -87,6 +89,19 @@ var figureTokenRe = regexp.MustCompile(`\d+(?:\.\d+)?`)
 // is one of the facts it was allowed to use. A draft that
 // invents a number is worse than no draft, so it is refused
 // whole and the caller falls back to its own words.
+// voiceClean is the output voice guard on drafted replies:
+// the agent understands every kind of English and answers in
+// correct English only, politely and respectfully. A draft
+// carrying Pidgin, an assumed title, or a copy of the person's
+// own dialect is never sent, however the person wrote. The
+// list is deliberately narrow: plain market words a correct
+// English answer may use are not in it.
+var voiceBadRe = regexp.MustCompile(`(?i)\b(madam|abeg|wahala|wetin|oga|ehn)\b|make i\b|i no go\b|no wahala\b`)
+
+func voiceClean(text string) bool {
+	return !voiceBadRe.MatchString(text)
+}
+
 func figuresClean(text string, allowed ...float64) bool {
 	for _, tok := range figureTokenRe.FindAllString(text, -1) {
 		v, err := strconv.ParseFloat(tok, 64)
@@ -124,6 +139,8 @@ const thinkSystem = `You are the thinking of a WhatsApp sales agent for a small 
 
 You have freedom in understanding and in phrasing. You have no freedom to invent: never a figure, a product, a stock level, a time or a promise that is not in the facts. People must never be told "I don't understand" for a sentence a person would follow at once.
 
+Three laws govern every reply the shop sends. First, think and answer: when the facts you are given hold the answer, give it. Never reply to a factual question with a question of your own, never ask the person to choose between readings the facts already settle, and when someone asks you to explain something, explain it. Second, every reply is polite and respectful: no impatience, no talking down, and no assumed titles, never Ma, Madam, Sir or Boss; address no one by a title at all. Third, language: people will write in Pidgin, broken English and mixed languages, and you understand all of it, but the shop always replies in correct English. Never copy a person's dialect back at them, and never write Pidgin yourself.
+
 Answer with strict JSON only, no other text:
 {"intent": "...", "item": "...", "reply": "..."}
 
@@ -135,8 +152,10 @@ The acts you can name:
 - "payment_claim": she says she has paid, in her own words, whether or not she uses the word paid: "I just sent the money", "check your phone, I have done it", "I have made the payment". Whether she paid by the link or to the shop's number, this is the act: the platform then verifies a link payment with the payment service itself, and sends only a payment to the shop's own number to the merchant to confirm. Her word alone never settles anything.
 - "item": she is asking about, or wants, a product on the shelf. Put the product's name, as it appears in the facts, in "item".
 - "order_status": she is asking after an order she already made: where it stands, whether it is paid, what happens next with it.
+- "order_payment": the shop owner is asking about the payment on an order: whether it has been paid, how it was paid (through the payment link or straight to her own MoMo number), what is happening with it. When a claim or an open order is in the facts and she asks about "the payment" or "this order" without naming another, that is the order she means.
+- "ask_buyer": the shop owner is telling you to ask her buyer something, or to find something out from the buyer: "ask the buyer", "ask her", "find out from her". You carry the question to the buyer yourself; never ask the owner what to ask when the facts show the open matter.
 - "shelf": she wants to see what the shop has, or start again from the shelf.
-- "ask": a question about the shop that the facts you are given can answer. Draft the answer in "reply": short, plain, warm, in her own register, using ONLY the facts given.
+- "ask": a question about the shop that the facts you are given can answer, or a request to explain something already said. Draft the answer in "reply": short, plain, warm, in correct English, using ONLY the facts given. An explanation is an answer, never a question back.
 - "offtopic": the message has nothing to do with this shop, its goods, an order or a payment.
 - "unclear": even reading kindly, a person would have to ask what is meant. Draft ONE short clarifying question in "reply", in her own terms, offering the likely two readings.
 
@@ -189,7 +208,11 @@ func merchantDayFigures(merchant *catalogue.Merchant, shopID string) (string, []
 }
 
 // understandMerchantMessage asks the model what the merchant
-// herself means, with her own facts (her shelf and her day).
+// herself means, with her own facts: her shelf, her day, her
+// allowance, and the live state of her orders and claims. The
+// orders and claims are what her payment questions are about;
+// a thinking step that cannot see them can only deflect, and
+// deflection is what this step replaced.
 func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID, msg string) *understood {
 	shelf, _ := shelfFacts(shopID)
 	dayText, _ := merchantDayFigures(merchant, shopID)
@@ -197,12 +220,83 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	b.WriteString("The person writing is the OWNER of the shop " + merchant.Name + ", talking to her own sales agent.\n")
 	b.WriteString("On her shelf: " + shelf + ".\n")
 	b.WriteString("Her day so far: " + dayText + "\n")
-	b.WriteString("Things she can ask the agent to do: show her catalogue, change a price or a last price, set her daily giveaway allowance, remove a product, add a product by describing it or sending a photo, and tell her how today is going.\n")
-	b.WriteString("For her, the payment and item intents still apply when she is asking about a customer's order or a product; use \"ask\" for any question her shelf, her day or those abilities can answer, drafting the reply from the facts only.\n")
+	b.WriteString("Her daily giveaway allowance is the amount she allows the agent to give away in discounts across a day; every discount agreed comes out of it, and the agent haggles firmer as it runs down. It stands at " + money.GHS(merchant.DailyGiveawayAllowance) + ".\n")
+	if merchant.DailyGiveawayAllowance <= 0 {
+		b.WriteString("She has not set an allowance yet, so the agent has nothing to give away when buyers bargain. Setting one is done by saying: set allowance 300.\n")
+	}
+	claims := openClaimsFor(shopID)
+	for _, o := range claims {
+		amt := o.Charged()
+		if o.ClaimAmount > 0 {
+			amt = o.ClaimAmount
+		}
+		shot := "She sent no screenshot, only her word."
+		if o.ScreenshotRef != "" {
+			shot = "She sent a screenshot with it."
+		}
+		b.WriteString("An open payment claim waits for her word: order " + o.Reference + ", the buyer " + o.From + " says she paid " + money.GHS(amt) + " for the " + o.ProductName + " straight to the owner's MoMo number. " + shot + " The owner settles it by replying yes or no.\n")
+	}
+	open := 0
+	for _, o := range orders.Default.All() {
+		if o.MerchantID != shopID || o.Status != "pending" || o.ClaimStatus == "open" {
+			continue
+		}
+		open++
+		if open <= 3 {
+			b.WriteString("An order is still open and unpaid: " + o.Reference + ", the " + o.ProductName + " at " + money.GHS(o.Charged()) + ", buyer " + o.From + ".\n")
+		}
+	}
+	if focus := focusOrder(shopID); focus != nil {
+		b.WriteString("The order in focus, the one she means when she says \"this order\" or asks about \"the payment\" without naming another, is " + focus.Reference + " (the " + focus.ProductName + ", " + money.GHS(focus.Charged()) + ", buyer " + focus.From + ", status " + focus.Status + ").\n")
+	}
+	if key := sessionKey(shopID, from); sessions[key] != nil && sessions[key].LastMerchantNote != "" {
+		b.WriteString("The last thing the agent told her, which an \"explain this\" from her most likely points at: \"" + sessions[key].LastMerchantNote + "\" If she asks to explain, explain THAT, in plain words, from the facts.\n")
+	}
+	b.WriteString("Things she can ask the agent to do: show her catalogue, change a price or a last price, set her daily giveaway allowance, remove a product, add a product by describing it or sending a photo, tell her how today is going, report on the payment of an order, and ask a buyer a question on her behalf.\n")
+	b.WriteString("Use \"order_payment\" when she is asking about the payment on an order, and \"ask_buyer\" when she is telling the agent to ask her buyer something. Use \"ask\" for any other question her shelf, her day, her allowance or those abilities can answer, drafting the reply from the facts only.\n")
 	b.WriteString("\nThe owner's message: " + msg)
 	sys := thinkSystem
 	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys})
 	return parseUnderstood(out)
+}
+
+// openClaimsFor lists the shop's orders carrying an open
+// direct-payment claim, oldest first (the book's own order).
+func openClaimsFor(shopID string) []*orders.Order {
+	out := []*orders.Order{}
+	for _, o := range orders.Default.All() {
+		oo := o
+		if oo.MerchantID == shopID && oo.ClaimStatus == "open" {
+			out = append(out, &oo)
+		}
+	}
+	return out
+}
+
+// focusOrder is the order a conversation is about when none
+// is named: the one carrying an open claim first, then the
+// newest open order, then the newest order of any kind.
+func focusOrder(shopID string) *orders.Order {
+	if claims := openClaimsFor(shopID); len(claims) > 0 {
+		return claims[0]
+	}
+	var newestOpen, newestAny *orders.Order
+	for _, o := range orders.Default.All() {
+		if o.MerchantID != shopID {
+			continue
+		}
+		oo := o
+		if newestAny == nil || oo.Reference > newestAny.Reference {
+			newestAny = &oo
+		}
+		if oo.Status == "pending" && (newestOpen == nil || oo.Reference > newestOpen.Reference) {
+			newestOpen = &oo
+		}
+	}
+	if newestOpen != nil {
+		return newestOpen
+	}
+	return newestAny
 }
 
 func parseUnderstood(out *string) *understood {
@@ -221,7 +315,7 @@ func parseUnderstood(out *string) *understood {
 	}
 	switch u.Intent {
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
-		intentItem, intentOrderStatus, intentShelf, intentAsk, intentOffTopic, intentUnclear:
+		intentItem, intentOrderStatus, intentOrderPayment, intentAskBuyer, intentShelf, intentAsk, intentOffTopic, intentUnclear:
 		return &u
 	}
 	return nil
@@ -306,7 +400,7 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		if merchant.DeliveryFee > 0 {
 			figures = append(figures, merchant.DeliveryFee)
 		}
-		if !figuresClean(u.Reply, figures...) {
+		if !figuresClean(u.Reply, figures...) || !voiceClean(u.Reply) {
 			return false
 		}
 		sendPieces(from, u.Reply)
@@ -421,13 +515,19 @@ func reissueLink(from string, s *Session, merchant *catalogue.Merchant, order *o
 	return true
 }
 
-// actOnMerchantUnderstanding carries out what the merchant was
-// understood to mean: a question the facts answer, or one
-// clarifying question. It never performs a change to her shop:
-// changes still go through her plain commands, so nothing
-// about her catalogue moves on a model's reading alone.
-func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopID string, u *understood) bool {
+// actOnMerchantUnderstanding carries out what the merchant
+// was understood to mean: the payment state of her order
+// answered from the book and a live check, her instruction
+// to ask the buyer carried out, or a question the facts
+// answer. It never performs a change to her shop: changes
+// still go through her plain commands, so nothing about her
+// catalogue moves on a model's reading alone.
+func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopID, msg string, u *understood) bool {
 	switch u.Intent {
+	case intentOrderPayment:
+		return merchantOrderPayment(from, merchant, shopID, msg)
+	case intentAskBuyer:
+		return merchantAskBuyer(from, merchant, shopID, u)
 	case intentAsk, intentUnclear:
 		if strings.TrimSpace(u.Reply) == "" {
 			return false
@@ -435,7 +535,26 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 		_, figures := shelfFacts(shopID)
 		_, dayFigures := merchantDayFigures(merchant, shopID)
 		figures = append(figures, dayFigures...)
-		if !figuresClean(u.Reply, figures...) {
+		if focus := focusOrder(shopID); focus != nil {
+			figures = append(figures, focus.Charged(), focus.Price)
+			if focus.ClaimAmount > 0 {
+				figures = append(figures, focus.ClaimAmount)
+			}
+		}
+		figures = append(figures, merchant.DailyGiveawayAllowance)
+		// The figures in the agent's own last note to her are
+		// facts too: an explanation of the allowance prompt
+		// naturally repeats its example ("set allowance 300"),
+		// and a guard that rejects the agent's own words makes
+		// the explanation unsendable.
+		if s, ok := sessions[sessionKey(shopID, from)]; ok && s.LastMerchantNote != "" {
+			for _, tok := range figureTokenRe.FindAllString(s.LastMerchantNote, -1) {
+				if v, err := strconv.ParseFloat(tok, 64); err == nil {
+					figures = append(figures, v)
+				}
+			}
+		}
+		if !figuresClean(u.Reply, figures...) || !voiceClean(u.Reply) {
 			return false
 		}
 		sendPieces(from, u.Reply)

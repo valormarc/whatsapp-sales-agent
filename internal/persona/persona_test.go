@@ -84,3 +84,14 @@ func TestFrameCounterPlainWhenNoMovement(t *testing.T) {
 		t.Fatalf("got %q", line)
 	}
 }
+
+func TestVoiceLawBindsBothPrompts(t *testing.T) {
+	buyer := BuildSystemPrompt(Context{Merchant: catalogue.Merchant{Name: "Test Shop"}})
+	if !strings.Contains(buyer, "correct English") || !strings.Contains(buyer, "polite and respectful") {
+		t.Fatal("the buyer prompt must carry the voice law")
+	}
+	merchant := BuildMerchantPrompt(catalogue.Merchant{Name: "Test Shop"}, daybook.State{})
+	if !strings.Contains(merchant, "correct English") || !strings.Contains(merchant, "never in Pidgin") {
+		t.Fatal("the merchant prompt must carry the voice law")
+	}
+}

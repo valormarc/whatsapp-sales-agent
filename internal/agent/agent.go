@@ -109,6 +109,16 @@ type Session struct {
 	Location      string
 	PendingFulfil fulfilment
 
+	// Relay state: the merchant has asked this buyer a question
+	// through the agent (see merchant_think.go), and her next
+	// answer is owed to the merchant. RelayOrderRef is the order
+	// the question is about; RelayShopID says whose buyer she
+	// is. One open question at a time; a payment claim from her
+	// answers it too, since the claim itself reaches the
+	// merchant.
+	RelayOrderRef string
+	RelayShopID   string
+
 	// Voice rotation counters: how many times this session has been
 	// sent the holding reply, the shelf offer and the bare-ack reply.
 	// They exist so repeated lines rotate through natural variants
@@ -131,6 +141,13 @@ type Session struct {
 	// session; customers never reach the code that reads them.
 	Onboarding    *OnboardingFlow
 	PendingRemove string
+
+	// LastMerchantNote is the last substantive thing the agent
+	// told the merchant in her own chat (today, the allowance
+	// prompt that rides the day answer). Her "explain this"
+	// points at it, and the thinking needs it in its facts to
+	// explain the right thing instead of guessing.
+	LastMerchantNote string
 
 	// Signup is a new merchant's open-a-shop flow, held on the
 	// pre-shop session until her shop exists; then she gets a normal
@@ -302,7 +319,11 @@ func answerMerchantDayQuestion(from, text, merchantID string) {
 	// here, in plain words with the command itself spelled out,
 	// until the day she sets one.
 	if merchant.DailyGiveawayAllowance <= 0 {
-		whatsapp.SendText(from, "One thing: you have not set a daily giveaway allowance, so it stands at GH₵0 and I have nothing to give away when buyers bargain. To set it, say: set allowance 300.")
+		note := "One thing: you have not set a daily giveaway allowance, so it stands at GH₵0 and I have nothing to give away when buyers bargain. To set it, say: set allowance 300."
+		whatsapp.SendText(from, note)
+		if s, ok := sessions[sessionKey(merchantID, from)]; ok {
+			s.LastMerchantNote = note
+		}
 	}
 }
 

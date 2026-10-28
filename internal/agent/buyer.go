@@ -46,6 +46,15 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		}
 	}
 
+	// An answer owed to her merchant: the merchant asked this
+	// buyer a question through the agent, and her reply is
+	// carried back first. A route answer is settled here by
+	// checks and claims; any other answer is relayed in her
+	// own words and her turn then continues as normal below.
+	if (s.Stage == "browsing" || s.Stage == "agreed" || s.Stage == "") && relayBuyerAnswer(from, s, merchant, msg, lower) {
+		return
+	}
+
 	// Paying for a sale already completed: choosing the direct
 	// route to the merchant's own number, or claiming a direct
 	// payment. Both attach to her own newest unpaid order in this

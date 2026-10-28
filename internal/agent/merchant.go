@@ -191,7 +191,23 @@ func handleMerchantMessage(from, text, merchantID string) {
 		return
 	}
 
-	if handleMerchantCommand(from, s, merchant, text, lower) {
+	// A question about a command is not the command. A seller
+	// quoting the allowance line back with "explain this" is
+	// asking what it means, and the command path reading her
+	// quoted figures as an instruction once set her allowance
+	// to a number she never chose. Questions skip the commands
+	// and go to the thinking, which explains from the facts.
+	if !explainRe.MatchString(lower) && handleMerchantCommand(from, s, merchant, text, lower) {
+		return
+	}
+
+	// A plain question about her day is answered by the day
+	// answer itself, not by a thinking draft: the day answer
+	// is the consistent one, and it carries the allowance
+	// prompt when she has none set, the very line she may
+	// next ask to have explained.
+	if dayAskRe.MatchString(lower) {
+		answerMerchantDayQuestion(from, text, merchantID)
 		return
 	}
 
@@ -201,7 +217,7 @@ func handleMerchantMessage(from, text, merchantID string) {
 	// answered from them. Anything the understanding cannot
 	// carry still reaches the day answer below, exactly as
 	// before.
-	if u := understandMerchantMessage(from, merchant, merchantID, text); u != nil && actOnMerchantUnderstanding(from, merchant, merchantID, u) {
+	if u := understandMerchantMessage(from, merchant, merchantID, text); u != nil && actOnMerchantUnderstanding(from, merchant, merchantID, text, u) {
 		return
 	}
 
@@ -873,7 +889,17 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 	}
 
 	if setAllowanceRe.MatchString(lower) {
+		// The amount is the figure that belongs to the command:
+		// the one after the word allowance, read last, so a
+		// figure quoted from elsewhere in her message (her own
+		// figures read back at her stand at the front of such a
+		// line) is never mistaken for the amount she is setting.
 		amount := parseOffer(text)
+		if idx := strings.LastIndex(lower, "allowance"); idx >= 0 {
+			if after := parseOffer(text[idx:]); after != nil {
+				amount = after
+			}
+		}
 		if amount == nil {
 			whatsapp.SendText(from, "I could not read the amount in that. Try: set allowance 400.")
 			return true
@@ -900,3 +926,17 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 
 	return false
 }
+
+// explainRe reads a seller asking about a thing rather than
+// commanding it: "explain this", "I don't understand", "what
+// does the allowance mean". Such a message is a question even
+// when it carries a command's words or figures inside it,
+// most often because she has quoted the agent's own line back.
+var explainRe = regexp.MustCompile(`\b(explain|i don'?t understand|do not understand|not clear|what does|what is (this|that|it|the allowance))\b`)
+
+// dayAskRe reads a plain question about the trading day: how
+// today is going, today's sales or figures, the day book. It
+// is deliberately narrow, so a question that merely carries
+// the word today ("did anyone pay today?") still reaches the
+// thinking, which can see her orders.
+var dayAskRe = regexp.MustCompile(`^(today[.!?]?|how is today|how'?s today|how is the day|today going|how are (we|sales) doing|today'?s (sales|figures|book)|my day|the day so far)[.!?]?$|^(how is today going|how is business today)[.!?]?$`)
