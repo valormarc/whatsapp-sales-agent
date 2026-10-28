@@ -476,7 +476,7 @@ func HandleInbound(in Inbound) {
 		}
 		if bareGreetingRe.MatchString(lower) && !doorShown[from] {
 			doorShown[from] = true
-			whatsapp.SendButtons(from, doorText, []whatsapp.Button{
+			whatsapp.SendButtons(from, doorText(), []whatsapp.Button{
 				{ID: "door_buy", Title: "I came to buy"},
 				{ID: "door_sell", Title: "I want to sell"},
 			})

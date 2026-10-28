@@ -53,6 +53,42 @@ func buttonsShown(recs []doorRecord) (found bool, titles []string) {
 	return false, nil
 }
 
+// The time-of-day greetings are knocks too, on their own and
+// behind a hello, good day and the Twi day greetings included:
+// each fresh stranger who opens with one meets the door.
+func TestTimeGreetingsGetTheDoor(t *testing.T) {
+	_, c := setupTwoShops(t)
+	greetings := []string{
+		"good day", "hello good day", "Good Day!", "good night",
+		"hi good morning", "hello good evening", "maakye", "maaha", "maadwo",
+	}
+	for i, g := range greetings {
+		stranger := "2335500081" + string(rune('0'+i)) + "1"
+		c.say(t, stranger, g)
+		recs := doorRecords(t, c.dir, stranger)
+		if shown, _ := buttonsShown(recs); !shown {
+			t.Fatalf("%q should meet the door buttons, got %+v", g, recs)
+		}
+	}
+	// The door answers in the day's own words.
+	if got := doorTextAt(9); !strings.HasPrefix(got, "Good morning, and welcome.") {
+		t.Fatalf("morning door = %q", got)
+	}
+	if got := doorTextAt(14); !strings.HasPrefix(got, "Good afternoon, and welcome.") {
+		t.Fatalf("afternoon door = %q", got)
+	}
+	if got := doorTextAt(19); !strings.HasPrefix(got, "Good evening, and welcome.") {
+		t.Fatalf("evening door = %q", got)
+	}
+	if got := doorTextAt(23); !strings.HasPrefix(got, "Hello, and welcome.") {
+		t.Fatalf("night door = %q", got)
+	}
+	// A greeting carrying anything else is not a bare knock.
+	if bareGreetingRe.MatchString("good day, do you have tilapia") {
+		t.Fatal("a greeting with a question in it is not a bare greeting")
+	}
+}
+
 func TestStrangerGreetingGetsTheDoorOnce(t *testing.T) {
 	dir, c := setupTwoShops(t)
 	stranger := "233550008001"
