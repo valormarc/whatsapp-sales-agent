@@ -346,8 +346,12 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		(draft.Description == "" || draft.Description == flow.Description) &&
 		(draft.ListPrice <= 0 || draft.ListPrice == flow.ListPrice) &&
 		(draft.Unit == "" || draft.Unit == flow.Unit) {
-		whatsapp.SendText(from, "I am still on that same photo.")
-		gotoNextOnboardingStep(from, flow)
+		// The reminder is short: the full question was asked
+		// a moment ago and asking it again word for word
+		// reads as a glitch, not as patience. She is told the
+		// agent is still on the photo, and what it is waiting
+		// for, in one short line.
+		whatsapp.SendText(from, "I am still on that same photo. "+photoStepReminder(flow))
 		return
 	}
 	flow.Photo = true
@@ -394,4 +398,26 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		whatsapp.SendText(from, read)
 	}
 	gotoNextOnboardingStep(from, flow)
+}
+
+// photoStepReminder names, shortly, the one thing a repeated
+// photo's open walk is waiting for, so the reminder can stand
+// in for the full question that was already asked.
+func photoStepReminder(flow *OnboardingFlow) string {
+	switch flow.Step {
+	case "name":
+		return "What is it called?"
+	case "description":
+		return "Tell me about it in a few words, whenever you are ready."
+	case "list":
+		return "What is the list price for " + flow.Name + "?"
+	case "confirmprice":
+		return "I just need you to confirm the price I read, or give me the right one."
+	case "lastprice":
+		return "What is your last price for " + flow.Name + "?"
+	case "measure":
+		return "Do you sell it by measure, or only as a whole?"
+	default:
+		return "Say yes to save it whenever you are ready, or tell me what to change."
+	}
 }

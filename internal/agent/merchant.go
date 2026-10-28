@@ -197,11 +197,6 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 		return
 	}
 
-	if len(merchant.Products) == 0 {
-		whatsapp.SendText(from, "Hello. Your shelf at "+merchant.Name+" is empty just now, so there is nothing to sell yet. Say \"add a product\" and I will walk you through it: a name, a short description, the price customers see, and your last price, the lowest you would accept, which customers never see. The moment you confirm, I can sell it.")
-		return
-	}
-
 	// A question about a command is not the command. A seller
 	// quoting the allowance line back with "explain this" is
 	// asking what it means, and the command path reading her
@@ -211,8 +206,42 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	// The same holds when the quote itself does the pointing:
 	// a reply quoting the note is about the note.
 	quotingNote := contextID != "" && s.LastNoteMsgID != "" && contextID == s.LastNoteMsgID
+
+	// An advert pasted with no walk open is itself the
+	// instruction to list it: she copies the advert she
+	// already posts everywhere and sends it once, the way she
+	// would hand it to a person, and a person would start the
+	// listing from it, not thank her and note it down. It is
+	// tried at the two doors where nothing else owns her
+	// words: an empty shelf (before its help text, which she
+	// is plainly past), and below, after her commands have
+	// had their chance, for a stocked shop. A reply quoting
+	// the agent's own note is about the note, never an
+	// advert, however its lines and figures read.
+	if len(merchant.Products) == 0 {
+		if !quotingNote {
+			flow := &OnboardingFlow{Step: "name"}
+			s.Onboarding = flow
+			if openWalkFromAdvert(from, s, flow, text) {
+				return
+			}
+			s.Onboarding = nil
+		}
+		whatsapp.SendText(from, "Hello. Your shelf at "+merchant.Name+" is empty just now, so there is nothing to sell yet. Say \"add a product\" and I will walk you through it: a name, a short description, the price customers see, and your last price, the lowest you would accept, which customers never see. The moment you confirm, I can sell it.")
+		return
+	}
+
 	if !explainRe.MatchString(lower) && !quotingNote && handleMerchantCommand(from, s, merchant, text, lower) {
 		return
+	}
+
+	if s.Onboarding == nil && !quotingNote && !explainRe.MatchString(lower) {
+		flow := &OnboardingFlow{Step: "name"}
+		s.Onboarding = flow
+		if openWalkFromAdvert(from, s, flow, text) {
+			return
+		}
+		s.Onboarding = nil
 	}
 
 	// A plain question about her day is answered by the day
@@ -391,45 +420,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		// message, and the walk then asks only for what the
 		// advert did not carry. What was read is told back to
 		// her, so nothing is taken from her words in silence.
-		if draft, note, isAdvert := parsePastedAdvert(text); isAdvert {
-			flow.Name = draft.Name
-			if draft.ListPrice > 0 {
-				flow.ListPrice = draft.ListPrice
-				flow.PriceNeedsConfirm = draft.PriceDoubted
-				flow.PriceConfirmed = false
-			}
-			if draft.Description != "" {
-				flow.Description = draft.Description
-			}
-			if draft.Unit != "" {
-				flow.Unit, flow.BaseQty = draft.Unit, draft.BaseQty
-			}
-			if note != "" {
-				if flow.Description != "" {
-					flow.Description += "\n" + note + "."
-				} else {
-					flow.SizeNote = note
-				}
-			}
-			if enterDupChoice(from, s, flow) {
-				return
-			}
-			var read []string
-			if draft.ListPrice > 0 {
-				read = append(read, "I took the price from your message: "+money.GHS(draft.ListPrice)+".")
-			}
-			if draft.Name != "" && draft.Description != "" {
-				read = append(read, "I have read it as \""+draft.Name+"\", with the details under it as the description.")
-			} else if draft.Name == "" && draft.Description != "" {
-				read = append(read, "I have taken your words as the description.")
-			}
-			if note != "" {
-				read = append(read, "I have noted the size, "+strings.TrimPrefix(note, "Size ")+", with the description.")
-			}
-			if len(read) > 0 {
-				whatsapp.SendText(from, strings.Join(read, " "))
-			}
-			gotoNextOnboardingStep(from, flow)
+		if openWalkFromAdvert(from, s, flow, text) {
 			return
 		}
 		// Her line is read the way a person reads it: a price
@@ -954,3 +945,58 @@ var explainRe = regexp.MustCompile(`\b(explain|i don'?t understand|do not unders
 // the word today ("did anyone pay today?") still reaches the
 // thinking, which can see her orders.
 var dayAskRe = regexp.MustCompile(`^(today[.!?]?|how is today|how'?s today|how is the day|today going|how are (we|sales) doing|today'?s (sales|figures|book)|my day|the day so far)[.!?]?$|^(how is today going|how is business today)[.!?]?$`)
+
+// openWalkFromAdvert reads a whole pasted advert into an
+// onboarding walk: the name, the description and the marked
+// price are separated out of her one message, told back to
+// her, and the walk is moved to the first question the advert
+// did not answer. It serves two doors alike: the name step of
+// a walk she already started, and a merchant who pastes an
+// advert with no walk open at all, where the paste itself is
+// the instruction to list it. It returns false when the text
+// is not an advert, and the caller carries on as before.
+func openWalkFromAdvert(from string, s *Session, flow *OnboardingFlow, text string) bool {
+	draft, note, isAdvert := parsePastedAdvert(text)
+	if !isAdvert {
+		return false
+	}
+	flow.Name = draft.Name
+	if draft.ListPrice > 0 {
+		flow.ListPrice = draft.ListPrice
+		flow.PriceNeedsConfirm = draft.PriceDoubted
+		flow.PriceConfirmed = false
+	}
+	if draft.Description != "" {
+		flow.Description = draft.Description
+	}
+	if draft.Unit != "" {
+		flow.Unit, flow.BaseQty = draft.Unit, draft.BaseQty
+	}
+	if note != "" {
+		if flow.Description != "" {
+			flow.Description += "\n" + note + "."
+		} else {
+			flow.SizeNote = note
+		}
+	}
+	if enterDupChoice(from, s, flow) {
+		return true
+	}
+	var read []string
+	if draft.ListPrice > 0 {
+		read = append(read, "I took the price from your message: "+money.GHS(draft.ListPrice)+".")
+	}
+	if draft.Name != "" && draft.Description != "" {
+		read = append(read, "I have read it as \""+draft.Name+"\", with the details under it as the description.")
+	} else if draft.Name == "" && draft.Description != "" {
+		read = append(read, "I have taken your words as the description.")
+	}
+	if note != "" {
+		read = append(read, "I have noted the size, "+strings.TrimPrefix(note, "Size ")+", with the description.")
+	}
+	if len(read) > 0 {
+		whatsapp.SendText(from, strings.Join(read, " "))
+	}
+	gotoNextOnboardingStep(from, flow)
+	return true
+}

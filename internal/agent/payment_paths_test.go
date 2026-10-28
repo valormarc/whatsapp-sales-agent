@@ -361,7 +361,7 @@ func TestLinkSettlementStillSettlesAndMarksTheSeevPath(t *testing.T) {
 	if o["status"] != "paid" || o["paymentPath"] != "seev" {
 		t.Fatalf("order after the webhook = %v, want paid on the seev path", o)
 	}
-	if got := c.last(t, buyer); !strings.Contains(got, "Payment confirmed: GH₵161") {
+	if got := c.last(t, buyer); !strings.Contains(got, "Payment confirmed: GH₵"+strconv.Itoa(agreed)) {
 		t.Fatalf("buyer settlement message = %q", got)
 	}
 }
