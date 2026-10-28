@@ -56,25 +56,30 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		return
 	}
 
-	// An agreed deal waiting on the buyer. Her words about the
-	// payment are understood before anything is resent: a buyer
-	// saying the payment failed on a bad network, or that the
-	// link has expired, is not asking for the same link again,
-	// and answering her with it unread is exactly the deafness
-	// the understanding step exists to end. Only the payment
-	// intents act this early; everything else falls through to
-	// the resend and the rest of the flow, whose own fallback
-	// understands the rest.
-	if s.Stage == "agreed" {
-		if u := understandBuyerMessage(from, s, merchant, shopID, msg); u != nil &&
-			(u.Intent == intentPaymentBlocked || u.Intent == intentPaymentExpired || u.Intent == intentPaymentLater) &&
-			actOnBuyerUnderstanding(from, s, merchant, shopID, u) {
+	// Thinking first. On an open turn (not inside a guided
+	// flow: no haggle running, no fulfilment, no pending close,
+	// no onboarding), the agent thinks before it answers: the
+	// model analyses her message against her whole situation
+	// and names the act, and the act is carried out from the
+	// platform's own records. This is what answers "the link
+	// expired" with a fresh link instead of the same one resent
+	// unread, "I want to pay now" with the link itself instead
+	// of a product want, and a question outside this platform
+	// with a thought-through refusal instead of an answer or a
+	// blank. What the thinking declines falls through to the
+	// branches below, the net, unchanged.
+	if (s.Stage == "browsing" || s.Stage == "agreed" || s.Stage == "") && !s.PendingClose && s.Onboarding == nil && s.Signup == nil && parseOffer(lower) == nil {
+		if u := thinkBuyerMessage(from, s, merchant, shopID, msg); u != nil && actOnBuyerUnderstanding(from, s, merchant, shopID, u) {
 			return
 		}
-		if linkRe.MatchString(lower) {
-			whatsapp.SendText(from, "Here is your payment link: "+s.PaymentURL)
-			return
-		}
+	}
+
+	// An agreed deal waiting on the buyer: resend the link on
+	// request (the net's shape; the thinking above serves the
+	// request first whenever it can be read).
+	if s.Stage == "agreed" && linkRe.MatchString(lower) {
+		whatsapp.SendText(from, "Here is your payment link: "+s.PaymentURL)
+		return
 	}
 
 	// A price is agreed and the sale is waiting on how the goods
@@ -477,17 +482,6 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			return
 		}
 		recordWantAndOfferShelf(from, s, msg)
-		return
-	}
-
-	// Nothing in the rules matched her words, so before any
-	// canned line the message is understood: the model reads
-	// what she wrote with the facts of this conversation, and
-	// the agent acts on what she means. A buyer reporting that
-	// her payment failed on a bad network, or that her link
-	// has expired, is answered from her order, never handed
-	// this fallback as if her message was never read.
-	if u := understandBuyerMessage(from, s, merchant, shopID, msg); u != nil && actOnBuyerUnderstanding(from, s, merchant, shopID, u) {
 		return
 	}
 

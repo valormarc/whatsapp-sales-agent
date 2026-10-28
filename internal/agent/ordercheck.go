@@ -43,6 +43,12 @@ func handleOrderCheck(from string, merchant *catalogue.Merchant, msg, lower stri
 			whatsapp.SendText(from, "I cannot find an order with the reference "+ref+" for you at "+merchant.Name+". Check the reference and send it again, or say check my order and I will pull up your latest one here.")
 			return true
 		}
+		// She names her order and asks for its link in the same
+		// breath: that is a payment request, not a status check,
+		// so the check steps aside and the thinking serves it.
+		if o.Status == "pending" && linkRe.MatchString(lower) {
+			return false
+		}
 		sendPieces(from, orderReadback(merchant, o)...)
 		return true
 	}

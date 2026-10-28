@@ -1,28 +1,35 @@
 package agent
 
-// The understanding step. People talk to this agent the way
-// they talk to a person: in their own words, in fragments, in
+// Thinking first. This agent is a mind working for a shop, not
+// a board of canned answers. People talk to it the way they
+// talk to a person, in their own words, in fragments, in
 // Ghanaian English and Pidgin, about whatever life has just
-// done to the conversation. A buyer whose payment failed
-// because the network dropped does not write in keywords, and
-// she must never be answered "I don't understand" or handed
-// the same canned line as if her message was never read.
+// done to the conversation, and a person behind a counter
+// would understand them, because a person thinks. So on every
+// open turn the agent thinks first: the model reads the
+// message with the whole situation in hand (who is speaking,
+// the shop, the shelf, her open order, where the conversation
+// stands), does its own analysis of what the person means and
+// what the moment calls for, and names the act the platform
+// should take. The response then comes out of that thinking,
+// but it is spoken inside the platform's world and bound by
+// its facts: the code executes the act with the shop's own
+// records, every figure is a recorded figure, and a draft
+// carrying an invented number is never sent. The model has
+// freedom to understand and to phrase; it has no freedom to
+// invent stock, prices, times, promises, or the truth about
+// money, and a payment it understands a buyer to be claiming
+// is still only a claim, settled by the merchant's own word
+// or the platform's confirmation, exactly as the rules had it.
 //
-// So before the agent gives up on a message its rules did not
-// match, the message is understood: the model reads it with
-// the facts of the conversation (the shop, the shelf, the
-// speaker's open order) and returns what the person means and
-// intends, as one of a small set of intents. The agent then
-// acts on that intent with its own verified words and facts.
-// The model understands and, for open questions, drafts; code
-// still owns every figure, every price and the truth about
-// money. A drafted reply carrying a figure that is not one of
-// the facts is never sent.
-//
-// Understanding is not believing: a buyer understood to be
-// claiming she has paid is still only claiming, and the claim
-// still goes to the merchant, exactly as before. The claim
-// path runs before this step and is never reached by it.
+// The keyword branches below the thinking step are the net,
+// not the mind: they catch what the thinking declined and
+// everything on a day the model cannot be reached, and they
+// are byte for byte the behaviour the agent had before it
+// learned to think. Guided flows (a haggle the model already
+// leads, the fulfilment steps, an onboarding walk, a pending
+// close) own their turns and are never interrupted by this
+// step.
 
 import (
 	"encoding/json"
@@ -40,14 +47,19 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
-// The intents the understanding step can return. Payment
-// intents are acted on by code with the order's own facts; the
-// model's drafted words are used only for ask and unclear.
+// The acts a thinking turn can name. Payment acts are executed
+// by code from the order itself; the model's drafted words are
+// used only for ask and unclear, and only after every figure
+// in them has been verified against the facts.
 const (
 	intentPaymentBlocked = "payment_blocked" // could not pay: network, service down, bank trouble
 	intentPaymentExpired = "payment_expired" // the link is dead, expired, will not open as a link
 	intentPaymentLater   = "payment_later"   // she will pay, just not now
+	intentPaymentWant    = "payment_want"    // she wants to pay now, or asks for the link
+	intentPaymentClaim   = "payment_claim"   // she says she has paid directly: a claim, never proof
 	intentItem           = "item"            // she is asking about a product on the shelf
+	intentOrderStatus    = "order_status"    // she is asking after an order she already made
+	intentShelf          = "shelf"           // she wants to see what the shop has
 	intentAsk            = "ask"             // a question the facts can answer
 	intentOffTopic       = "offtopic"        // nothing to do with the shop
 	intentUnclear        = "unclear"         // a person would still ask what she means
@@ -57,6 +69,11 @@ type understood struct {
 	Intent string `json:"intent"`
 	Item   string `json:"item"`
 	Reply  string `json:"reply"`
+
+	// NamedAmount is not the model's: it is the amount the
+	// buyer herself named in her own message, read by code,
+	// carried here so a claim records what she said she sent.
+	NamedAmount *float64 `json:"-"`
 }
 
 var figureTokenRe = regexp.MustCompile(`\d+(?:\.\d+)?`)
@@ -98,26 +115,33 @@ func shelfFacts(shopID string) (string, []float64) {
 	return strings.Join(parts, "; "), figures
 }
 
-const understandSystem = `You are the understanding step of a WhatsApp sales agent for a small shop in Ghana. A person is talking to the shop in their own words, the way people talk: fragments, Ghanaian English, Pidgin, Twi words, half sentences. Your one job is to work out what the person means and what they intend, from their words and the facts you are given. People must never be told "I don't understand" for a sentence a person would follow at once.
+const thinkSystem = `You are the thinking of a WhatsApp sales agent for a small shop in Ghana. A person is talking to the shop in their own words, the way people talk: fragments, Ghanaian English, Pidgin, Twi words, half sentences, whatever life has just done to the conversation. Before the shop answers, you think, the way the person behind the counter would: read what she means, look at her situation in the facts you are given, work out what she is asking for and what would actually help her, and name the act the shop should take.
+
+You have freedom in understanding and in phrasing. You have no freedom to invent: never a figure, a product, a stock level, a time or a promise that is not in the facts. People must never be told "I don't understand" for a sentence a person would follow at once.
 
 Answer with strict JSON only, no other text:
 {"intent": "...", "item": "...", "reply": "..."}
 
-The intents:
-- "payment_blocked": the person tried to pay, or is trying, and could not: network trouble, the payment service not working, the bank or MoMo failing, no reception. Not a refusal to pay.
-- "payment_expired": the payment link itself is dead: it has expired, it is closed, it will not open as a link.
-- "payment_later": the person will pay, just later: tomorrow, in the evening, when money comes.
-- "item": the person is asking about, or wants, a product on the shelf. Put the product's name, as it appears in the facts, in "item".
-- "ask": a question about the shop that the facts you are given can answer. Draft the answer in "reply": short, plain, warm, in the person's own register, using ONLY the facts given. Never invent a figure, a product, a time or a promise.
+The acts you can name:
+- "payment_blocked": she tried to pay, or is trying, and could not: network trouble, the payment service not working, the bank or MoMo failing, no reception. Not a refusal to pay.
+- "payment_expired": the payment link itself is dead: it has expired, it is closed, it will not open as a link, she asks for a NEW link because the old one is finished.
+- "payment_later": she will pay, just later: tomorrow, in the evening, when money comes.
+- "payment_want": she wants to pay now, or asks for the payment link: "send me the payment link", "I want to pay now", "let me pay", asking for the link again without saying it is dead.
+- "payment_claim": she says she has paid by sending money directly (MoMo to the shop's own number), in her own words, whether or not she uses the word paid: "I just sent the money", "check your phone, I have done it". This is a claim for the merchant to confirm, never a settled payment.
+- "item": she is asking about, or wants, a product on the shelf. Put the product's name, as it appears in the facts, in "item".
+- "order_status": she is asking after an order she already made: where it stands, whether it is paid, what happens next with it.
+- "shelf": she wants to see what the shop has, or start again from the shelf.
+- "ask": a question about the shop that the facts you are given can answer. Draft the answer in "reply": short, plain, warm, in her own register, using ONLY the facts given.
 - "offtopic": the message has nothing to do with this shop, its goods, an order or a payment.
-- "unclear": even reading kindly, a person would have to ask what is meant. Draft ONE short clarifying question in "reply", in the person's own terms, offering the likely two readings.
+- "unclear": even reading kindly, a person would have to ask what is meant. Draft ONE short clarifying question in "reply", in her own terms, offering the likely two readings.
 
-Leave "item" and "reply" empty where the intent does not use them.`
+Leave "item" and "reply" empty where the act does not use them.`
 
-// understandBuyerMessage asks the model what a buyer means.
-// It returns nil when no model is configured or the answer
-// cannot be read, and the caller keeps its old behaviour.
-func understandBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, shopID, msg string) *understood {
+// thinkBuyerMessage is the thinking step for a buyer: the
+// model analyses her message against her whole situation. It
+// returns nil when no model is configured or the analysis
+// cannot be read, and the caller keeps the net's behaviour.
+func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, shopID, msg string) *understood {
 	shelf, _ := shelfFacts(shopID)
 	var b strings.Builder
 	b.WriteString("The shop is " + merchant.Name + ".\n")
@@ -127,19 +151,31 @@ func understandBuyerMessage(from string, s *Session, merchant *catalogue.Merchan
 	} else {
 		b.WriteString("The shop has no set delivery fee; delivery is arranged with the buyer.\n")
 	}
-	if order := orders.Default.NewestUnpaidFor(shopID, from); order != nil {
-		b.WriteString("This customer has an open order waiting for payment: " + order.ProductName + ", " + money.GHS(order.Charged()) + ", reference " + order.Reference + ".\n")
-	} else {
-		b.WriteString("This customer has no open order waiting for payment.\n")
+	if s != nil && s.LastViewed != nil {
+		b.WriteString("She was last looking at: " + s.LastViewed.Name + ".\n")
 	}
-	b.WriteString("\nThe customer's message: " + msg)
-	sys := understandSystem
+	if order := orders.Default.NewestUnpaidFor(shopID, from); order != nil {
+		b.WriteString("She has an open order waiting for payment: " + order.ProductName + ", " + money.GHS(order.Charged()) + ", reference " + order.Reference + ".\n")
+		if order.ClaimStatus == "open" {
+			b.WriteString("She has already told the shop she paid directly, and that claim is waiting for the merchant to confirm.\n")
+		}
+	} else if latest := orders.Default.NewestFor(shopID, from); latest != nil && latest.Status == "paid" {
+		b.WriteString("Her latest order (" + latest.Reference + ", " + latest.ProductName + ") is paid.\n")
+	} else {
+		b.WriteString("She has no open order waiting for payment.\n")
+	}
+	b.WriteString("\nHer message: " + msg)
+	sys := thinkSystem
 	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys})
-	return parseUnderstood(out)
+	u := parseUnderstood(out)
+	if u != nil {
+		u.NamedAmount = claimAmountOf(msg)
+	}
+	return u
 }
 
 // merchantDayFigures returns the merchant's day as a fact
-// line for the understanding prompt, plus the day's figures a
+// line for the thinking prompt, plus the day's figures a
 // drafted reply is allowed to use.
 func merchantDayFigures(merchant *catalogue.Merchant, shopID string) (string, []float64) {
 	day := daybook.Default.GetDayState(shopID, daybook.Options{Allowance: merchant.DailyGiveawayAllowance})
@@ -158,7 +194,7 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	b.WriteString("Things she can ask the agent to do: show her catalogue, change a price or a last price, set her daily giveaway allowance, remove a product, add a product by describing it or sending a photo, and tell her how today is going.\n")
 	b.WriteString("For her, the payment and item intents still apply when she is asking about a customer's order or a product; use \"ask\" for any question her shelf, her day or those abilities can answer, drafting the reply from the facts only.\n")
 	b.WriteString("\nThe owner's message: " + msg)
-	sys := understandSystem
+	sys := thinkSystem
 	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys})
 	return parseUnderstood(out)
 }
@@ -178,19 +214,43 @@ func parseUnderstood(out *string) *understood {
 		return nil
 	}
 	switch u.Intent {
-	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentItem, intentAsk, intentOffTopic, intentUnclear:
+	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
+		intentItem, intentOrderStatus, intentShelf, intentAsk, intentOffTopic, intentUnclear:
 		return &u
 	}
 	return nil
 }
 
+// orderPaymentURL rebuilds an order's payment link address
+// from the book alone: a live order's hosted page lives under
+// its provider reference, and a dry-run order under its own
+// reference, the two shapes the sale itself minted. This is
+// what lets a payment conversation survive the agent's own
+// restarts: the link is in the book, not only in a session.
+func orderPaymentURL(o *orders.Order) string {
+	if o.ProviderRef != nil && *o.ProviderRef != "" {
+		return "https://pay.seevplus.com/" + *o.ProviderRef
+	}
+	return "https://pay.example.test/" + o.Reference
+}
+
 // actOnBuyerUnderstanding carries out what a buyer was
 // understood to mean. It returns true when it answered, so the
-// caller does not fall back to its canned line.
+// caller does not fall back to the net.
 func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Merchant, shopID string, u *understood) bool {
 	switch u.Intent {
 	case intentOffTopic:
 		laneStrike(from, s, merchant)
+		return true
+	case intentShelf:
+		sendPieces(from, "Welcome to "+merchant.Name+".", productListText(shopID))
+		return true
+	case intentOrderStatus:
+		o := orders.Default.NewestFor(shopID, from)
+		if o == nil {
+			return false
+		}
+		sendPieces(from, orderReadback(merchant, o)...)
 		return true
 	case intentItem:
 		p := catalogue.FindProduct(shopID, strings.ToLower(u.Item))
@@ -203,7 +263,14 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		}
 		sendPieces(from, "Still available.", p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Want to make an offer?"))
 		return true
-	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater:
+	case intentPaymentClaim:
+		order := orders.Default.NewestUnpaidFor(shopID, from)
+		if order == nil {
+			return false
+		}
+		createClaim(from, merchant, order, u.NamedAmount, "", false)
+		return true
+	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant:
 		order := orders.Default.NewestUnpaidFor(shopID, from)
 		if order == nil {
 			return false
@@ -213,6 +280,8 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 			return answerPaymentBlocked(from, s, merchant, shopID, order)
 		case intentPaymentExpired:
 			return reissueLink(from, s, merchant, order)
+		case intentPaymentWant:
+			return sendPaymentLink(from, s, merchant, order)
 		default:
 			sendPieces(from,
 				"No problem at all.",
@@ -238,6 +307,36 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		return true
 	}
 	return false
+}
+
+// sendPaymentLink answers a buyer who wants to pay now, or
+// asks for the link: the link comes from the order itself, so
+// it is served the same whether her session is warm or the
+// agent has restarted since the sale. When the order carries
+// nothing to send (its first link never landed), a fresh one
+// is minted instead of a dead end being repeated.
+func sendPaymentLink(from string, s *Session, merchant *catalogue.Merchant, order *orders.Order) bool {
+	url := ""
+	if order.ProviderRef != nil && *order.ProviderRef != "" {
+		url = orderPaymentURL(order)
+	} else if s != nil && s.PaymentURL != "" {
+		url = s.PaymentURL
+	}
+	if url == "" {
+		return reissueLink(from, s, merchant, order)
+	}
+	if s != nil {
+		s.PaymentURL = url
+	}
+	pieces := []string{
+		"Of course. Here is the payment link for your order " + order.Reference + " (" + order.ProductName + ", " + money.GHS(order.Charged()) + ").",
+		"Pay here to complete your order: " + url,
+	}
+	if merchant.PayoutPhone != "" {
+		pieces = append(pieces, "Or send MoMo directly to "+merchant.Name+"'s number, "+merchant.PayoutPhone+", and send me the screenshot here.")
+	}
+	sendPieces(from, pieces...)
+	return true
 }
 
 // answerPaymentBlocked answers a buyer who could not pay: the

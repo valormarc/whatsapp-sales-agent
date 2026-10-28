@@ -5,6 +5,7 @@ package agent
 
 import (
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
+	"github.com/valormarc/hackathon-agent/internal/orders"
 	"regexp"
 	"strings"
 )
@@ -72,4 +73,41 @@ func parseShopEntry(lower string, allowName bool) (*catalogue.Merchant, string) 
 		}
 	}
 	return nil, lower
+}
+
+// recoverBuyerFromOrders rebuilds a buyer's place from the
+// order book when her session is gone. Sessions live in
+// memory, so an agent restart (a deploy, a crash) used to
+// orphan a buyer mid-deal: her order sat in the book, paid
+// for by nobody, while the agent greeted her as a stranger
+// and asked whose shop she had come for. The book is the
+// durable truth, so it is asked: if her number holds an open
+// order in exactly one shop, that is her shop, she is bound
+// to it again, and a session is restored at the agreed stage
+// with the order's own link, so whatever she says next is
+// answered inside the deal she is actually in. It returns the
+// shop id, or nothing when the book cannot place her.
+func recoverBuyerFromOrders(from string) string {
+	shops := map[string]bool{}
+	var newest *orders.Order
+	for _, o := range orders.Default.All() {
+		if o.From != from || o.Status != "pending" {
+			continue
+		}
+		shops[o.MerchantID] = true
+		oo := o
+		if newest == nil || oo.Reference > newest.Reference {
+			newest = &oo
+		}
+	}
+	if len(shops) != 1 || newest == nil {
+		return ""
+	}
+	shopID := newest.MerchantID
+	bindings[from] = shopID
+	key := sessionKey(shopID, from)
+	if _, ok := sessions[key]; !ok {
+		sessions[key] = &Session{Stage: "agreed", MerchantID: shopID, PaymentURL: orderPaymentURL(newest)}
+	}
+	return shopID
 }

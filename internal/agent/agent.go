@@ -476,6 +476,14 @@ func HandleInbound(in Inbound) {
 		}
 	}
 
+	// No shop resolved by word or link, but the order book may
+	// still know her: a buyer whose session was lost to a
+	// restart and whose order is still open is recovered from
+	// the book before she can be greeted as a stranger.
+	if boundID == "" {
+		boundID = recoverBuyerFromOrders(from)
+	}
+
 	// No shop resolved: the only other door is opening a shop of her
 	// own; anything else gets the ask, and nothing is sold. A bare
 	// greeting from a number the agent has never greeted gets the

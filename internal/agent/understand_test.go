@@ -198,3 +198,101 @@ func TestMerchantUnderstandingAnswersAndRefuses(t *testing.T) {
 		t.Fatalf("nothing may be sent for a poisoned draft, got %v", got)
 	}
 }
+
+func TestPaymentWantServesTheLinkFromTheOrder(t *testing.T) {
+	merchant := "233550001851"
+	shopJSON := strings.Replace(shopWithBag, `"dailyGiveawayAllowance":300`, `"dailyGiveawayAllowance":300,"payoutPhone":"233550001851"`, 1)
+	dir := setupChat(t, merchant, shopJSON)
+	c := &chat{dir: dir}
+	buyer := "233550001852"
+	seedOpenOrder(t, "TEST-3004", buyer, 1)
+	shop := catalogue.GetMerchant(MerchantID)
+
+	// The order carries a provider reference, so the link is
+	// rebuilt from the book and served even on a cold session.
+	if !actOnBuyerUnderstanding(buyer, &Session{Stage: "browsing"}, shop, MerchantID, &understood{Intent: intentPaymentWant}) {
+		t.Fatal("wants-to-pay must be answered")
+	}
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "Here is the payment link for your order TEST-3004") || !strings.Contains(got, "pay.seevplus.com/PAY-UNDER-1") {
+		t.Fatalf("wants-to-pay answer = %q", got)
+	}
+
+	// An order with nothing to resend gets a fresh link minted
+	// instead of a dead end repeated.
+	orders.Default.RecordOrder("TEST-3005", orders.Order{
+		From: buyer, Status: "pending", ProductName: "Handmade Beaded Bag",
+		Price: 850, Total: 850, MerchantID: MerchantID, LinkAttempts: 1,
+	})
+	if !actOnBuyerUnderstanding(buyer, &Session{Stage: "browsing"}, shop, MerchantID, &understood{Intent: intentPaymentWant}) {
+		t.Fatal("wants-to-pay with nothing to send must still be answered")
+	}
+	got = strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "pay.example.test/TEST-3005-2") {
+		t.Fatalf("the fresh link answer = %q", got)
+	}
+}
+
+func TestPaymentClaimFromThinkingGoesToTheMerchant(t *testing.T) {
+	merchant := "233550001861"
+	dir := setupChat(t, merchant, shopWithBag)
+	c := &chat{dir: dir}
+	buyer := "233550001862"
+	seedOpenOrder(t, "TEST-3006", buyer, 1)
+
+	if !actOnBuyerUnderstanding(buyer, &Session{Stage: "agreed"}, catalogue.GetMerchant(MerchantID), MerchantID, &understood{Intent: intentPaymentClaim}) {
+		t.Fatal("an understood claim must be acted on")
+	}
+	o := orders.Default.GetOrder("TEST-3006")
+	if o == nil || o.ClaimStatus != "open" || o.Status == "paid" {
+		t.Fatalf("the claim must be open and the order unpaid, got %+v", o)
+	}
+	if got := strings.Join(c.replies(t, merchant), "\n"); !strings.Contains(got, "TEST-3006") {
+		t.Fatalf("the merchant must receive the claim, got %q", got)
+	}
+}
+
+func TestOrderStatusAndShelfFromThinking(t *testing.T) {
+	merchant := "233550001871"
+	dir := setupChat(t, merchant, shopWithBag)
+	c := &chat{dir: dir}
+	buyer := "233550001872"
+	seedOpenOrder(t, "TEST-3007", buyer, 1)
+	shop := catalogue.GetMerchant(MerchantID)
+	s := &Session{Stage: "browsing"}
+
+	if !actOnBuyerUnderstanding(buyer, s, shop, MerchantID, &understood{Intent: intentOrderStatus}) {
+		t.Fatal("an order status ask must be answered")
+	}
+	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Order TEST-3007") || !strings.Contains(got, "not paid yet") {
+		t.Fatalf("status answer = %q", got)
+	}
+	if !actOnBuyerUnderstanding(buyer, s, shop, MerchantID, &understood{Intent: intentShelf}) {
+		t.Fatal("a shelf ask must be answered")
+	}
+	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Handmade Beaded Bag") {
+		t.Fatalf("shelf answer = %q", got)
+	}
+}
+
+func TestBuyerIsRecoveredFromHerOpenOrder(t *testing.T) {
+	merchant := "233550001881"
+	dir := setupChat(t, merchant, shopWithBag)
+	c := &chat{dir: dir}
+	buyer := "233550001882"
+	seedOpenOrder(t, "TEST-3008", buyer, 1)
+
+	// The agent restarts: every session and binding is gone,
+	// but her order is still open in the book.
+	sessions = map[string]*Session{}
+	bindings = map[string]string{}
+
+	HandleInbound(Inbound{From: buyer, Text: "send me the payment link"})
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "pay.seevplus.com/PAY-UNDER-1") {
+		t.Fatalf("a recovered buyer must be served her link from the book, got %q", got)
+	}
+	if bindings[buyer] != MerchantID {
+		t.Fatalf("the buyer must be bound again to her shop, bindings = %v", bindings)
+	}
+}
