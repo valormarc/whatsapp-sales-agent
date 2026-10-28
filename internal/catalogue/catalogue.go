@@ -347,7 +347,7 @@ var ErrEmptyShopName = errors.New("a shop needs a name")
 
 // shopCodeFor derives a shop code from a shop name: the first word,
 // letters only, upper case, made unique against the shops already in
-// the catalogue (EFUA, then EFUA2, and so on).
+// the catalogue (EFUA, then EFUA-2, and so on).
 func shopCodeFor(c Catalogue, name string) string {
 	base := ""
 	for _, w := range wordSplit.Split(strings.ToLower(name), -1) {
@@ -380,8 +380,16 @@ func shopCodeFor(c Catalogue, name string) string {
 	if !taken(code) {
 		return code
 	}
+	// A clash is settled with a hyphen and a counting number:
+	// BELORA, then BELORA-2, then BELORA-3. The hyphen keeps the
+	// number off her name, where a melted suffix (BELORA2) reads
+	// as if the shop itself were named "Belora 2". The number
+	// counts from 2 with no fixed width: it stays one digit while
+	// one digit suffices and grows only when a name is common
+	// enough to need it. Her shop's name itself never carries it;
+	// the code is the address her customers enter by, nothing more.
 	for i := 2; ; i++ {
-		candidate := code + strconv.Itoa(i)
+		candidate := code + "-" + strconv.Itoa(i)
 		if !taken(candidate) {
 			return candidate
 		}

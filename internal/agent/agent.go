@@ -1202,7 +1202,15 @@ var (
 	// The explicit entry token in a share link's prefilled text, in
 	// its SHOP-EFUA and shop:efua spellings. The word after the
 	// marker must resolve to a real shop code, or nothing is routed.
-	shopTokenRe = regexp.MustCompile(`\bshop[-:\s]+([a-z0-9]+)\b`)
+	// A code can itself carry a hyphen (BELORA-2, the form a code
+	// takes when its name was already in use), so the capture
+	// allows one hyphenated tail.
+	shopTokenRe = regexp.MustCompile(`\bshop[-:\s]+([a-z0-9]+(?:-[a-z0-9]+)?)\b`)
+	// A hyphenated code typed bare, without the SHOP- marker. It is
+	// read before the bare word pass below, which would split it
+	// at the hyphen and match its head alone, landing the buyer in
+	// the first shop of that name instead of the one she meant.
+	hyphenCodeRe = regexp.MustCompile(`\b([a-z]{3,}-[0-9]+)\b`)
 	// A bare shop code standing as a word of the message (what a
 	// buyer types when she has the code but not the link).
 	bareWordSplit = regexp.MustCompile(`[^a-z0-9]+`)
@@ -1229,6 +1237,13 @@ func parseShopEntry(lower string, allowName bool) (*catalogue.Merchant, string) 
 			return shop, rest
 		}
 		return nil, lower
+	}
+	if m := hyphenCodeRe.FindStringSubmatchIndex(lower); m != nil {
+		code := lower[m[2]:m[3]]
+		if shop := catalogue.MerchantByShopCode(code); shop != nil {
+			rest := strings.TrimSpace(lower[:m[0]] + " " + lower[m[1]:])
+			return shop, rest
+		}
 	}
 	for _, w := range bareWordSplit.Split(lower, -1) {
 		if len(w) < 3 {
