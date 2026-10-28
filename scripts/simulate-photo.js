@@ -7,10 +7,10 @@
 // she throws in a photograph with a short caption carrying a size
 // and an @ price, the agent reads her price and her words out of
 // it, asks only for the pieces she did not give (the name, then
-// her floor, which no post ever carries), and saves nothing until
+// her last price, which no post ever carries), and saves nothing until
 // her yes. A second photo with no words at all starts the same
 // walk from its first question, and she cancels it. A customer
-// then arrives and buys the first product above its floor.
+// then arrives and buys the first product above its last price.
 //
 // Run: node scripts/simulate-photo.js
 import { spawn } from 'node:child_process';
@@ -160,17 +160,17 @@ try {
 
   r = await say(MERCHANT, 'merchant', 'Court Heels');
   check(
-    'with the name in, the next question is her floor (the description and price already came with the photo)',
-    last(r).includes('floor price'),
+    'with the name in, the next question is her last price (the description and price already came with the photo)',
+    last(r).includes('last price'),
     last(r),
   );
 
   r = await say(MERCHANT, 'merchant', '200');
-  check('the measure question follows the floor', last(r).includes('by measure'), last(r));
+  check('the measure question follows the last price', last(r).includes('by measure'), last(r));
 
   r = await say(MERCHANT, 'merchant', 'whole');
   check(
-    'the summary shows the thrown-in price and her floor',
+    'the summary shows the thrown-in price and her last price',
     last(r).includes('GH₵250') && last(r).includes('GH₵200'),
     last(r),
   );
@@ -211,7 +211,7 @@ try {
     for (const body of r) {
       for (const m of body.matchAll(/GH₵(\d+(?:\.\d+)?)/g)) {
         const figure = parseFloat(m[1]);
-        check(`a figure shown to the customer respects the floor (${figure})`, figure >= 200 && figure <= 250, body);
+        check(`a figure shown to the customer respects her last price (${figure})`, figure >= 200 && figure <= 250, body);
       }
       const deal = body.match(/yours for GH₵(\d+(?:\.\d+)?)/);
       if (deal) dealPrice = parseFloat(deal[1]);
@@ -219,7 +219,7 @@ try {
     if (dealPrice !== null) break;
   }
   check('the customer closes a deal', dealPrice !== null);
-  check('the deal is at or above the floor she set', dealPrice !== null && dealPrice >= 200, `${dealPrice}`);
+  check('the deal is at or above the last price she set', dealPrice !== null && dealPrice >= 200, `${dealPrice}`);
 
   // The shop states no delivery terms, so the agreement asks
   // where she is based, and her answer completes the sale.

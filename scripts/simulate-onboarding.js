@@ -4,9 +4,9 @@
 // scratch directory holding a catalogue with no products, so the
 // repository's seeded catalogue is never disturbed. The merchant then
 // stocks her shelf from inside the chat: the guided add-a-product
-// flow (with one floor she has to correct), her allowance, and her
+// flow (with one last price she has to correct), her allowance, and her
 // own catalogue listing. A customer arrives, asks about the new
-// product, haggles, and buys it above the floor she set minutes
+// product, haggles, and buys it above the last price she set minutes
 // earlier.
 //
 // Run: node scripts/simulate-onboarding.js
@@ -150,20 +150,20 @@ try {
   check('the flow asks for the list price', last(r).includes('list price'));
 
   r = await say(MERCHANT, 'merchant', 'GH₵600');
-  check('the floor is asked for as her lowest price, kept from customers', last(r).includes('lowest you would accept'));
+  check('the last price is asked for in her own words, kept from customers', last(r).includes('last price') && last(r).includes('never see it'));
 
   r = await say(MERCHANT, 'merchant', '650');
   check(
-    'a floor above the list price is refused with an explanation, not a dead end',
-    last(r).includes('below the list price'),
+    'a last price above the price is refused with an explanation, not a dead end',
+    last(r).includes('above your price'),
   );
 
   r = await say(MERCHANT, 'merchant', '480');
-  check('the measure question follows the floor', last(r).includes('by measure'));
+  check('the measure question follows the last price', last(r).includes('by measure'));
 
   r = await say(MERCHANT, 'merchant', 'only as a whole');
   check(
-    'the summary shows name, list, floor and the giveaway margin',
+    'the summary shows name, price, last price and the giveaway margin',
     last(r).includes('Kente Cloth') && last(r).includes('GH₵600') && last(r).includes('GH₵480') && last(r).includes('GH₵120'),
   );
   const before = JSON.parse(readFileSync(CATALOGUE, 'utf8')).merchants.demo;
@@ -182,8 +182,8 @@ try {
 
   r = await say(MERCHANT, 'merchant', 'my catalogue');
   check(
-    'her own listing shows the floor (merchant only)',
-    last(r).includes('Kente Cloth') && last(r).includes('your floor GH₵480'),
+    'her own listing shows the last price (merchant only)',
+    last(r).includes('Kente Cloth') && last(r).includes('your last price GH₵480'),
   );
 
   console.log('\n===== A CUSTOMER BUYS THE NEW PRODUCT =====');
@@ -197,7 +197,7 @@ try {
     for (const body of r) {
       for (const m of body.matchAll(/GH₵(\d+(?:\.\d+)?)/g)) {
         const figure = parseFloat(m[1]);
-        check(`a figure shown to the customer respects the floor (${figure})`, figure >= 480 && figure <= 600, body);
+        check(`a figure shown to the customer respects her last price (${figure})`, figure >= 480 && figure <= 600, body);
       }
       const deal = body.match(/yours for GH₵(\d+(?:\.\d+)?)/);
       if (deal) dealPrice = parseFloat(deal[1]);
@@ -205,7 +205,7 @@ try {
     if (dealPrice !== null) break;
   }
   check('the customer closes a deal', dealPrice !== null);
-  check('the deal is above the floor she set', dealPrice !== null && dealPrice >= 480, `${dealPrice}`);
+  check('the deal is above the last price she set', dealPrice !== null && dealPrice >= 480, `${dealPrice}`);
 
   // The agreement alone books nothing: the shop states no
   // delivery terms, so the agent asks where she is based (the
@@ -243,7 +243,7 @@ try {
   await say(MERCHANT, 'merchant', 'Wax-print cloth, sold by the yard.');
   await say(MERCHANT, 'merchant', '300');
   r = await say(MERCHANT, 'merchant', '240');
-  check('the measure question follows this floor too', last(r).includes('by measure'));
+  check('the measure question follows this last price too', last(r).includes('by measure'));
   r = await say(MERCHANT, 'merchant', 'by the yard');
   check('she is asked how much of it the price is for', last(r).includes('How much of it is the GH₵300 price for?'));
   r = await say(MERCHANT, 'merchant', '6 yards');
@@ -282,7 +282,7 @@ try {
     for (const body of r) {
       for (const m of body.matchAll(/GH₵(\d+(?:\.\d+)?)/g)) {
         const figure = parseFloat(m[1]);
-        check(`a figure in the cut haggle respects the scaled floor (${figure})`, figure >= 120 && figure <= 150, body);
+        check(`a figure in the cut haggle respects the scaled last price (${figure})`, figure >= 120 && figure <= 150, body);
       }
       const deal = body.match(/yours for GH₵(\d+(?:\.\d+)?)/);
       if (deal) cutPrice = parseFloat(deal[1]);
@@ -290,7 +290,7 @@ try {
     if (cutPrice !== null) break;
   }
   check('the cut closes a deal', cutPrice !== null);
-  check('the cut deal respects the scaled floor (GH₵120 for 3 yards)', cutPrice !== null && cutPrice >= 120, `${cutPrice}`);
+  check('the cut deal respects the scaled last price (GH₵120 for 3 yards)', cutPrice !== null && cutPrice >= 120, `${cutPrice}`);
   await say(CUTTER, 'cutter', 'Koforidua');
   await say(CUTTER, 'cutter', 'Akosua Mensah');
   r = await say(CUTTER, 'cutter', 'no');
