@@ -78,6 +78,7 @@ func closePickupSale(t *testing.T, c *chat, buyer, entry, view string, listPrice
 	c.say(t, buyer, listPrice)
 	c.replies(t, buyer)
 	c.say(t, buyer, "I will pick it up myself")
+	c.finishDetails(t, buyer)
 	return strings.Join(c.replies(t, buyer), "\n")
 }
 
@@ -340,6 +341,7 @@ func TestLinkSettlementStillSettlesAndMarksTheSeevPath(t *testing.T) {
 	c.say(t, buyer, "162")
 	c.replies(t, buyer)
 	c.say(t, buyer, "Koforidua")
+	c.finishDetails(t, buyer)
 	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Pay here") {
 		t.Fatalf("completion = %q", got)
 	}

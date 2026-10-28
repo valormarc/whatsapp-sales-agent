@@ -223,8 +223,10 @@ try {
 
   // The shop states no delivery terms, so the agreement asks
   // where she is based, and her answer completes the sale.
-  r = await say(CUSTOMER, 'customer', 'Accra');
-  check('her location completes the sale and the payment link follows', last(r).includes('Pay here'), last(r));
+  await say(CUSTOMER, 'customer', 'Accra');
+  await say(CUSTOMER, 'customer', 'Akosua Mensah');
+  r = await say(CUSTOMER, 'customer', 'no');
+  check('her details complete the sale and the payment link follows', last(r).includes('Pay here'), last(r));
 
   const day = JSON.parse(readFileSync(DAYBOOK, 'utf8')).demo;
   check('the day book booked the sale', day.sales === 1, JSON.stringify(day));

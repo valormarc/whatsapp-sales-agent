@@ -245,11 +245,15 @@ try {
   // An agreement waits on the fulfilment step: neither shop
   // states delivery terms, so each buyer is asked where she is
   // based, and her answer completes her own shop's sale.
-  r = await say(BUYER_AMA, 'buyer (Ama)', 'Koforidua');
+  await say(BUYER_AMA, 'buyer (Ama)', 'Koforidua');
+  await say(BUYER_AMA, 'buyer (Ama)', 'Akosua Mensah');
+  r = await say(BUYER_AMA, 'buyer (Ama)', 'no');
   check('Ama\'s buyer completes with the payment link', r.join(' ').includes('Pay here'), r.join(' '));
   r = await say(BUYER_EFUA, 'buyer (Efua)', '740');
   check('Efua\'s buyer agrees the bag at GH₵740', r.join(' ').includes('yours for GH₵740'), r.join(' '));
-  r = await say(BUYER_EFUA, 'buyer (Efua)', 'Accra');
+  await say(BUYER_EFUA, 'buyer (Efua)', 'Accra');
+  await say(BUYER_EFUA, 'buyer (Efua)', 'Akosua Mensah');
+  r = await say(BUYER_EFUA, 'buyer (Efua)', 'no');
   check('Efua\'s buyer completes with the payment link', r.join(' ').includes('Pay here'), r.join(' '));
 
   const day = JSON.parse(readFileSync(DAYBOOK, 'utf8'));

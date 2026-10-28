@@ -35,6 +35,7 @@ func setupChat(t *testing.T, merchantNumber, catalogueJSON string) string {
 	sessions = map[string]*Session{}
 	bindings = map[string]string{}
 	doorShown = map[string]bool{}
+	packageNames = map[string]string{}
 	sessionsMu.Unlock()
 	dir := t.TempDir()
 	t.Chdir(dir)
@@ -98,6 +99,23 @@ func (c *chat) replies(t *testing.T, to string) []string {
 	out := mine[c.seen[to]:]
 	c.seen[to] = len(mine)
 	return out
+}
+
+// finishDetails answers the two package detail questions that
+// follow a settled fulfilment choice: the name for the package,
+// then no message for the seller. A test that closes a sale calls
+// it where the sale used to complete on the choice alone. Where a
+// named collector already gave the package its name, only the
+// message question remains: finishNote answers that one.
+func (c *chat) finishDetails(t *testing.T, from string) {
+	t.Helper()
+	c.say(t, from, "Akosua Mensah")
+	c.say(t, from, "no")
+}
+
+func (c *chat) finishNote(t *testing.T, from string) {
+	t.Helper()
+	c.say(t, from, "no")
 }
 
 func (c *chat) last(t *testing.T, to string) string {
@@ -217,6 +235,7 @@ func TestMerchantOnboardsProductAndCustomerBuysIt(t *testing.T) {
 		t.Fatalf("agreed deal should ask where she is based, got %q", deal)
 	}
 	c.say(t, customer, "Koforidua")
+	c.finishDetails(t, customer)
 	if got := strings.Join(c.replies(t, customer), "\n"); !strings.Contains(got, "Pay here") {
 		t.Fatalf("her location should complete the sale with the link, got %q", got)
 	}

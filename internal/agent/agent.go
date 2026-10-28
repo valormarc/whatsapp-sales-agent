@@ -96,12 +96,18 @@ type Session struct {
 	// own pickup, a meet-up, a collector she sends, or arrangement
 	// with the seller). FulfilStep is the open question: "choice",
 	// "where" (delivery chosen, place unknown), "meetwhere",
-	// "who" (a collector is coming, not yet named) or "based" (a
-	// shop with no delivery terms, asking where she is). Location
-	// is the place she has stated anywhere in the chat, kept so
-	// she is never asked for it twice.
-	FulfilStep string
-	Location   string
+	// "who" (a collector is coming, not yet named), "based" (a
+	// shop with no delivery terms, asking where she is),
+	// "pickupkind" (she tapped Pick up; who is coming is asked
+	// with two more buttons), then "pkgname" and "pkgmessage":
+	// the package details, collected after the choice (see
+	// fulfilment.go). PendingFulfil holds the settled fulfilment
+	// while those details are being collected. Location is the
+	// place she has stated anywhere in the chat, kept so she is
+	// never asked for it twice.
+	FulfilStep    string
+	Location      string
+	PendingFulfil fulfilment
 
 	// Voice rotation counters: how many times this session has been
 	// sent the holding reply, the shelf offer and the bare-ack reply.
@@ -146,6 +152,10 @@ var (
 	// offered the front door buttons, so the buttons greet a
 	// stranger once, on her first hello, and never nag her again.
 	doorShown = map[string]bool{}
+	// packageNames remembers, per shop and buyer, the name she
+	// last put on a package, so the next order confirms it
+	// instead of asking from nothing.
+	packageNames = map[string]string{}
 )
 
 func sessionKey(shopID, from string) string {
@@ -383,13 +393,26 @@ func HandleInbound(in Inbound) {
 		if pre, ok := sessions[sessionKey("", from)]; ok && pre.Signup != nil {
 			return
 		}
-		switch in.ButtonID {
-		case "door_sell":
+		switch {
+		case in.ButtonID == "door_sell":
 			startSignup(from)
-		case "door_buy":
+			return
+		case in.ButtonID == "door_buy":
 			whatsapp.SendText(from, askShopText)
+			return
+		case strings.HasPrefix(in.ButtonID, "ff_"):
+			// A fulfilment tap (see fulfilment.go). Some taps are
+			// whole answers in themselves; the rest are translated
+			// into the words the buyer would have typed, and the
+			// ordinary flow below reads them exactly as if she had.
+			text, handled := routeFulfilmentTap(from, in.ButtonID)
+			if handled {
+				return
+			}
+			in.Text = text
+		default:
+			return
 		}
-		return
 	}
 
 	msg := strings.TrimSpace(in.Text)

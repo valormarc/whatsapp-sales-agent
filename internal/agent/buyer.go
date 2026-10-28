@@ -353,6 +353,14 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		return
 	}
 	if product != nil {
+		// A completed sale leaves her session on the agreed
+		// stage. Looking at goods again means she is shopping
+		// again, so the session goes back to browsing: a bare
+		// offer on what she is looking at must bind on her second
+		// purchase exactly as it did on her first.
+		if s.Stage == "agreed" {
+			s.Stage = "browsing"
+		}
 		// Looking at a different item ends the old item's pending
 		// quantity: a remembered measure belongs to what it was
 		// quoted on, never to whatever she looks at next.

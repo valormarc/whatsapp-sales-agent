@@ -39,6 +39,10 @@ const scriptA = [
   // the agent asks how the goods reach her (the fulfilment step),
   // and only her answer sends the payment link and books the day.
   'I will pick it up myself',
+  // The package details follow the choice, in words: her name
+  // for the package, and no message for the seller.
+  'Akosua Mensah',
+  'no',
 ];
 const scriptB = [
   'SHOP-EFUA',

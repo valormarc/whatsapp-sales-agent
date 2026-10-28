@@ -41,6 +41,7 @@ func enterMeasureShop(t *testing.T, c *chat, buyer string) {
 func completeArrangedSale(t *testing.T, c *chat, buyer string) string {
 	t.Helper()
 	c.say(t, buyer, "Koforidua")
+	c.finishDetails(t, buyer)
 	return strings.Join(c.replies(t, buyer), "\n")
 }
 

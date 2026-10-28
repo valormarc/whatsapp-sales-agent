@@ -83,6 +83,8 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		Fulfilment:     f.Mode,
 		Location:       f.Location,
 		Collector:      f.Collector,
+		PackageName:    f.PackageName,
+		Note:           f.Note,
 		DeliveryPaidTo: paidTo,
 		Quantity:       s.Qty,
 		Unit:           s.Unit,
@@ -170,6 +172,15 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 			"Your total is " + money.GHS(total) + ".",
 		}
 	}
+	// The package details she gave ride with the order, and she
+	// hears the name read back so a wrong name is caught here,
+	// not at the rider's door.
+	if f.PackageName != "" {
+		pieces = append(pieces, "The package will carry the name "+f.PackageName+".")
+	}
+	if f.Note != "" {
+		pieces = append(pieces, "Your message for the seller is on the order.")
+	}
 	pieces = append(pieces, linkPiece)
 	// The second door, offered beside the link: plenty of buyers
 	// will not tap a link from a number they just met, but they
@@ -243,6 +254,12 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 			} else {
 				notice += " Delivery to be arranged with the buyer; no location given."
 			}
+		}
+		if f.PackageName != "" {
+			notice += " Package name: " + f.PackageName + "."
+		}
+		if f.Note != "" {
+			notice += " Buyer's message: " + f.Note + "."
 		}
 		notice += " Buyer: " + from + ". Ref: " + reference + ". Day book: " + insights.DayReportText(day)
 		whatsapp.SendText(merchantPhone, notice)

@@ -141,6 +141,7 @@ func TestDeliveryAskedWhileBrowsingThenCloseChargesOneTotal(t *testing.T) {
 	// She chooses delivery, with the place in the same breath;
 	// the completion totals it up for her, as one figure.
 	c.say(t, buyer, "Send it to Koforidua")
+	c.finishDetails(t, buyer)
 	got = strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "Item GH₵850 + delivery GH₵25 = GH₵875 total") || !strings.Contains(got, "Pay here") {
 		t.Fatalf("close with delivery = %q, want the breakdown and the link", got)
@@ -266,6 +267,7 @@ func TestBareOkSettlesNothingAnywhere(t *testing.T) {
 		t.Fatal("the yes at the final stand recorded an order before fulfilment was settled")
 	}
 	c.say(t, buyer2, "I will pick it up myself")
+	c.finishDetails(t, buyer2)
 	if ordersCount(t, dir) != 1 {
 		t.Fatal("her pickup at the fulfilment step recorded no order")
 	}
@@ -305,6 +307,7 @@ func TestIllBuyAsksFirstAndYesAgreesThenFulfils(t *testing.T) {
 		t.Fatalf("delivery with no place known = %q, want the one follow-up", got)
 	}
 	c.say(t, buyer, "Koforidua")
+	c.finishDetails(t, buyer)
 	got = strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "= GH₵875 total") || !strings.Contains(got, "Pay here") {
 		t.Fatalf("close after fulfilment = %q, want the one total and the link", got)
@@ -520,6 +523,7 @@ func TestNoDeliveryFeeMeansThePlainCloseAsBefore(t *testing.T) {
 		t.Fatal("an order was recorded before she said where she is")
 	}
 	c.say(t, buyer, "Koforidua")
+	c.finishDetails(t, buyer)
 	got = strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "Pay here") || !strings.Contains(got, "GH₵180") || strings.Contains(got, "delivery GH₵") {
 		t.Fatalf("close with no fee set = %q, want the plain close at the item price", got)
@@ -601,6 +605,7 @@ func TestRestatedPriceConfirmsThePendingClose(t *testing.T) {
 		t.Fatal("the restated price recorded an order before fulfilment was settled")
 	}
 	c.say(t, buyer, "I will come and pick it up myself")
+	c.finishDetails(t, buyer)
 	got = strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "Pay here") || !strings.Contains(got, "GH₵180") {
 		t.Fatalf("close after the restated price = %q, want the link at 180", got)

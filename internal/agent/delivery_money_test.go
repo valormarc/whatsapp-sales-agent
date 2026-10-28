@@ -41,6 +41,7 @@ func TestCarrierDeliveryCloseNamesBothPurses(t *testing.T) {
 		t.Fatalf("fulfilment ask = %q, want the carrier purse named", ask)
 	}
 	c.say(t, buyer, "Send it to Koforidua")
+	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "Your total with me is GH₵850.") ||
 		!strings.Contains(got, "Delivery is GH₵25, you pay that to the station when it reaches you.") ||
@@ -81,6 +82,7 @@ func TestCarrierDeliveryCloseAmaPaysTheRider(t *testing.T) {
 		t.Fatalf("fulfilment ask = %q, want the rider named as the purse", ask)
 	}
 	c.say(t, buyer, "Deliver it to Madina")
+	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "Your total with me is GH₵180.") || !strings.Contains(got, "Delivery is GH₵15, you pay that to the rider when it reaches you.") {
 		t.Fatalf("carrier close = %q", got)
@@ -106,6 +108,7 @@ func TestMerchantModeDeliveryStillChargesOneTotal(t *testing.T) {
 	c.say(t, buyer, "120")
 	c.replies(t, buyer)
 	c.say(t, buyer, "Send it to Koforidua")
+	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "Item GH₵120 + delivery GH₵25 = GH₵145 total, to Koforidua.") {
 		t.Fatalf("merchant-mode close = %q, want the fee inside one total", got)
@@ -147,6 +150,7 @@ func TestMerchantFlipsWhoTakesTheDeliveryMoney(t *testing.T) {
 	c.say(t, buyer, "120")
 	c.replies(t, buyer)
 	c.say(t, buyer, "Send it to Koforidua")
+	c.finishDetails(t, buyer)
 	c.replies(t, buyer)
 	if o := ordersOnDisk(t, dir)[0]; o["total"] != 145.0 || o["deliveryPaidTo"] != "merchant" {
 		t.Fatalf("close after the flip = %v, want the fee inside the total", o)
@@ -165,6 +169,7 @@ func TestMerchantFlipsWhoTakesTheDeliveryMoney(t *testing.T) {
 	c.say(t, buyer2, "120")
 	c.replies(t, buyer2)
 	c.say(t, buyer2, "Send it to Koforidua")
+	c.finishDetails(t, buyer2)
 	got := strings.Join(c.replies(t, buyer2), "\n")
 	if !strings.Contains(got, "Your total with me is GH₵120.") {
 		t.Fatalf("close after the flip back = %q", got)

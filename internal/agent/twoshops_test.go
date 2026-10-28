@@ -221,6 +221,7 @@ func TestTwoBuyersInTwoShopsKeepSeparateBooks(t *testing.T) {
 		t.Fatalf("Ama deal = %q", got)
 	}
 	c.say(t, buyerB, "Koforidua")
+	c.finishDetails(t, buyerB)
 	if got := strings.Join(c.replies(t, buyerB), "\n"); !strings.Contains(got, "Pay here") {
 		t.Fatalf("Ama completion = %q", got)
 	}
@@ -229,6 +230,7 @@ func TestTwoBuyersInTwoShopsKeepSeparateBooks(t *testing.T) {
 		t.Fatalf("Efua deal = %q", got)
 	}
 	c.say(t, buyerA, "Accra")
+	c.finishDetails(t, buyerA)
 	if got := strings.Join(c.replies(t, buyerA), "\n"); !strings.Contains(got, "Pay here") {
 		t.Fatalf("Efua completion = %q", got)
 	}
@@ -330,6 +332,7 @@ func TestSettlementNoticeGoesToTheSellingShopsOwner(t *testing.T) {
 	// The agreement waits on fulfilment; her answer completes the
 	// sale and the order exists from that moment.
 	c.say(t, buyer, "Koforidua")
+	c.finishDetails(t, buyer)
 	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Pay here") {
 		t.Fatalf("completion = %q", got)
 	}

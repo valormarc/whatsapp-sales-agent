@@ -69,6 +69,7 @@ func TestFulfilmentSheaShapeDeliveryWithPlaceInOneMessage(t *testing.T) {
 	// completion totals it up, charges the fee, and says where
 	// the goods go.
 	c.say(t, buyer, "Send it to Koforidua")
+	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	wantBreakdown := "Item " + money.GHS(price) + " + delivery GH₵25 = " + money.GHS(price+25) + " total, to Koforidua."
 	if !strings.Contains(got, wantBreakdown) || !strings.Contains(got, "Pay here") {
@@ -117,6 +118,7 @@ func TestFulfilmentDeliveryThenBarePlaceFollowUp(t *testing.T) {
 	}
 	// A bare place name completes the step.
 	c.say(t, buyer, "Kumasi")
+	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "Item GH₵180 + delivery GH₵15 = GH₵195 total, to Kumasi.") || !strings.Contains(got, "Pay here") {
 		t.Fatalf("delivery completion = %q", got)
@@ -138,6 +140,7 @@ func TestFulfilmentPickupPaysNoFee(t *testing.T) {
 	c.say(t, buyer, "850")
 	c.replies(t, buyer)
 	c.say(t, buyer, "I will come and pick it up myself")
+	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "No delivery fee, you collect it yourself. Your total is GH₵850.") || !strings.Contains(got, "Pay here") {
 		t.Fatalf("pickup completion = %q", got)
@@ -166,6 +169,7 @@ func TestFulfilmentMeetUpWithPlaceInTheMessage(t *testing.T) {
 	c.say(t, buyer, "180")
 	c.replies(t, buyer)
 	c.say(t, buyer, "let's meet at Circle")
+	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	// The agent promises nothing about the seller coming: she has
 	// been told, and the place is on the order. That is all.
@@ -203,6 +207,7 @@ func TestFulfilmentMeetUpAsksThePlaceOnce(t *testing.T) {
 		t.Fatal("an order was recorded before the meeting place was given")
 	}
 	c.say(t, buyer, "the station")
+	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "meet at the station") {
 		t.Fatalf("meet-up completion = %q", got)
@@ -224,6 +229,7 @@ func TestFulfilmentCollectorNamedInTheMessage(t *testing.T) {
 	c.say(t, buyer, "120")
 	c.replies(t, buyer)
 	c.say(t, buyer, "I will send my brother Kwame to pick it up")
+	c.finishNote(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "my brother Kwame is coming for it") || !strings.Contains(got, "No delivery fee. Your total is GH₵120.") {
 		t.Fatalf("collector completion = %q", got)
@@ -258,6 +264,7 @@ func TestFulfilmentCollectorUnnamedThenNamed(t *testing.T) {
 		t.Fatal("an order was recorded before the collector was named")
 	}
 	c.say(t, buyer, "My rider")
+	c.finishNote(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "My rider is coming for it") {
 		t.Fatalf("collector completion = %q", got)
@@ -293,6 +300,7 @@ func TestFulfilmentStatedLocationIsNotAskedTwice(t *testing.T) {
 	}
 	// Choosing delivery completes at once: no where question, ever.
 	c.say(t, buyer, "deliver it")
+	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if strings.Contains(got, "Where should it go?") || !strings.Contains(got, "Pay here") {
 		t.Fatalf("delivery with a known place = %q", got)
@@ -325,6 +333,7 @@ func TestFulfilmentCancelDropsTheSaleCleanly(t *testing.T) {
 	c.say(t, buyer, "120")
 	c.replies(t, buyer)
 	c.say(t, buyer, "I will pick it up")
+	c.finishDetails(t, buyer)
 	if ordersCount(t, dir) != 1 {
 		t.Fatal("buying after a cancel did not complete")
 	}
@@ -360,6 +369,7 @@ func TestFulfilmentQuestionDriftKeepsThePendingSale(t *testing.T) {
 		t.Fatal("a question at fulfilment recorded an order")
 	}
 	c.say(t, buyer, "I will pick it up")
+	c.finishDetails(t, buyer)
 	orders := ordersOnDisk(t, dir)
 	if len(orders) != 1 || orders[0]["total"] != 180.0 {
 		t.Fatalf("orders = %v, want the pending sale completed at the item price", orders)
@@ -384,6 +394,7 @@ func TestFulfilmentNoTermsDeclinedLocationStillCompletes(t *testing.T) {
 	// completes, and the order and the seller are told plainly
 	// that no location was given.
 	c.say(t, buyer, "I will not say")
+	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "Pay here") {
 		t.Fatalf("declined location = %q, want the sale completed anyway", got)

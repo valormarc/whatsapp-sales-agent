@@ -72,6 +72,14 @@ type Order struct {
 	Location    string  `json:"location,omitempty"`
 	Collector   string  `json:"collector,omitempty"`
 
+	// PackageName is the name the buyer asked to have written on
+	// the package (hers, or the person the goods are going to);
+	// Note is a message she added for the seller with the order.
+	// Both are collected after she chooses how the goods reach
+	// her, and both ride to the merchant in her order notice.
+	PackageName string `json:"packageName,omitempty"`
+	Note        string `json:"note,omitempty"`
+
 	// Quantity and Unit record a sale by measure: how much of the
 	// product's measure the buyer took (3 of "yard"), against a
 	// Price that is the settled price for that quantity, scaled

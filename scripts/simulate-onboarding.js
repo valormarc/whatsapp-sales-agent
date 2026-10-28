@@ -210,8 +210,12 @@ try {
   // The agreement alone books nothing: the shop states no
   // delivery terms, so the agent asks where she is based (the
   // fulfilment step), and her answer completes the sale.
-  r = await say(CUSTOMER, 'customer', 'Koforidua');
-  check('her location completes the sale and the payment link follows', last(r).includes('Pay here'), last(r));
+  await say(CUSTOMER, 'customer', 'Koforidua');
+  // Her place settles how the goods move; the package details
+  // follow in words, and her last answer completes the sale.
+  await say(CUSTOMER, 'customer', 'Akosua Mensah');
+  r = await say(CUSTOMER, 'customer', 'no');
+  check('her details complete the sale and the payment link follows', last(r).includes('Pay here'), last(r));
 
   const day = JSON.parse(readFileSync(DAYBOOK, 'utf8')).demo;
   check('the day book booked the sale', day.sales === 1, JSON.stringify(day));
@@ -287,8 +291,10 @@ try {
   }
   check('the cut closes a deal', cutPrice !== null);
   check('the cut deal respects the scaled floor (GH₵120 for 3 yards)', cutPrice !== null && cutPrice >= 120, `${cutPrice}`);
-  r = await say(CUTTER, 'cutter', 'Koforidua');
-  check('her location completes the cut sale with the link', last(r).includes('Pay here'), last(r));
+  await say(CUTTER, 'cutter', 'Koforidua');
+  await say(CUTTER, 'cutter', 'Akosua Mensah');
+  r = await say(CUTTER, 'cutter', 'no');
+  check('her details complete the cut sale with the link', last(r).includes('Pay here'), last(r));
 
   const orders = JSON.parse(readFileSync(join(DATA, 'orders.json'), 'utf8'));
   const cutOrder = Object.values(orders).find((o) => o.productName === 'Ankara Cloth');
