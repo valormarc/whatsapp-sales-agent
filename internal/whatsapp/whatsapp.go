@@ -207,8 +207,19 @@ func SendButtons(to, body string, buttons []Button) Result {
 		return Result{DryRun: true}
 	}
 
+	payload := buildButtonsPayload(to, body, buttons)
+	return post(record, payload)
+}
+
+// buildButtonsPayload shapes one reply-buttons message the way
+// the Graph API's schema demands: the interactive type is
+// "button" (the buttons inside the action are each of type
+// "reply"). Any other word in that field, "reply_button" say, is
+// refused by Meta as a schema violation and the message silently
+// never reaches the phone, which is how this shape earned a test.
+func buildButtonsPayload(to, body string, buttons []Button) buttonsPayload {
 	payload := buttonsPayload{MessagingProduct: "whatsapp", To: to, Type: "interactive"}
-	payload.Interactive.Type = "reply_button"
+	payload.Interactive.Type = "button"
 	payload.Interactive.Body.Text = body
 	for _, b := range buttons {
 		var btn struct {
@@ -223,7 +234,7 @@ func SendButtons(to, body string, buttons []Button) Result {
 		btn.Reply.Title = b.Title
 		payload.Interactive.Action.Buttons = append(payload.Interactive.Action.Buttons, btn)
 	}
-	return post(record, payload)
+	return payload
 }
 
 // SendText sends one text message, or logs it to the outbox in
