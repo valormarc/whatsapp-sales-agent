@@ -15,6 +15,7 @@ The same chat also serves the merchant herself. She asks how today is going, wha
 - A sales agent grounded on the merchant's own catalogue, which hands over to the merchant when it is unsure instead of guessing
 - A haggling engine with a secret floor price per product, enforced in code, not just in the prompt
 - MoMo checkout through Seev, with the signed webhook settling the order and telling the merchant what she made
+- One payment account per shop: opening a shop opens the shop's own Seev subaccount in the same chat, so her link money settles to her own MoMo (she keeps 99 percent) instead of one shared pot
 - Merchant insights in the same chat: sale notifications, day questions answered in plain words, end of day summary
 
 ## An honest note on what is mine and when
