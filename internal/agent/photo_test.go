@@ -242,6 +242,77 @@ func TestThrowInUnmarkedNumbersAreNotPrices(t *testing.T) {
 	}
 }
 
+func TestThrowInCountFigureIsNotAPrice(t *testing.T) {
+	// The live fault this pins: a wardrobe caption whose only
+	// figure counts its doors. The figure is a count, so no price
+	// is read and the walk asks for the price as a question
+	// instead of trapping her floor against GH₵3.
+	if d := throwDraftFromCaption("Marble wardrobe with mirror, 3 doors"); d.ListPrice != 0 {
+		t.Fatalf("a door count read as a price: %+v", d)
+	}
+	if d := throwDraftFromCaption("3 seater sofa, very neat"); d.ListPrice != 0 {
+		t.Fatalf("a seater count read as a price: %+v", d)
+	}
+	if d := throwDraftFromCaption("3-door wardrobe"); d.ListPrice != 0 {
+		t.Fatalf("a hyphenated count read as a price: %+v", d)
+	}
+	if d := throwDraftFromCaption("Heels 250"); d.ListPrice != 250 {
+		t.Fatalf("a figure standing at the end is still a price: %+v", d)
+	}
+	if d := throwDraftFromCaption("Wardrobe, 250 negotiable"); d.ListPrice != 250 {
+		t.Fatalf("price talk after a figure still reads as a price: %+v", d)
+	}
+}
+
+func TestThrowInPriceCorrectionInsideTheFlow(t *testing.T) {
+	merchant := "233550001108"
+	dir := setupChat(t, merchant, emptyShop)
+	c := &chat{dir: dir}
+
+	// A price she later sees is wrong can be corrected in one
+	// line wherever the flow is standing, instead of trapping
+	// her against it.
+	c.photo(t, merchant, "300")
+	c.say(t, merchant, "Leather Heels")
+	c.say(t, merchant, "Black leather heels.")
+	if got := c.last(t, merchant); !strings.Contains(got, "floor price") {
+		t.Fatalf("standing at the floor question, got %q", got)
+	}
+	c.say(t, merchant, "price is 2500")
+	replies := c.replies(t, merchant)
+	if !strings.Contains(replies[0], "Corrected") || !strings.Contains(replies[0], "GH₵2500") {
+		t.Fatalf("correction reply = %q", replies)
+	}
+	if !strings.Contains(replies[len(replies)-1], "floor price") {
+		t.Fatalf("after the correction the floor is asked against the new price, got %q", replies)
+	}
+	c.say(t, merchant, "2000")
+	finishWhole(t, c, merchant)
+
+	p := catalogue.FindByName("demo", "Leather Heels")
+	if p == nil || p.ListPrice != 2500 || p.FloorPrice != 2000 {
+		t.Fatalf("saved product = %+v, want list 2500 floor 2000", p)
+	}
+}
+
+func TestThrowInSamePhotoTwiceIsNotReadBackTwice(t *testing.T) {
+	merchant := "233550001109"
+	dir := setupChat(t, merchant, emptyShop)
+	c := &chat{dir: dir}
+
+	c.photo(t, merchant, "300")
+	_ = c.replies(t, merchant)
+	c.photo(t, merchant, "300")
+	replies := c.replies(t, merchant)
+	joined := strings.Join(replies, "\n")
+	if !strings.Contains(joined, "still on that same photo") {
+		t.Fatalf("second send replies = %q", replies)
+	}
+	if strings.Contains(joined, "Here is what I have from it") {
+		t.Fatalf("the readback was repeated on a resend: %q", replies)
+	}
+}
+
 func TestBuyerPhotoDoesNotOpenOnboarding(t *testing.T) {
 	merchant := "233550001107"
 	buyer := "233550002107"

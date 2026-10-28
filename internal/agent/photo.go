@@ -137,6 +137,15 @@ func throwPrice(caption string) (float64, []int, bool) {
 			if inside {
 				continue
 			}
+			// A figure with a plain word hard against it is
+			// counting or describing that word, not naming a
+			// price: "3 doors", "3-door wardrobe", "2 seater".
+			// A price figure stands at the end of her words or
+			// is followed only by price talk ("250 negotiable",
+			// "250 for it", "250 available").
+			if w := wordAfterFigure(caption[m[1]:]); w != "" && !priceTalkWords[w] {
+				continue
+			}
 			f, err := strconv.ParseFloat(caption[m[2]:m[3]], 64)
 			if err != nil || f <= 0 {
 				continue
@@ -150,6 +159,30 @@ func throwPrice(caption string) (float64, []int, bool) {
 		}
 	}
 	return 0, nil, false
+}
+
+// priceTalkWords are the words that can stand right after a price
+// figure without turning it into a count: currency words and the
+// groups' price talk. Any other word hard against a figure makes
+// the figure a count of that word.
+var priceTalkWords = map[string]bool{
+	"gh": true, "ghs": true, "ghc": true, "cedis": true,
+	"available": true, "negotiable": true, "only": true,
+	"each": true, "per": true, "for": true, "flat": true,
+	"fixed": true, "last": true, "now": true, "today": true,
+}
+
+var wordAfterRe = regexp.MustCompile(`^[\s\-]*([a-z]+)`)
+
+// wordAfterFigure returns the first plain word following a figure
+// in the caption, lower case, or "" when the figure stands at the
+// end of her words or against punctuation that closes them.
+func wordAfterFigure(rest string) string {
+	m := wordAfterRe.FindStringSubmatch(strings.ToLower(rest))
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // throwFillerWords are caption words that carry no product detail
@@ -254,10 +287,24 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	if flow == nil {
 		flow = &OnboardingFlow{}
 	}
-	flow.Photo = true
-	flow.PhotoRef = imageID
 
 	draft := throwDraftFromCaption(caption)
+	// The same photo sent again while its listing is still open
+	// (a double tap, a redelivery, a seller checking whether it
+	// landed) changes nothing, so it is not read back all over
+	// again: she is told the agent is still on it and reminded of
+	// the one question that is waiting for her.
+	if s.Onboarding != nil && flow.Photo &&
+		(draft.Name == "" || draft.Name == flow.Name) &&
+		(draft.Description == "" || draft.Description == flow.Description) &&
+		(draft.ListPrice <= 0 || draft.ListPrice == flow.ListPrice) &&
+		(draft.Unit == "" || draft.Unit == flow.Unit) {
+		whatsapp.SendText(from, "I am still on that same photo.")
+		gotoNextOnboardingStep(from, flow)
+		return
+	}
+	flow.Photo = true
+	flow.PhotoRef = imageID
 	// The model's draft from the photograph fills only the gaps
 	// her own words left. It needs the picture, so it happens
 	// only in live mode; her words never wait on it.

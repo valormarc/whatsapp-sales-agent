@@ -163,6 +163,15 @@ func handleMerchantMessage(from, text, merchantID string) {
 	answerMerchantDayQuestion(from, text, merchantID)
 }
 
+// priceCorrectionRe reads a seller correcting the list price
+// inside an open onboarding flow, in her own plain shapes: "price
+// is 2500", "the list price should be 2500", "change price to
+// 2500". A price read from her throw-in can be wrong (a figure
+// that counted something, taken as the price), and a correction
+// she can make in one line is what keeps a wrong read from
+// trapping the whole flow against a floor it can never take.
+var priceCorrectionRe = regexp.MustCompile(`^(?:the\s+)?(?:list\s+)?price\s+(?:is|should\s+be)\s+(.+)$|^(?:change|correct|set)\s+(?:the\s+)?(?:list\s+)?price\s+(?:to\s+)?(.+)$`)
+
 // advanceOnboarding feeds one merchant message to the onboarding flow.
 func advanceOnboarding(from string, s *Session, text, lower string) {
 	flow := s.Onboarding
@@ -171,6 +180,29 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		s.Onboarding = nil
 		whatsapp.SendText(from, "Dropped it. Nothing was saved. Say \"add a product\" whenever you are ready.")
 		return
+	}
+
+	// A price correction owns the message wherever the flow is
+	// standing, the list step itself aside (there her message is
+	// simply the price). Correcting the price clears a floor that
+	// no longer sits below it, so she is never left defending a
+	// floor against a price she has already replaced.
+	if flow.Step != "list" && flow.Name != "" {
+		if m := priceCorrectionRe.FindStringSubmatch(lower); m != nil {
+			tail := m[1]
+			if tail == "" {
+				tail = m[2]
+			}
+			if amount := parseOffer(tail); amount != nil && *amount > 0 {
+				flow.ListPrice = *amount
+				if flow.FloorPrice >= *amount {
+					flow.FloorPrice = 0
+				}
+				whatsapp.SendText(from, "Corrected. The list price for "+flow.Name+" is now "+money.GHS(*amount)+".")
+				gotoNextOnboardingStep(from, flow)
+				return
+			}
+		}
 	}
 
 	switch flow.Step {
