@@ -126,17 +126,29 @@ func Handle(rawBody, timestamp, signature string) int {
 		}
 	}
 
+	SettleVerified(order,
+		"Payment received, thank you. Your "+order.ProductName+" is confirmed at "+money.GHS(charged)+". The shop has your order and will take it from here.",
+	)
+	return 200
+}
+
+// SettleVerified settles an order whose payment Seev itself
+// has verified, by webhook or by the agent's own read-back
+// when a buyer reports she has paid, and tells both sides:
+// the buyer her confirmation, the merchant the payment
+// received notice with the fee and what settles to her MoMo.
+// The merchant is never asked to verify a Seev payment: she
+// has no window into Seev, so verification is the agent's
+// work, and hers is only the alert that it is done.
+func SettleVerified(order *orders.Order, buyerText string) {
+	charged := order.Charged()
 	orders.Default.Update(order.Reference, func(o *orders.Order) {
 		o.Status = "paid"
 		o.PaymentPath = "seev"
 	})
 	s := checkout.SettlementFor(charged)
-	whatsapp.SendText(
-		order.From,
-		"Payment received, thank you. Your "+order.ProductName+" is confirmed at "+money.GHS(charged)+". The shop has your order and will take it from here.",
-	)
+	whatsapp.SendText(order.From, buyerText)
 	notifyMerchant(order,
 		"Payment received\n\n*"+order.ProductName+"*\n"+money.GHS(charged)+" paid in full by the buyer.\nSeev fee "+money.GHS(s.Fee)+", so "+money.GHS(s.Net)+" settles to your MoMo tomorrow.\n\nRef: "+order.Reference+"\nBuyer: "+order.From,
 	)
-	return 200
 }

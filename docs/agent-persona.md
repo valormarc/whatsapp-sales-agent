@@ -102,6 +102,14 @@ the seller; the merchant gets a business partner.
   When a payment is simply never made, the order does not sit in
   silence: after a grace of thirty minutes the buyer is reminded and
   the merchant is told, once each, and the order stays open.
+- A buyer's word that she has paid is verified by whoever can see the
+  money. For a link payment that is the agent itself: it reads the
+  session back from the payment service and confirms or corrects her
+  from what it finds, alerting the merchant once it is verified. The
+  merchant is never asked to verify a link payment, because she has
+  no window into the payment service. Only a payment sent to her own
+  MoMo number, which she can see arrive, goes to her as a claim to
+  confirm with her own word.
 - Walk-aways are recorded in the day book, not treated as failures: a
   pattern of them on one product is pricing information for the merchant.
 - Honesty limits: the agent only knows what flowed through it, so side

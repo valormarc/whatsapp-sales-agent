@@ -240,7 +240,9 @@ func TestPaymentClaimFromThinkingGoesToTheMerchant(t *testing.T) {
 	buyer := "233550001862"
 	seedOpenOrder(t, "TEST-3006", buyer, 1)
 
-	if !actOnBuyerUnderstanding(buyer, &Session{Stage: "agreed"}, catalogue.GetMerchant(MerchantID), MerchantID, &understood{Intent: intentPaymentClaim}) {
+	// She said the money went to the shop's own number, so the
+	// report is a claim for the merchant, who can see her MoMo.
+	if !actOnBuyerUnderstanding(buyer, &Session{Stage: "agreed"}, catalogue.GetMerchant(MerchantID), MerchantID, &understood{Intent: intentPaymentClaim, DirectRoute: true}) {
 		t.Fatal("an understood claim must be acted on")
 	}
 	o := orders.Default.GetOrder("TEST-3006")

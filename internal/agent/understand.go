@@ -74,6 +74,11 @@ type understood struct {
 	// buyer herself named in her own message, read by code,
 	// carried here so a claim records what she said she sent.
 	NamedAmount *float64 `json:"-"`
+	// DirectRoute is read by code from her words too: she said
+	// the money went to the merchant's own number, so the
+	// merchant is who verifies it. Without it, a paid report on
+	// a link order is verified by the agent with Seev itself.
+	DirectRoute bool `json:"-"`
 }
 
 var figureTokenRe = regexp.MustCompile(`\d+(?:\.\d+)?`)
@@ -127,7 +132,7 @@ The acts you can name:
 - "payment_expired": the payment link itself is dead: it has expired, it is closed, it will not open as a link, she asks for a NEW link because the old one is finished.
 - "payment_later": she will pay, just later: tomorrow, in the evening, when money comes.
 - "payment_want": she wants to pay now, or asks for the payment link: "send me the payment link", "I want to pay now", "let me pay", asking for the link again without saying it is dead.
-- "payment_claim": she says she has paid by sending money directly (MoMo to the shop's own number), in her own words, whether or not she uses the word paid: "I just sent the money", "check your phone, I have done it". This is a claim for the merchant to confirm, never a settled payment.
+- "payment_claim": she says she has paid, in her own words, whether or not she uses the word paid: "I just sent the money", "check your phone, I have done it", "I have made the payment". Whether she paid by the link or to the shop's number, this is the act: the platform then verifies a link payment with the payment service itself, and sends only a payment to the shop's own number to the merchant to confirm. Her word alone never settles anything.
 - "item": she is asking about, or wants, a product on the shelf. Put the product's name, as it appears in the facts, in "item".
 - "order_status": she is asking after an order she already made: where it stands, whether it is paid, what happens next with it.
 - "shelf": she wants to see what the shop has, or start again from the shelf.
@@ -170,6 +175,7 @@ func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, sh
 	u := parseUnderstood(out)
 	if u != nil {
 		u.NamedAmount = claimAmountOf(msg)
+		u.DirectRoute = directWordsRe.MatchString(strings.ToLower(msg))
 	}
 	return u
 }
@@ -268,7 +274,7 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		if order == nil {
 			return false
 		}
-		createClaim(from, merchant, order, u.NamedAmount, "", false)
+		handlePaidReport(from, merchant, order, u.NamedAmount, u.DirectRoute)
 		return true
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant:
 		order := orders.Default.NewestUnpaidFor(shopID, from)

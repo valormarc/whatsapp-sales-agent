@@ -26,10 +26,12 @@ import (
 	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
+	"github.com/valormarc/hackathon-agent/internal/checkout"
 	"github.com/valormarc/hackathon-agent/internal/daybook"
 	"github.com/valormarc/hackathon-agent/internal/insights"
 	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/orders"
+	"github.com/valormarc/hackathon-agent/internal/seevwebhook"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
@@ -90,7 +92,7 @@ func handleBuyerPayment(from string, merchant *catalogue.Merchant, msg, lower st
 		return false
 	}
 	if claim {
-		createClaim(from, merchant, order, claimAmountOf(msg), "", false)
+		handlePaidReport(from, merchant, order, claimAmountOf(msg), directWordsRe.MatchString(lower))
 		return true
 	}
 	if directIntentRe.MatchString(lower) {
@@ -289,4 +291,67 @@ func settleClaim(merchantPhone string, merchant *catalogue.Merchant, o *orders.O
 	}
 	whatsapp.SendText(o.From, merchant.Name+" says she has not seen the payment yet. Check the number you sent to: "+payout+". When it lands, send the screenshot again.")
 	whatsapp.SendText(merchantPhone, "Told "+o.From+" you have not seen it yet, and to check the number she sent to. The order stays unpaid; she can claim again when it lands.")
+}
+
+// directWordsRe reads a buyer saying the money went to the
+// shop's own number rather than through the link: she names
+// the number, the sending to it, or the direct route itself.
+// It decides one thing only: who can verify her report. A
+// payment to the merchant's number is verified by the merchant,
+// who can see her own MoMo; a payment through the Seev link
+// is verified by the agent with Seev, because the merchant has
+// no window into Seev at all and must never be asked to
+// confirm a payment she cannot see.
+var directWordsRe = regexp.MustCompile(`(?i)(momo\s+number|your\s+number|her\s+number|the\s+shop'?s\s+number|sent\s+(it|the\s+money)\s+to|paid\s+(it\s+)?(to|into)|directly|to\s+the\s+number)`)
+
+// handlePaidReport answers a buyer who says she has paid, and
+// routes the report to whoever can actually verify it. When
+// her order carries a live Seev session and she does not say
+// the money went to the number, the agent checks with Seev
+// itself and confirms or corrects her from what Seev says.
+// Only a payment she says went to the merchant's own number,
+// or an order with no Seev session at all, becomes a claim for
+// the merchant to settle with her own word.
+func handlePaidReport(from string, merchant *catalogue.Merchant, order *orders.Order, named *float64, direct bool) {
+	if fresh := orders.Default.GetOrder(order.Reference); fresh != nil && fresh.Status == "paid" {
+		whatsapp.SendText(from, "That one is already confirmed paid. Thank you.")
+		return
+	}
+	if !direct && order.ProviderRef != nil && *order.ProviderRef != "" {
+		verifyLinkPayment(from, merchant, order)
+		return
+	}
+	createClaim(from, merchant, order, named, "", false)
+}
+
+// verifyLinkPayment checks a buyer's "I have paid" against
+// Seev's own read-back of her checkout session, and answers
+// both sides from the result. Paid and matching settles the
+// order exactly as the webhook settles it, with the agent
+// confirming to the buyer and alerting the merchant. Not yet
+// paid is said plainly, with the order left open and the
+// merchant left alone. Failed is said plainly too, with the
+// link offered again. An unreachable Seev is admitted, never
+// guessed around.
+func verifyLinkPayment(from string, merchant *catalogue.Merchant, order *orders.Order) {
+	charged := order.Charged()
+	check := checkout.VerifyPayment(*order.ProviderRef)
+	switch {
+	case check == nil:
+		whatsapp.SendText(from, "I could not reach the payment service to check just now. The moment it confirms your payment I will tell you, and "+merchant.Name+" will hear it from me at the same time. If you sent the money to the shop's MoMo number instead, say so and I will pass it to the shop to confirm.")
+	case checkout.IsPaidStatus(check.Status) && check.AmountMajor != nil && money.Round(*check.AmountMajor*100) != money.Round(charged*100):
+		whatsapp.SendText(from, "I have checked with the payment service. A payment came through, but the amount does not match your order, so I have told "+merchant.Name+" and we are looking at it together. Your order is not settled yet.")
+		if phone := merchantNotifyPhone(merchant); phone != "" {
+			whatsapp.SendText(phone, "Payment amount mismatch on order "+order.Reference+": the order is "+money.GHS(charged)+" but Seev reports "+money.GHS(*check.AmountMajor)+". The buyer reported she had paid; I have not marked it paid. Please check the Seev record with me.")
+		}
+	case checkout.IsPaidStatus(check.Status):
+		seevwebhook.SettleVerified(order, "I have checked with the payment service, and you are right: your payment for the "+order.ProductName+" has come through, confirmed at "+money.GHS(charged)+". "+merchant.Name+" has your order and will take it from here.")
+	case checkout.IsFailedStatus(check.Status):
+		sendPieces(from,
+			"I have checked with the payment service, and that payment did not go through, so nothing was charged.",
+			"Your order "+order.Reference+" is still open. You can try again with the same link: "+orderPaymentURL(order),
+		)
+	default:
+		whatsapp.SendText(from, "I have checked with the payment service, and your payment has not come through yet. Your order "+order.Reference+" for the "+order.ProductName+" is still open. If the money has only just left your phone, give it a small moment and tell me again, and I will check again. If you sent it to the shop's MoMo number instead, say so and I will pass it to the shop to confirm.")
+	}
 }
