@@ -149,6 +149,132 @@ func Chat(messages []Message, opts Options) *string {
 	return extractReply(data)
 }
 
+// ListingDraft is the model's draft of a shop listing from a
+// seller's product photo: a name and a short description. It
+// deliberately carries no price. A price is money, and money comes
+// only from the seller's own words, read by code; the model's draft
+// is a proposal the seller confirms or corrects before anything
+// goes live.
+type ListingDraft struct {
+	Name        string
+	Description string
+}
+
+type visionPart struct {
+	Type     string `json:"type"`
+	Text     string `json:"text,omitempty"`
+	ImageURL *struct {
+		URL string `json:"url"`
+	} `json:"image_url,omitempty"`
+}
+
+type visionMessage struct {
+	Role    string       `json:"role"`
+	Content []visionPart `json:"content"`
+}
+
+type visionRequest struct {
+	Model    string          `json:"model"`
+	Messages []visionMessage `json:"messages"`
+}
+
+// ChatVision makes one chat completion that carries an image (a
+// data URI) beside the text. It returns the reply text, or nil on
+// any failure, under the same fail-soft contract as Chat.
+func ChatVision(system, text, imageDataURI string) *string {
+	if !Enabled() || imageDataURI == "" {
+		return nil
+	}
+	img := struct {
+		URL string `json:"url"`
+	}{URL: imageDataURI}
+	msgs := []visionMessage{}
+	if system != "" {
+		msgs = append(msgs, visionMessage{Role: "system", Content: []visionPart{{Type: "text", Text: system}}})
+	}
+	msgs = append(msgs, visionMessage{Role: "user", Content: []visionPart{
+		{Type: "text", Text: text},
+		{Type: "image_url", ImageURL: &img},
+	}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(defaultTimeoutMs)*time.Millisecond)
+	defer cancel()
+	body, err := json.Marshal(visionRequest{Model: chosenModel(), Messages: msgs})
+	if err != nil {
+		return nil
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint(), bytes.NewReader(body))
+	if err != nil {
+		return nil
+	}
+	req.Header.Set("content-type", "application/json")
+	req.Header.Set("authorization", "Bearer "+os.Getenv("META_MODEL_API_KEY"))
+
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil
+	}
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil
+	}
+	return extractReply(data)
+}
+
+// DraftListing asks the model to draft a listing from a seller's
+// product photo and the words she sent with it, if any. Her own
+// words come first in the prompt and the reply is read as exactly
+// one JSON object, { name, description }; anything else returns
+// nil and the caller works from her words alone. Prices are never
+// asked for and never read from the reply.
+func DraftListing(imageDataURI, caption string) *ListingDraft {
+	system := "You help a market seller turn a photo of her goods into a shop listing. " +
+		"Reply with exactly one JSON object, no other text: {\"name\": \"...\", \"description\": \"...\"}. " +
+		"The name is the short name a buyer would ask for, a few words at most. " +
+		"The description is one or two short plain sentences about what the item is, its visible condition, colour, size or material, only what the photo or her words support. " +
+		"Never mention a price. Never invent a detail you cannot see."
+	text := "Draft the listing for the product in this photo."
+	if strings.TrimSpace(caption) != "" {
+		text = "The seller sent this photo with her own words: \"" + strings.TrimSpace(caption) + "\". " +
+			"Draft the listing for the product in the photo. Where her words name or describe the product, use her words first."
+	}
+	reply := ChatVision(system, text, imageDataURI)
+	if reply == nil {
+		return nil
+	}
+	s := *reply
+	open := strings.Index(s, "{")
+	closeIdx := strings.LastIndex(s, "}")
+	if open == -1 || closeIdx <= open {
+		return nil
+	}
+	var raw struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal([]byte(s[open:closeIdx+1]), &raw); err != nil {
+		return nil
+	}
+	d := &ListingDraft{
+		Name:        strings.TrimSpace(raw.Name),
+		Description: strings.TrimSpace(raw.Description),
+	}
+	if len(d.Name) > 80 {
+		d.Name = strings.TrimSpace(d.Name[:80])
+	}
+	if len(d.Description) > 300 {
+		d.Description = strings.TrimSpace(d.Description[:300])
+	}
+	if d.Name == "" && d.Description == "" {
+		return nil
+	}
+	return d
+}
+
 // ParseProposal reads a negotiation proposal out of a model reply. The
 // model is asked for exactly one JSON object, { action, price,
 // message }; clean JSON, fenced JSON and JSON with prose around it are

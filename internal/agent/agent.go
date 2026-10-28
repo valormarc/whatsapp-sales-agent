@@ -1268,13 +1268,14 @@ func HandleInbound(in Inbound) {
 
 	from := in.From
 
-	// Photo intake, routed by shop context like everything else. SAM
-	// 3.1 cutout and generated listing copy plug in here in a later
-	// build; until then the reply says plainly what a photo can and
-	// cannot do, against the sender's own shop.
+	// Photo intake, routed by shop context like everything else.
+	// A shop owner's photo is a throw-in: it opens onboarding from
+	// the photo and whatever words came with it (see photo.go).
+	// A buyer's photo in a shop she is bound to is read as her
+	// payment claim or as a question the text shelf must answer.
 	if in.ImageID != "" {
 		if shop := ownerShopFor(from); shop != nil {
-			whatsapp.SendText(from, "Got your photo for "+shop.Name+". I cannot turn a photo into a listing yet: photo listing (the cutout and the draft wording) is still being built, and I have added nothing from this photo. For now, say \"add a product\" and I will walk you through it in text, onto your own shelf at "+shop.Name+".")
+			startPhotoOnboarding(from, shop, in.ImageID, in.Caption)
 			return
 		}
 		if shopID := bindings[from]; shopID != "" {

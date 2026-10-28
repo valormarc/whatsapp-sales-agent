@@ -11,7 +11,7 @@ The same chat also serves the merchant herself. She asks how today is going, wha
 ## What I am building this week
 
 - WhatsApp channel on the Meta WhatsApp Cloud API
-- Merchant onboarding in chat: photos in, catalogue out, using SAM 3.1 and Muse Spark through the Meta Model API
+- Merchant onboarding in chat: she throws a product photo in with whatever words she has, the way sellers already post in their groups, and Muse Spark drafts the listing from the photo through the Meta Model API. Her price is read from her own words by code, never drafted, and she is asked only for what she did not give, her floor price above all. Nothing sells until she confirms the listing in the same chat
 - A sales agent grounded on the merchant's own catalogue, which hands over to the merchant when it is unsure instead of guessing
 - A haggling engine with a secret floor price per product, enforced in code, not just in the prompt
 - MoMo checkout through Seev, with the signed webhook settling the order and telling the merchant what she made
@@ -25,4 +25,4 @@ I created this repository on the first day of the event. The build is published 
 
 ## Stack
 
-Go, the Meta Model API (Muse Spark for conversation and negotiation, SAM 3.1 for product photos), the WhatsApp Cloud API, and Seev for MoMo checkout.
+Go, the Meta Model API (Muse Spark for conversation, negotiation and drafting listings from product photos), the WhatsApp Cloud API, and Seev for MoMo checkout.

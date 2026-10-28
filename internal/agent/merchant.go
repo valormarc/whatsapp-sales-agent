@@ -35,6 +35,14 @@ type OnboardingFlow struct {
 	FloorPrice  float64
 	Unit        string
 	BaseQty     float64
+	// Photo and PhotoRef mark a flow that began as a throw-in: the
+	// seller sent a photograph of her goods, with whatever words
+	// she had, instead of starting the guided walk. The fields the
+	// throw-in already answered are filled before the flow opens,
+	// and the walk then asks only for what is missing (see
+	// photo.go). A guided flow leaves both unset.
+	Photo    bool
+	PhotoRef string
 }
 
 var (
@@ -177,8 +185,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			return
 		}
 		flow.Name = name
-		flow.Step = "description"
-		whatsapp.SendText(from, "Tell me about "+name+" in a few words: what it is, and what makes it worth buying. Customers will read this.")
+		gotoNextOnboardingStep(from, flow)
 
 	case "description":
 		description := strings.TrimSpace(text)
@@ -187,8 +194,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			return
 		}
 		flow.Description = description
-		flow.Step = "list"
-		whatsapp.SendText(from, "What is the list price for "+flow.Name+"? This is the price customers see first. Give it in cedis, for example 450.")
+		gotoNextOnboardingStep(from, flow)
 
 	case "list":
 		amount := parseOffer(lower)
@@ -197,8 +203,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			return
 		}
 		flow.ListPrice = *amount
-		flow.Step = "floor"
-		whatsapp.SendText(from, "Now your floor price for "+flow.Name+": the lowest you would accept for it. Customers never see this, and I will never sell below it. What is your floor?")
+		gotoNextOnboardingStep(from, flow)
 
 	case "floor":
 		amount := parseOffer(lower)
@@ -211,8 +216,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			return
 		}
 		flow.FloorPrice = *amount
-		flow.Step = "measure"
-		whatsapp.SendText(from, "Do you sell the "+flow.Name+" by measure, like by the yard, litre or kilo, or only as a whole?")
+		gotoNextOnboardingStep(from, flow)
 
 	case "measure":
 		// The answer can carry everything at once ("by the yard,
@@ -277,6 +281,58 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		default:
 			whatsapp.SendText(from, "Nothing is saved until you say yes. Shall I add "+flow.Name+" at "+money.GHS(flow.ListPrice)+"? Say yes to save it, or no to drop it.")
 		}
+	}
+}
+
+// gotoNextOnboardingStep moves a flow to the first step it still
+// needs and asks that step's question. A step counts as answered
+// when its field is filled, however it got filled: by her answer
+// just now in the guided walk, or before the walk even opened by
+// the words and the draft that came with a thrown-in photo. That
+// is what lets one walk serve both doors: in the guided walk
+// nothing is ever pre-filled, so it asks every question in order,
+// exactly as it always has; in a throw-in it asks only for what
+// the seller did not already give. The floor is never pre-filled:
+// no post a seller makes carries it, and a price is never guessed
+// for it.
+func gotoNextOnboardingStep(from string, flow *OnboardingFlow) {
+	switch {
+	case flow.Name == "":
+		flow.Step = "name"
+	case flow.Description == "":
+		flow.Step = "description"
+	case flow.ListPrice <= 0:
+		flow.Step = "list"
+	case flow.FloorPrice <= 0:
+		flow.Step = "floor"
+	case flow.Unit == "" && flow.BaseQty <= 0:
+		// The measure question is still open. A flow that arrived
+		// with a measure in its caption carries Unit and BaseQty
+		// already and skips it; a guided flow always lands here.
+		flow.Step = "measure"
+		whatsapp.SendText(from, "Do you sell the "+flow.Name+" by measure, like by the yard, litre or kilo, or only as a whole?")
+		return
+	default:
+		enterOnboardingConfirm(from, flow)
+		return
+	}
+	askOnboardingStep(from, flow)
+}
+
+// askOnboardingStep asks the question for the flow's current step,
+// in the same words the guided walk has always used.
+func askOnboardingStep(from string, flow *OnboardingFlow) {
+	switch flow.Step {
+	case "name":
+		whatsapp.SendText(from, "What is it called?")
+	case "description":
+		whatsapp.SendText(from, "Tell me about "+flow.Name+" in a few words: what it is, and what makes it worth buying. Customers will read this.")
+	case "list":
+		whatsapp.SendText(from, "What is the list price for "+flow.Name+"? This is the price customers see first. Give it in cedis, for example 450.")
+	case "floor":
+		whatsapp.SendText(from, "Now your floor price for "+flow.Name+": the lowest you would accept for it. Customers never see this, and I will never sell below it. What is your floor?")
+	case "measure":
+		whatsapp.SendText(from, "Do you sell the "+flow.Name+" by measure, like by the yard, litre or kilo, or only as a whole?")
 	}
 }
 

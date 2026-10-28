@@ -8,6 +8,7 @@ package whatsapp
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -103,6 +104,53 @@ func post(record outboxRecord, payload any) Result {
 	}
 	appendOutbox(record)
 	return Result{Status: res.StatusCode}
+}
+
+// DownloadMedia fetches the bytes behind an inbound media id and
+// returns them as a data URI a model call can carry. Two Graph
+// steps: the id resolves to a short-lived download address, and
+// the address serves the bytes, both under the same token. Any
+// failure, including dry-run mode with no token configured,
+// returns false, and callers carry on without the picture itself.
+func DownloadMedia(mediaID string) (string, bool) {
+	token := os.Getenv("WHATSAPP_TOKEN")
+	if token == "" || mediaID == "" {
+		return "", false
+	}
+	get := func(url string) ([]byte, int, error) {
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+		req.Header.Set("authorization", "Bearer "+token)
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, 0, err
+		}
+		defer res.Body.Close()
+		data, err := io.ReadAll(io.LimitReader(res.Body, 10<<20))
+		return data, res.StatusCode, err
+	}
+	meta, status, err := get(fmt.Sprintf("https://graph.facebook.com/%s/%s", graphVersion, mediaID))
+	if err != nil || status < 200 || status >= 300 {
+		return "", false
+	}
+	var info struct {
+		URL      string `json:"url"`
+		MimeType string `json:"mime_type"`
+	}
+	if err := json.Unmarshal(meta, &info); err != nil || info.URL == "" {
+		return "", false
+	}
+	bytesData, status, err := get(info.URL)
+	if err != nil || status < 200 || status >= 300 || len(bytesData) == 0 {
+		return "", false
+	}
+	mime := info.MimeType
+	if mime == "" {
+		mime = "image/jpeg"
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(bytesData), true
 }
 
 // SendText sends one text message, or logs it to the outbox in

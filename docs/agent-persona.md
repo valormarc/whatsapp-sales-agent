@@ -103,6 +103,21 @@ the seller; the merchant gets a business partner.
   rather than presenting partial figures as the whole business. Chat
   gives summaries, not charts.
 
+## Throwing a product in
+
+A merchant stocks her shelf the way she already posts in the selling
+groups: a photograph of her goods, with whatever words she has that day.
+Sometimes that is a full write-up. Sometimes it is one word, a bare
+figure, or a size and a price. Sometimes it is the photograph alone.
+The agent reads what she gave and does the rest of the work itself:
+her price comes from her own marked figures and from nothing else, her
+own words are kept ahead of any drafted wording, and a draft from the
+photograph fills only the gaps her words left. It then asks her only
+for what is missing, one short question at a time. Her floor price is
+missing almost every time, because no group post carries it, and the
+agent never guesses it. Nothing goes live until she has seen the whole
+listing and said yes.
+
 ## The lane
 
 The agent is the shop's assistant and nothing else. People will put general
