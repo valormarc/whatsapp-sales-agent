@@ -56,10 +56,25 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		return
 	}
 
-	// An agreed deal waiting on the buyer: resend the link on request.
-	if s.Stage == "agreed" && linkRe.MatchString(lower) {
-		whatsapp.SendText(from, "Here is your payment link: "+s.PaymentURL)
-		return
+	// An agreed deal waiting on the buyer. Her words about the
+	// payment are understood before anything is resent: a buyer
+	// saying the payment failed on a bad network, or that the
+	// link has expired, is not asking for the same link again,
+	// and answering her with it unread is exactly the deafness
+	// the understanding step exists to end. Only the payment
+	// intents act this early; everything else falls through to
+	// the resend and the rest of the flow, whose own fallback
+	// understands the rest.
+	if s.Stage == "agreed" {
+		if u := understandBuyerMessage(from, s, merchant, shopID, msg); u != nil &&
+			(u.Intent == intentPaymentBlocked || u.Intent == intentPaymentExpired || u.Intent == intentPaymentLater) &&
+			actOnBuyerUnderstanding(from, s, merchant, shopID, u) {
+			return
+		}
+		if linkRe.MatchString(lower) {
+			whatsapp.SendText(from, "Here is your payment link: "+s.PaymentURL)
+			return
+		}
 	}
 
 	// A price is agreed and the sale is waiting on how the goods
@@ -462,6 +477,17 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			return
 		}
 		recordWantAndOfferShelf(from, s, msg)
+		return
+	}
+
+	// Nothing in the rules matched her words, so before any
+	// canned line the message is understood: the model reads
+	// what she wrote with the facts of this conversation, and
+	// the agent acts on what she means. A buyer reporting that
+	// her payment failed on a bad network, or that her link
+	// has expired, is answered from her order, never handed
+	// this fallback as if her message was never read.
+	if u := understandBuyerMessage(from, s, merchant, shopID, msg); u != nil && actOnBuyerUnderstanding(from, s, merchant, shopID, u) {
 		return
 	}
 

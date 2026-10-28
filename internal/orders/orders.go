@@ -108,6 +108,11 @@ type Order struct {
 	// told both sides about this order sitting unpaid, so it
 	// alerts once and never nags.
 	UnpaidAlerted bool `json:"unpaidAlerted,omitempty"`
+	// LinkAttempts counts the payment links minted for this
+	// order: the first at the sale, then a fresh one each time
+	// the buyer reports the link dead and the agent re-issues.
+	// Zero on orders placed before the field existed means one.
+	LinkAttempts int `json:"linkAttempts,omitempty"`
 }
 
 // All returns every order in the book, in reference order, for

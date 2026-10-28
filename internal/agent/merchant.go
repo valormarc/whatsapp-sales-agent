@@ -195,6 +195,16 @@ func handleMerchantMessage(from, text, merchantID string) {
 		return
 	}
 
+	// Her words matched no command, so they are understood
+	// before they are answered: the model reads them with her
+	// shelf and her day, and a question those facts answer is
+	// answered from them. Anything the understanding cannot
+	// carry still reaches the day answer below, exactly as
+	// before.
+	if u := understandMerchantMessage(from, merchant, merchantID, text); u != nil && actOnMerchantUnderstanding(from, merchant, merchantID, u) {
+		return
+	}
+
 	answerMerchantDayQuestion(from, text, merchantID)
 }
 

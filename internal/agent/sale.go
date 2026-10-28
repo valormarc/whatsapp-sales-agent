@@ -98,6 +98,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		DeliveryPaidTo: paidTo,
 		Quantity:       s.Qty,
 		Unit:           s.Unit,
+		LinkAttempts:   1,
 	})
 	merchantPhone := merchantNotifyPhone(merchant)
 	// Seev was configured but the session could not be created: say so,
