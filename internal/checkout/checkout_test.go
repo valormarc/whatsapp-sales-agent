@@ -246,3 +246,27 @@ func TestOrderBookRecordsFindsAndSettles(t *testing.T) {
 		t.Fatalf("missing order: %+v, want nil", got)
 	}
 }
+
+func TestVerifyPaymentReadsPesewas(t *testing.T) {
+	// The real read-back shape, captured live: a session
+	// created for GH₵1 (100 pesewas) reads back amount 100,
+	// and one created for GH₵2.50 reads back 250. AmountMajor
+	// must come out in cedis: 1 and 2.5.
+	for _, tc := range []struct {
+		amount float64
+		want   float64
+	}{{100, 1}, {250, 2.5}, {87500, 875}} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("content-type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": map[string]any{"status": "completed", "amount": tc.amount},
+			})
+		}))
+		t.Setenv("SEEV_API_BASE", srv.URL)
+		v := VerifyPayment("PAY-TEST")
+		srv.Close()
+		if v == nil || v.AmountMajor == nil || *v.AmountMajor != tc.want {
+			t.Fatalf("read-back %v pesewas must read as GH₵%v, got %+v", tc.amount, tc.want, v)
+		}
+	}
+}

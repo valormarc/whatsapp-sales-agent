@@ -87,6 +87,8 @@ func Handler() http.Handler {
 
 	mux.HandleFunc("GET /terms", pageHandler(termsPage))
 
+	mux.HandleFunc("GET /paid", pageHandler(paidPage))
+
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
 		w.WriteHeader(http.StatusOK)

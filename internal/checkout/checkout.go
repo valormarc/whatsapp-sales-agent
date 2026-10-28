@@ -190,9 +190,14 @@ type Verification struct {
 }
 
 // VerifyPayment reads a checkout session back from Seev. It takes no
-// credentials, per Seev's docs. The amount comes back in major units
-// (cedis), unlike the pesewas sent at creation. It returns nil on any
-// failure.
+// credentials, per Seev's docs. The amount comes back in PESEWAS,
+// the same unit creation sends: proven live on 2026-10-28, when a
+// GH₵1 session (created at 100) read back amount 100 completed, and
+// a GH₵2.50 session (created at 250) read back 250. An earlier
+// reading of the docs took the read-back for major units, and
+// every real payment then failed the amount check as a hundredfold
+// "mismatch"; AmountMajor here is the converted figure, cedis, so
+// callers compare like with like. It returns nil on any failure.
 func VerifyPayment(providerRef string) *Verification {
 	if providerRef == "" {
 		return nil
@@ -224,7 +229,10 @@ func VerifyPayment(providerRef string) *Verification {
 		}
 	}
 	if rawAmount, ok := d["amount"]; ok {
-		out.AmountMajor = majorAmount(rawAmount)
+		if pesewas := majorAmount(rawAmount); pesewas != nil {
+			major := *pesewas / 100
+			out.AmountMajor = &major
+		}
 	}
 	return out
 }

@@ -12,6 +12,29 @@ h1 { font-size: 1.5rem; }
 h2 { font-size: 1.1rem; margin-top: 1.8rem; }
 </style>`
 
+// paidPage is where a buyer lands after paying on the hosted
+// checkout page: the redirect the checkout is created with
+// (SEEV_REDIRECT_URL). Without it, the payment service's own
+// default leaves her on a raw data page. This page simply
+// closes the moment properly and sends her back to the chat,
+// where the agent confirms her payment.
+const paidPage = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Payment complete</title>
+` + pageStyle + `
+</head>
+<body>
+<h1>Payment complete</h1>
+<p>Thank you. Your payment has been made.</p>
+<p>You can close this page and go back to WhatsApp. The shop's
+assistant will confirm your payment there, and the shop has your
+order.</p>
+</body>
+</html>`
+
 const privacyPage = `<!DOCTYPE html>
 <html lang="en">
 <head>

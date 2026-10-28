@@ -25,7 +25,7 @@ func TestMerchantOrderPaymentAnswersFromTheRecord(t *testing.T) {
 	seedOpenOrder(t, "TEST-5001", buyer, 1)
 	order := orders.Default.GetOrder("TEST-5001")
 	createClaim(buyer, catalogue.GetMerchant(MerchantID), order, nil, "", false)
-	fakeSeevReadback(t, "pending", 875)
+	fakeSeevReadback(t, "pending", 87500)
 
 	shop := catalogue.GetMerchant(MerchantID)
 	if !actOnMerchantUnderstanding(merchant, shop, MerchantID, "Is it made to seev link or my momo direct?", &understood{Intent: intentOrderPayment}) {
@@ -44,7 +44,7 @@ func TestMerchantOrderPaymentSettlesALandedLinkPayment(t *testing.T) {
 	setupChat(t, merchant, shopWithBag)
 	buyer := "233550002012"
 	seedOpenOrder(t, "TEST-5002", buyer, 1)
-	fakeSeevReadback(t, "completed", 875)
+	fakeSeevReadback(t, "completed", 87500)
 
 	if !actOnMerchantUnderstanding(merchant, catalogue.GetMerchant(MerchantID), MerchantID, "what is happening with the payment", &understood{Intent: intentOrderPayment}) {
 		t.Fatal("the payment question must be answered")
@@ -77,7 +77,7 @@ func TestMerchantAskBuyerAndTheAnswerComesBack(t *testing.T) {
 
 	// Her answer names the link: the agent checks it and
 	// reports the outcome to both sides.
-	fakeSeevReadback(t, "pending", 875)
+	fakeSeevReadback(t, "pending", 87500)
 	c.say(t, buyer, "SHOP-TEST")
 	c.replies(t, buyer)
 	c.say(t, buyer, "I paid through the link")

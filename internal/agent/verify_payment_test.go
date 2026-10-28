@@ -23,8 +23,11 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/orders"
 )
 
-// fakeSeev serves one read-back shape for any session asked
-// of it, and points the checkout package at it.
+// fakeSeevReadback serves one read-back shape for any session
+// asked of it, and points the checkout package at it. The
+// amount is passed in pesewas, the unit the real read-back
+// uses (the seeded order charges GH₵875, so its matching
+// read-back amount is 87500).
 func fakeSeevReadback(t *testing.T, status string, amount float64) {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +44,7 @@ func TestPaidReportOnALinkIsVerifiedAndSettledByTheAgent(t *testing.T) {
 	c := &chat{dir: dir}
 	buyer := "233550001902"
 	seedOpenOrder(t, "TEST-4001", buyer, 1)
-	fakeSeevReadback(t, "completed", 875)
+	fakeSeevReadback(t, "completed", 87500)
 
 	actOnBuyerUnderstanding(buyer, &Session{Stage: "agreed"}, catalogue.GetMerchant(MerchantID), MerchantID, &understood{Intent: intentPaymentClaim})
 
@@ -70,7 +73,7 @@ func TestPaidReportOnALinkNotYetPaid(t *testing.T) {
 	c := &chat{dir: dir}
 	buyer := "233550001912"
 	seedOpenOrder(t, "TEST-4002", buyer, 1)
-	fakeSeevReadback(t, "pending", 875)
+	fakeSeevReadback(t, "pending", 87500)
 
 	actOnBuyerUnderstanding(buyer, &Session{Stage: "agreed"}, catalogue.GetMerchant(MerchantID), MerchantID, &understood{Intent: intentPaymentClaim})
 
@@ -91,7 +94,7 @@ func TestPaidReportOnALinkThatFailed(t *testing.T) {
 	c := &chat{dir: dir}
 	buyer := "233550001922"
 	seedOpenOrder(t, "TEST-4003", buyer, 1)
-	fakeSeevReadback(t, "failed", 875)
+	fakeSeevReadback(t, "failed", 87500)
 
 	actOnBuyerUnderstanding(buyer, &Session{Stage: "agreed"}, catalogue.GetMerchant(MerchantID), MerchantID, &understood{Intent: intentPaymentClaim})
 
@@ -110,7 +113,7 @@ func TestPaidReportByTheTextDoorVerifiesToo(t *testing.T) {
 	c := &chat{dir: dir}
 	buyer := "233550001932"
 	seedOpenOrder(t, "TEST-4004", buyer, 1)
-	fakeSeevReadback(t, "completed", 875)
+	fakeSeevReadback(t, "completed", 87500)
 
 	c.say(t, buyer, "SHOP-TEST")
 	c.replies(t, buyer)
