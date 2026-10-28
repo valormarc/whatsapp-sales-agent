@@ -21,18 +21,20 @@ func ListProducts(merchantID string) []Product {
 
 // Validation errors from the store's write operations. They are
 // worded as plain fragments so the chat layer can surface them almost
-// as-is ("Nothing changed: ..."). Validation lives here, in the
-// store, so no caller can write a shop the haggling engine would
-// trip on: prices positive, a floor strictly below its list price,
-// item names unique within the shop.
+// as-is ("Nothing changed: ..."). They are worded the way the seller
+// speaks: her FloorPrice is her last price. Validation lives here,
+// in the store, so no caller can write a shop the haggling engine
+// would trip on: prices positive, a last price below its price (or
+// equal to it, for a fixed-price product), item names unique within
+// the shop.
 var (
 	ErrMerchantNotFound  = errors.New("that shop is not in the catalogue")
 	ErrEmptyName         = errors.New("a product needs a name")
 	ErrDuplicateName     = errors.New("you already sell something with that name")
 	ErrProductNotFound   = errors.New("there is no product with that name in the catalogue")
-	ErrListPrice         = errors.New("the list price must be more than zero")
-	ErrListBelowFloor    = errors.New("the list price must stay above the floor price")
-	ErrFloorPrice        = errors.New("the floor price must be more than zero and below the list price")
+	ErrListPrice         = errors.New("the price must be more than zero")
+	ErrListBelowFloor    = errors.New("the price must stay above the last price")
+	ErrFloorPrice        = errors.New("the last price must be more than zero and not above the price")
 	ErrNegativeAllowance = errors.New("the allowance cannot be negative")
 )
 
@@ -147,7 +149,11 @@ func AddProduct(merchantID string, p Product) (Product, error) {
 	if p.ListPrice <= 0 {
 		return Product{}, ErrListPrice
 	}
-	if p.FloorPrice <= 0 || p.FloorPrice >= p.ListPrice {
+	// Her last price sits below her price, so there is room to
+	// bargain. The one case where it equals the price is a
+	// fixed-price product, and that must be said outright.
+	if p.FloorPrice <= 0 || p.FloorPrice > p.ListPrice ||
+		(p.FloorPrice == p.ListPrice && !p.Fixed) {
 		return Product{}, ErrFloorPrice
 	}
 	stored := p
@@ -171,8 +177,10 @@ func AddProduct(merchantID string, p Product) (Product, error) {
 	return stored, nil
 }
 
-// UpdateListPrice corrects a product's list price. The new list price
-// must stay above the product's floor.
+// UpdateListPrice corrects a product's price. The new price must
+// stay above the product's last price. A fixed-price product has
+// no gap to protect: its last price is its price, so the last
+// price moves with the new price and it stays fixed.
 func UpdateListPrice(merchantID, name string, listPrice float64) (Product, error) {
 	if listPrice <= 0 {
 		return Product{}, ErrListPrice
@@ -182,6 +190,12 @@ func UpdateListPrice(merchantID, name string, listPrice float64) (Product, error
 		i := productIndex(m, name)
 		if i < 0 {
 			return ErrProductNotFound
+		}
+		if m.Products[i].Fixed {
+			m.Products[i].ListPrice = listPrice
+			m.Products[i].FloorPrice = listPrice
+			updated = m.Products[i]
+			return nil
 		}
 		if listPrice <= m.Products[i].FloorPrice {
 			return ErrListBelowFloor
@@ -193,8 +207,10 @@ func UpdateListPrice(merchantID, name string, listPrice float64) (Product, error
 	return updated, err
 }
 
-// UpdateFloorPrice corrects a product's floor price. The new floor
-// must stay below the product's list price.
+// UpdateFloorPrice corrects a product's last price. A last price
+// below the price leaves room to bargain, and clears any fixed
+// flag. A last price equal to the price is her saying the price
+// does not move: the product becomes fixed price.
 func UpdateFloorPrice(merchantID, name string, floorPrice float64) (Product, error) {
 	var updated Product
 	err := updateMerchant(merchantID, func(m *Merchant) error {
@@ -202,10 +218,11 @@ func UpdateFloorPrice(merchantID, name string, floorPrice float64) (Product, err
 		if i < 0 {
 			return ErrProductNotFound
 		}
-		if floorPrice <= 0 || floorPrice >= m.Products[i].ListPrice {
+		if floorPrice <= 0 || floorPrice > m.Products[i].ListPrice {
 			return ErrFloorPrice
 		}
 		m.Products[i].FloorPrice = floorPrice
+		m.Products[i].Fixed = floorPrice == m.Products[i].ListPrice
 		updated = m.Products[i]
 		return nil
 	})

@@ -302,10 +302,10 @@ func TestOwnerCommandsTouchOnlyHerOwnShop(t *testing.T) {
 		t.Fatalf("Ama's price was changed by another shop's owner: %v", p.ListPrice)
 	}
 
-	// Ama's own listing shows her floors and none of Efua's goods.
+	// Ama's own listing shows her last prices and none of Efua's goods.
 	c.say(t, ownerAma, "my catalogue")
 	got := c.last(t, ownerAma)
-	if !strings.Contains(got, "Smoked Tilapia") || !strings.Contains(got, "your floor GH₵140") {
+	if !strings.Contains(got, "Smoked Tilapia") || !strings.Contains(got, "your last price GH₵140") {
 		t.Fatalf("Ama's catalogue = %q", got)
 	}
 	if strings.Contains(got, "Beaded Bag") || strings.Contains(got, "GH₵680") {

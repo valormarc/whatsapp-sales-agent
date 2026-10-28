@@ -34,9 +34,9 @@ func TestTypedNameLineReadsPriceAndSize(t *testing.T) {
 
 	c.say(t, merchant, "ITS LOCAL MADE")
 	// The list step never comes: her line already gave the price.
-	// The walk lands on the floor.
-	if got := c.last(t, merchant); !strings.Contains(got, "floor") {
-		t.Fatalf("after description the walk should ask the floor, got %q", got)
+	// The walk lands on the last price.
+	if got := c.last(t, merchant); !strings.Contains(got, "last price") {
+		t.Fatalf("after description the walk should ask the last price, got %q", got)
 	}
 	c.say(t, merchant, "200")
 	if got := c.last(t, merchant); !strings.Contains(got, "by measure") {

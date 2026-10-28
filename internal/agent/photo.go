@@ -34,7 +34,7 @@ package agent
 //
 // The draft then enters the ordinary onboarding walk with its
 // answered fields already filled, so the walk asks only for what
-// is missing. One thing is missing almost every time: her floor
+// is missing. One thing is missing almost every time: her last
 // price, which no group post ever carries and nothing here ever
 // guesses. And as in the guided walk, nothing is saved until she
 // confirms the summary with a clear yes.

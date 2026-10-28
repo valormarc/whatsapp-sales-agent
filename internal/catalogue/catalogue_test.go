@@ -98,8 +98,25 @@ func TestUpdatePrices(t *testing.T) {
 	if updated.FloorPrice != 700 {
 		t.Fatalf("floor %v, want 700", updated.FloorPrice)
 	}
-	if _, err := UpdateFloorPrice("demo", "beaded bag", 900); !errors.Is(err, ErrFloorPrice) {
-		t.Fatalf("floor at the list price: err %v, want ErrFloorPrice", err)
+	// A last price equal to the price is her saying the price
+	// does not move: the product becomes fixed price.
+	fixed, err := UpdateFloorPrice("demo", "beaded bag", 900)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !fixed.Fixed || fixed.FloorPrice != 900 {
+		t.Fatalf("last price at the price: %+v, want fixed at 900", fixed)
+	}
+	if _, err := UpdateFloorPrice("demo", "beaded bag", 950); !errors.Is(err, ErrFloorPrice) {
+		t.Fatalf("last price above the price: err %v, want ErrFloorPrice", err)
+	}
+	// And a last price below the price again clears the flag.
+	back, err := UpdateFloorPrice("demo", "Handmade Beaded Bag", 700)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if back.Fixed || back.FloorPrice != 700 {
+		t.Fatalf("last price below the price: %+v, want negotiable at 700", back)
 	}
 	if _, err := UpdateFloorPrice("demo", "no such thing", 10); !errors.Is(err, ErrProductNotFound) {
 		t.Fatalf("unknown product: err %v, want ErrProductNotFound", err)
@@ -108,6 +125,28 @@ func TestUpdatePrices(t *testing.T) {
 	p := FindByName("demo", "beaded bag")
 	if p.ListPrice != 900 || p.FloorPrice != 700 {
 		t.Fatalf("stored product %+v, want list 900 floor 700", p)
+	}
+}
+
+// A fixed-price product is the one case where the last price
+// equals the price: it saves only when the fixed flag says so
+// outright, and repricing it moves both figures together so it
+// stays fixed at the new price.
+func TestFixedPriceProduct(t *testing.T) {
+	testShop(t)
+	stored, err := AddProduct("demo", Product{Name: "Plantain Chips", Description: "Crisp plantain chips.", ListPrice: 50, FloorPrice: 50, Fixed: true, Stock: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stored.Fixed || stored.FloorPrice != 50 || stored.ListPrice != 50 {
+		t.Fatalf("stored fixed product = %+v", stored)
+	}
+	updated, err := UpdateListPrice("demo", "Plantain Chips", 60)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !updated.Fixed || updated.ListPrice != 60 || updated.FloorPrice != 60 {
+		t.Fatalf("repriced fixed product = %+v, want fixed at 60", updated)
 	}
 }
 

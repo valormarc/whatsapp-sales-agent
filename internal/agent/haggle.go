@@ -175,6 +175,20 @@ func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer f
 	key := sessionKey(s.MerchantID, from)
 	p := s.Product
 	s.History = lastN(append(append([]model.Message{}, s.History...), model.Message{Role: "user", Content: msg}), 12)
+	// A fixed-price product is never haggled, by model or by
+	// engine: the seller said the price does not move, so there
+	// is no negotiation to run. An offer at the price buys it;
+	// anything below it gets the plain fixed answer, and the
+	// talk stays open at the price.
+	if p.Fixed {
+		if offer >= s.Ask {
+			beginFulfilment(from, s, s.Ask)
+			return
+		}
+		sessions[key] = s
+		whatsapp.SendText(from, "The "+s.itemLabel()+" is "+money.GHS(s.Ask)+", and that price is fixed. I cannot take "+money.GHS(offer)+" for it. If you want it at "+money.GHS(s.Ask)+", say the word and it is yours.")
+		return
+	}
 	result := negotiateStep(s, offer, merchant)
 	if result.Type == "accept" {
 		beginFulfilment(from, s, result.Price)

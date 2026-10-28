@@ -5,12 +5,17 @@ package agent
 // number (see IsMerchant) ever reaches this file's handlers.
 //
 // The onboarding flow is a small deterministic state machine held in
-// her session. No model calls take part in it: a product's name,
-// prices and floor are collected question by question, and nothing is
-// saved until she confirms the summary with a clear yes. The floor is
-// explained plainly when it is asked for, and it is never shown to
-// customers: the merchant's own catalogue listing is the only place
-// floors are ever printed, and only her number can ask for it.
+// her session. No model calls take part in it: a product's name and
+// prices are collected question by question, and nothing is saved
+// until she confirms the summary with a clear yes. Her last price
+// is asked for in the words sellers use themselves, never as a
+// "floor": that is our word inside the code, and a seller at the
+// market has never used it. It is never shown to customers: the
+// merchant's own catalogue listing is the only place last prices
+// are ever printed, and only her number can ask for it. A seller
+// whose price does not move says so, in numbers (her last price is
+// her price) or in words ("non-negotiable"), and she is taken at
+// her word: the product is saved fixed price.
 
 import (
 	"regexp"
@@ -24,16 +29,18 @@ import (
 )
 
 // OnboardingFlow is one in-progress "add a product" walk. Step is one
-// of: name, description, list, floor, measure, measureqty, confirm.
-// The measure steps sit between the floor and the summary: whether
-// she sells the product by measure, and if so how much of it the
-// list price she just gave is for.
+// of: name, description, list, lastprice, measure, measureqty,
+// confirm. The measure steps sit between the last price and the
+// summary: whether she sells the product by measure, and if so how
+// much of it the list price she just gave is for. Fixed marks a
+// product whose price does not move: her last price is her price.
 type OnboardingFlow struct {
 	Step        string
 	Name        string
 	Description string
 	ListPrice   float64
 	FloorPrice  float64
+	Fixed       bool
 	Unit        string
 	BaseQty     float64
 	// Photo and PhotoRef mark a flow that began as a throw-in: the
@@ -55,7 +62,7 @@ var (
 	addProductRe   = regexp.MustCompile(`\b(add|new)\s+(a\s+|an\s+|another\s+)?(new\s+)?(product|item|goods?|stock)\b`)
 	myCatalogueRe  = regexp.MustCompile(`\bmy (catalogue|products|items)\b`)
 	changePriceRe  = regexp.MustCompile(`^change (?:the )?(?:list )?price of (.+?) to (.+)$`)
-	changeFloorRe  = regexp.MustCompile(`^change (?:the )?floor(?: price)? of (.+?) to (.+)$`)
+	changeFloorRe  = regexp.MustCompile(`^change (?:the )?(?:last|floor)(?: price)? of (.+?) to (.+)$`)
 	removeRe       = regexp.MustCompile(`^remove (?:the )?(.+)$`)
 	setAllowanceRe = regexp.MustCompile(`\b(set|change|update|make)\b[^0-9]*\ballowance\b|\ballowance\b[^0-9]*\d`)
 	// Delivery commands: the fee parses like any price; the note is
@@ -167,7 +174,7 @@ func handleMerchantMessage(from, text, merchantID string) {
 	}
 
 	if len(merchant.Products) == 0 {
-		whatsapp.SendText(from, "Hello. Your shelf at "+merchant.Name+" is empty just now, so there is nothing to sell yet. Say \"add a product\" and I will walk you through it: a name, a short description, the list price customers see, and your floor price, the lowest you would accept, which customers never see. The moment you confirm, I can sell it.")
+		whatsapp.SendText(from, "Hello. Your shelf at "+merchant.Name+" is empty just now, so there is nothing to sell yet. Say \"add a product\" and I will walk you through it: a name, a short description, the price customers see, and your last price, the lowest you would accept, which customers never see. The moment you confirm, I can sell it.")
 		return
 	}
 
@@ -184,8 +191,15 @@ func handleMerchantMessage(from, text, merchantID string) {
 // 2500". A price read from her throw-in can be wrong (a figure
 // that counted something, taken as the price), and a correction
 // she can make in one line is what keeps a wrong read from
-// trapping the whole flow against a floor it can never take.
+// trapping the whole flow against a last price it can never take.
 var priceCorrectionRe = regexp.MustCompile(`^(?:the\s+)?(?:list\s+)?price\s+(?:is|should\s+be)\s+(.+)$|^(?:change|correct|set)\s+(?:the\s+)?(?:list\s+)?price\s+(?:to\s+)?(.+)$`)
+
+// fixedPriceRe reads a seller saying her price does not move, in
+// the shapes sellers use: "non-negotiable", "fixed price", "price
+// is final", "no bargaining", or simply "same price" when she is
+// asked for her last price. Paired with no figure, or with the
+// price itself, it settles the last price step as fixed.
+var fixedPriceRe = regexp.MustCompile(`\b(non[-\s]?negotiable|not negotiable|no negotiation|fixed price|price is fixed|price is final|final price|no bargaining|no haggling|same price)\b|^fixed$|^same$`)
 
 // advanceOnboarding feeds one merchant message to the onboarding flow.
 func advanceOnboarding(from string, s *Session, text, lower string) {
@@ -199,9 +213,9 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 
 	// A price correction owns the message wherever the flow is
 	// standing, the list step itself aside (there her message is
-	// simply the price). Correcting the price clears a floor that
+	// simply the price). Correcting the price clears a last price that
 	// no longer sits below it, so she is never left defending a
-	// floor against a price she has already replaced.
+	// last price against a price she has already replaced.
 	if flow.Step != "list" && flow.Name != "" {
 		if m := priceCorrectionRe.FindStringSubmatch(lower); m != nil {
 			tail := m[1]
@@ -212,6 +226,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 				flow.ListPrice = *amount
 				if flow.FloorPrice >= *amount {
 					flow.FloorPrice = 0
+					flow.Fixed = false
 				}
 				whatsapp.SendText(from, "Corrected. The list price for "+flow.Name+" is now "+money.GHS(*amount)+".")
 				gotoNextOnboardingStep(from, flow)
@@ -228,7 +243,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		// lifted out of the name to ride with the description.
 		// What was read is told back to her in one short message,
 		// so nothing is ever taken from her words in silence.
-		name, price, sizeNote := parseTypedNameLine(text)
+		name, price, sizeNote := parseTypedNameLine(text, flow.ListPrice)
 		if name == "" {
 			whatsapp.SendText(from, "What is the product called?")
 			return
@@ -278,17 +293,35 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		flow.ListPrice = *amount
 		gotoNextOnboardingStep(from, flow)
 
-	case "floor":
+	case "lastprice":
 		amount := parseOffer(lower)
-		if amount == nil || *amount <= 0 {
-			whatsapp.SendText(from, "I could not read that as a price. What is the lowest you would accept for "+flow.Name+", in cedis?")
+		// Her price does not move, said in words with no figure,
+		// or with the price itself as the figure: that is a
+		// fixed price, and she is taken at her word.
+		if fixedPriceRe.MatchString(lower) && (amount == nil || *amount == flow.ListPrice) {
+			flow.FloorPrice = flow.ListPrice
+			flow.Fixed = true
+			whatsapp.SendText(from, "Understood: "+money.GHS(flow.ListPrice)+", fixed. I will not bargain on this one.")
+			gotoNextOnboardingStep(from, flow)
 			return
 		}
-		if *amount >= flow.ListPrice {
-			whatsapp.SendText(from, "That floor will not work: it has to sit below the list price of "+money.GHS(flow.ListPrice)+", because the gap between the two is the room I have to haggle in. If the floor were the price itself, there would be nothing to negotiate. What floor below "+money.GHS(flow.ListPrice)+" suits you?")
+		if amount == nil || *amount <= 0 {
+			whatsapp.SendText(from, "I could not read that as a price. What is your last price for "+flow.Name+", in cedis? Or say non-negotiable if the price does not move.")
+			return
+		}
+		if *amount > flow.ListPrice {
+			whatsapp.SendText(from, "Your last price cannot sit above your price of "+money.GHS(flow.ListPrice)+": the last price is the lowest you will go, not a higher one. If "+money.GHS(flow.ListPrice)+" is final, say non-negotiable. Otherwise, what is your last price below "+money.GHS(flow.ListPrice)+"?")
+			return
+		}
+		if *amount == flow.ListPrice {
+			flow.FloorPrice = *amount
+			flow.Fixed = true
+			whatsapp.SendText(from, "Understood: "+money.GHS(flow.ListPrice)+", fixed. I will not bargain on this one.")
+			gotoNextOnboardingStep(from, flow)
 			return
 		}
 		flow.FloorPrice = *amount
+		flow.Fixed = false
 		gotoNextOnboardingStep(from, flow)
 
 	case "measure":
@@ -334,6 +367,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 				Description: flow.Description,
 				ListPrice:   flow.ListPrice,
 				FloorPrice:  flow.FloorPrice,
+				Fixed:       flow.Fixed,
 				Stock:       1,
 				Unit:        flow.Unit,
 				BaseQty:     flow.BaseQty,
@@ -343,7 +377,11 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 				whatsapp.SendText(from, "I could not save it: "+err.Error()+". Nothing went live.")
 				return
 			}
-			whatsapp.SendText(from, "Saved. "+product.Name+" is live at "+money.GHS(product.ListPrice)+", and I can sell it straight away. Your floor of "+money.GHS(product.FloorPrice)+" stays between us.")
+			if product.Fixed {
+				whatsapp.SendText(from, "Saved. "+product.Name+" is live at "+money.GHS(product.ListPrice)+", fixed price, and I can sell it straight away.")
+			} else {
+				whatsapp.SendText(from, "Saved. "+product.Name+" is live at "+money.GHS(product.ListPrice)+", and I can sell it straight away. Your last price of "+money.GHS(product.FloorPrice)+" stays between us.")
+			}
 			// Buyers who asked for this before it existed are told
 			// now, in this moment, not left waiting on an alert
 			// that never comes.
@@ -365,9 +403,9 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 // is what lets one walk serve both doors: in the guided walk
 // nothing is ever pre-filled, so it asks every question in order,
 // exactly as it always has; in a throw-in it asks only for what
-// the seller did not already give. The floor is never pre-filled:
-// no post a seller makes carries it, and a price is never guessed
-// for it.
+// the seller did not already give. The last price is never
+// pre-filled: no post a seller makes carries it, and a price is
+// never guessed for it.
 func gotoNextOnboardingStep(from string, flow *OnboardingFlow) {
 	switch {
 	case flow.Name == "":
@@ -377,7 +415,7 @@ func gotoNextOnboardingStep(from string, flow *OnboardingFlow) {
 	case flow.ListPrice <= 0:
 		flow.Step = "list"
 	case flow.FloorPrice <= 0:
-		flow.Step = "floor"
+		flow.Step = "lastprice"
 	case flow.Unit == "" && flow.BaseQty <= 0:
 		// The measure question is still open. A flow that arrived
 		// with a measure in its caption carries Unit and BaseQty
@@ -402,8 +440,8 @@ func askOnboardingStep(from string, flow *OnboardingFlow) {
 		whatsapp.SendText(from, "Tell me about "+flow.Name+" in a few words: what it is, and what makes it worth buying. Customers will read this.")
 	case "list":
 		whatsapp.SendText(from, "What is the list price for "+flow.Name+"? This is the price customers see first. Give it in cedis, for example 450.")
-	case "floor":
-		whatsapp.SendText(from, "Now your floor price for "+flow.Name+": the lowest you would accept for it. Customers never see this, and I will never sell below it. What is your floor?")
+	case "lastprice":
+		whatsapp.SendText(from, "Now, if a customer bargains, what is your last price for "+flow.Name+"? That is the lowest I can go. I will never sell below it, and the customer will never see it. If the price does not move at all, just say non-negotiable.")
 	case "measure":
 		whatsapp.SendText(from, "Do you sell the "+flow.Name+" by measure, like by the yard, litre or kilo, or only as a whole?")
 	}
@@ -417,14 +455,20 @@ func askOnboardingStep(from string, flow *OnboardingFlow) {
 func enterOnboardingConfirm(from string, flow *OnboardingFlow) {
 	flow.Step = "confirm"
 	summary := "Here is what will go live:\n" +
-		flow.Name + ": " + flow.Description + "\n" +
-		"List price " + money.GHS(flow.ListPrice) + ", your floor " + money.GHS(flow.FloorPrice) + " (customers never see the floor).\n"
+		flow.Name + ": " + flow.Description + "\n"
+	if flow.Fixed {
+		summary += "Price " + money.GHS(flow.ListPrice) + ", fixed. There is no bargaining on this one.\n"
+	} else {
+		summary += "Price " + money.GHS(flow.ListPrice) + ", your last price " + money.GHS(flow.FloorPrice) + " (customers never see your last price).\n"
+	}
 	if flow.Unit != "" && flow.BaseQty > 0 {
-		probe := catalogue.Product{ListPrice: flow.ListPrice, FloorPrice: flow.FloorPrice, Unit: flow.Unit, BaseQty: flow.BaseQty}
+		probe := catalogue.Product{ListPrice: flow.ListPrice, FloorPrice: flow.FloorPrice, Fixed: flow.Fixed, Unit: flow.Unit, BaseQty: flow.BaseQty}
 		summary += "Sold by the " + flow.Unit + ": the " + money.GHS(flow.ListPrice) + " price is for " + formatQty(flow.BaseQty) + " " + unitWord(flow.Unit, flow.BaseQty) + ", so " + money.GHS(probe.UnitPrice()) + " per " + flow.Unit + ", and buyers can take less.\n"
 	}
-	summary += "That leaves " + money.GHS(flow.ListPrice-flow.FloorPrice) + " of margin I can give away in haggling, always inside your daily allowance.\n" +
-		"Shall I add it? Say yes to save it, or no to drop it."
+	if !flow.Fixed {
+		summary += "That leaves " + money.GHS(flow.ListPrice-flow.FloorPrice) + " I can give away when customers bargain, always inside your daily allowance.\n"
+	}
+	summary += "Shall I add it? Say yes to save it, or no to drop it."
 	whatsapp.SendText(from, summary)
 }
 
@@ -482,10 +526,14 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			if p.ByMeasure() {
 				line += " (" + money.GHS(p.UnitPrice()) + " per " + p.Unit + ", sold by the " + p.Unit + ")"
 			}
-			line += ", your floor " + money.GHS(p.FloorPrice)
+			if p.Fixed {
+				line += ", fixed price"
+			} else {
+				line += ", your last price " + money.GHS(p.FloorPrice)
+			}
 			lines = append(lines, line)
 		}
-		lines = append(lines, "Your daily giveaway allowance is "+money.GHS(merchant.DailyGiveawayAllowance)+". Floors are yours only; customers never see them.")
+		lines = append(lines, "Your daily giveaway allowance is "+money.GHS(merchant.DailyGiveawayAllowance)+". Your last prices are yours only; customers never see them.")
 		if merchant.DeliveryFee > 0 || merchant.DeliveryNote != "" {
 			line := "Delivery:"
 			if merchant.DeliveryFee > 0 {
@@ -586,14 +634,18 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
 			return true
 		}
-		whatsapp.SendText(from, "Done. "+product.Name+" now lists at "+money.GHS(product.ListPrice)+". Its floor stays "+money.GHS(product.FloorPrice)+".")
+		if product.Fixed {
+			whatsapp.SendText(from, "Done. "+product.Name+" now lists at "+money.GHS(product.ListPrice)+", and it is still fixed price.")
+		} else {
+			whatsapp.SendText(from, "Done. "+product.Name+" now lists at "+money.GHS(product.ListPrice)+". Its last price stays "+money.GHS(product.FloorPrice)+".")
+		}
 		return true
 	}
 
 	if m := changeFloorRe.FindStringSubmatch(lower); m != nil {
 		amount := parseOffer(m[2])
 		if amount == nil {
-			whatsapp.SendText(from, "I could not read the new floor in that. Try: change floor of <name> to 500.")
+			whatsapp.SendText(from, "I could not read the new last price in that. Try: change last price of <name> to 500.")
 			return true
 		}
 		product, err := catalogue.UpdateFloorPrice(merchant.ID, strings.TrimSpace(m[1]), *amount)
@@ -601,7 +653,11 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
 			return true
 		}
-		whatsapp.SendText(from, "Done. The floor for "+product.Name+" is now "+money.GHS(product.FloorPrice)+". Its list price stays "+money.GHS(product.ListPrice)+".")
+		if product.Fixed {
+			whatsapp.SendText(from, "Done. "+product.Name+" is now fixed at "+money.GHS(product.ListPrice)+": there is no bargaining on it.")
+		} else {
+			whatsapp.SendText(from, "Done. The last price for "+product.Name+" is now "+money.GHS(product.FloorPrice)+". Its price stays "+money.GHS(product.ListPrice)+".")
+		}
 		return true
 	}
 

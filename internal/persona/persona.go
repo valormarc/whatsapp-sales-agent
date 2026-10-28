@@ -70,13 +70,21 @@ func BuildSystemPrompt(ctx Context) string {
 	if len(ctx.Catalogue) > 0 {
 		lines = append(lines, "", "THE CATALOGUE (the only goods you may sell)")
 		for _, p := range ctx.Catalogue {
-			lines = append(lines, "- "+p.Name+": "+p.Description+" List price "+money.GHS(p.ListPrice)+".")
+			line := "- " + p.Name + ": " + p.Description + " List price " + money.GHS(p.ListPrice) + "."
+			if p.Fixed {
+				line += " This price is fixed: the seller does not bargain on it."
+			}
+			lines = append(lines, line)
 		}
 	}
 
 	if ctx.Product != nil {
 		p := ctx.Product
-		lines = append(lines, "", "IN FOCUS: "+p.Name+". "+p.Description+" List price "+money.GHS(p.ListPrice)+".")
+		focus := "IN FOCUS: " + p.Name + ". " + p.Description + " List price " + money.GHS(p.ListPrice) + "."
+		if p.Fixed {
+			focus += " This price is fixed: the seller does not bargain on it, so hold it plainly and never invite an offer on it."
+		}
+		lines = append(lines, "", focus)
 	}
 
 	if ctx.Bounds != nil {

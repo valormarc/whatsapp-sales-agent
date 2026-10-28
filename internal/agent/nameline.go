@@ -24,11 +24,19 @@ var sizePhraseRe = regexp.MustCompile(`(?i)\bsize[:\s]+([a-z0-9]+)\b`)
 // is read is taken out of the name, the spacing is tidied, and
 // her own words for the product itself are kept exactly as she
 // typed them.
-func parseTypedNameLine(text string) (name string, price float64, sizeNote string) {
+//
+// settled is a price the flow already carries, read from a photo
+// caption before this line was typed. When a price is already
+// settled, a figure in this line is part of the product's name
+// (the 840 in "HP EliteBook 840" is a model number), never a new
+// price: it is kept in the name and the settled price stands.
+func parseTypedNameLine(text string, settled float64) (name string, price float64, sizeNote string) {
 	rest := strings.TrimSpace(text)
-	if p, span, ok := throwPrice(rest); ok {
-		price = p
-		rest = rest[:span[0]] + " " + rest[span[1]:]
+	if settled <= 0 {
+		if p, span, ok := throwPrice(rest); ok {
+			price = p
+			rest = rest[:span[0]] + " " + rest[span[1]:]
+		}
 	}
 	if m := sizePhraseRe.FindStringSubmatchIndex(rest); m != nil {
 		sizeNote = "Size " + strings.ToUpper(rest[m[2]:m[3]])

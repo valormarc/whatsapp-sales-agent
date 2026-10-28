@@ -11,6 +11,18 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
+// offerInvite is the tail of a price quote: the invitation to
+// bargain, in the words the caller was already using, or, for a
+// fixed-price product, the plain statement that there is no
+// bargaining on it. A fixed price is never dressed up as an
+// invitation to haggle.
+func offerInvite(p *catalogue.Product, invite string) string {
+	if p != nil && p.Fixed {
+		return " The price is fixed."
+	}
+	return invite
+}
+
 func handleBuyerTurn(from, boundID, msg, lower string) {
 	merchant := catalogue.GetMerchant(boundID)
 	if merchant == nil {
@@ -196,7 +208,15 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		if other == nil || (s.Product != nil && other.ID == s.Product.ID) {
 			p := s.Product
 			if picRe.MatchString(lower) {
-				whatsapp.SendText(from, "I cannot send a photo of the "+p.Name+" from here, but it is this: "+p.Description+" The price stands at "+money.GHS(s.Ask)+". Give me your price and let us talk.")
+				tail := " Give me your price and let us talk."
+				if p.Fixed {
+					tail = " That price is fixed."
+				}
+				whatsapp.SendText(from, "I cannot send a photo of the "+p.Name+" from here, but it is this: "+p.Description+" The price stands at "+money.GHS(s.Ask)+"."+tail)
+				return
+			}
+			if p.Fixed {
+				whatsapp.SendText(from, "The "+p.Name+" is "+money.GHS(s.Ask)+", and that price is fixed. Say the word if you want it at that price.")
 				return
 			}
 			// The holding reply rotates: the same line twice in one
@@ -345,7 +365,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		}
 		if target != nil {
 			s.LastViewed = target
-			whatsapp.SendText(from, "I cannot send a photo of the "+target.Name+" from here, but it is this: "+target.Description+" It goes for "+money.GHS(target.ListPrice)+". Make me an offer and let us see.")
+			whatsapp.SendText(from, "I cannot send a photo of the "+target.Name+" from here, but it is this: "+target.Description+" It goes for "+money.GHS(target.ListPrice)+"."+offerInvite(target, " Make me an offer and let us see."))
 			return
 		}
 	}
@@ -358,7 +378,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		s = openHaggle(shopID, merchant, product)
 		s.Location = loc // a fresh haggle never forgets where she is
 		sessions[key] = s
-		whatsapp.SendText(from, product.Name+": "+product.Description+" The price is "+money.GHS(product.ListPrice)+". Make me an offer and let us see.")
+		whatsapp.SendText(from, product.Name+": "+product.Description+" The price is "+money.GHS(product.ListPrice)+"."+offerInvite(product, " Make me an offer and let us see."))
 		return
 	}
 	if product != nil {
@@ -377,7 +397,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			s.Qty, s.Unit = 0, ""
 		}
 		s.LastViewed = product
-		view := product.Name + ": " + product.Description + " It goes for " + money.GHS(product.ListPrice) + ". Want to make an offer?"
+		view := product.Name + ": " + product.Description + " It goes for " + money.GHS(product.ListPrice) + "." + offerInvite(product, " Want to make an offer?")
 		if availabilityFramed(lower) {
 			// She asked in the availability frame, so the
 			// answer leads with the market's own plain words
@@ -438,7 +458,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			// beaded bag): answer the item itself, and never
 			// write a want for goods already in the shop.
 			s.LastViewed = p
-			sendPieces(from, "Still available.", p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+". Want to make an offer?")
+			sendPieces(from, "Still available.", p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Want to make an offer?"))
 			return
 		}
 		recordWantAndOfferShelf(from, s, msg)

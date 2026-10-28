@@ -113,10 +113,20 @@ The agent reads what she gave and does the rest of the work itself:
 her price comes from her own marked figures and from nothing else, her
 own words are kept ahead of any drafted wording, and a draft from the
 photograph fills only the gaps her words left. It then asks her only
-for what is missing, one short question at a time. Her floor price is
+for what is missing, one short question at a time. Her last price is
 missing almost every time, because no group post carries it, and the
 agent never guesses it. Nothing goes live until she has seen the whole
 listing and said yes.
+
+## Her last price
+
+The agent asks for the lowest price in the seller's own words: her
+last price. "Floor" is a word from inside the code, and no seller
+at a market uses it, so she never hears it. Some sellers do not
+bargain at all. When her last price is her price, or when she says
+the price is non-negotiable, the agent takes her at her word: the
+product is saved as fixed price, quotes say so plainly, and no
+customer is ever invited to haggle on it or haggled with.
 
 ## The lane
 
@@ -135,7 +145,7 @@ shop talk stay warm: that is selling, not abuse.
 The engine and the model split the work:
 
 - The engine hands the model: the catalogue, the list price, a private stop
-  for this conversation (set by the floor and the day book), and the day's
+  for this conversation (set by her last price and the day book), and the day's
   allowance state. The stop is secret: the model never names it and never
   hints how close an offer came to it.
 - The model proposes each reply and each price, in the persona above.

@@ -13,7 +13,7 @@ import (
 // photo with one word, and a photo whose caption carries a
 // measure. In every style the agent reads what the seller gave,
 // asks only for what she did not give, and saves nothing until
-// her clear yes. The floor is asked in every single style,
+// her clear yes. The last price is asked in every single style,
 // because no post ever carries it.
 
 func (c *chat) photo(t *testing.T, from, caption string) {
@@ -58,8 +58,8 @@ func TestThrowInBareFigure(t *testing.T) {
 		t.Fatalf("description question = %q", got)
 	}
 	c.say(t, merchant, "Black leather heels.")
-	if got := c.last(t, merchant); !strings.Contains(got, "floor price") || strings.Contains(got, "What is the list price") {
-		t.Fatalf("after description, want the floor question only, got %q", got)
+	if got := c.last(t, merchant); !strings.Contains(got, "last price") || strings.Contains(got, "What is the list price") {
+		t.Fatalf("after description, want the last price question only, got %q", got)
 	}
 	c.say(t, merchant, "240")
 	finishWhole(t, c, merchant)
@@ -89,8 +89,8 @@ func TestThrowInSizeAndAtPrice(t *testing.T) {
 	}
 
 	c.say(t, merchant, "Court Heels")
-	if got := c.last(t, merchant); !strings.Contains(got, "floor price") {
-		t.Fatalf("name given, want the floor question next, got %q", got)
+	if got := c.last(t, merchant); !strings.Contains(got, "last price") {
+		t.Fatalf("name given, want the last price question next, got %q", got)
 	}
 	c.say(t, merchant, "200")
 	finishWhole(t, c, merchant)
@@ -120,8 +120,8 @@ func TestThrowInLongWriteUp(t *testing.T) {
 	}
 
 	c.say(t, merchant, "HP EliteBook 840")
-	if got := c.last(t, merchant); !strings.Contains(got, "floor price") {
-		t.Fatalf("after name, want the floor question, got %q", got)
+	if got := c.last(t, merchant); !strings.Contains(got, "last price") {
+		t.Fatalf("after name, want the last price question, got %q", got)
 	}
 	c.say(t, merchant, "3900")
 	finishWhole(t, c, merchant)
@@ -203,8 +203,8 @@ func TestThrowInMeasureCaption(t *testing.T) {
 	}
 
 	c.say(t, merchant, "Ankara Fabric")
-	if got := c.last(t, merchant); !strings.Contains(got, "floor price") {
-		t.Fatalf("after name, want the floor question, got %q", got)
+	if got := c.last(t, merchant); !strings.Contains(got, "last price") {
+		t.Fatalf("after name, want the last price question, got %q", got)
 	}
 	c.say(t, merchant, "360")
 	// Her caption already carried the measure, so there is no
@@ -275,16 +275,16 @@ func TestThrowInPriceCorrectionInsideTheFlow(t *testing.T) {
 	c.photo(t, merchant, "300")
 	c.say(t, merchant, "Leather Heels")
 	c.say(t, merchant, "Black leather heels.")
-	if got := c.last(t, merchant); !strings.Contains(got, "floor price") {
-		t.Fatalf("standing at the floor question, got %q", got)
+	if got := c.last(t, merchant); !strings.Contains(got, "last price") {
+		t.Fatalf("standing at the last price question, got %q", got)
 	}
 	c.say(t, merchant, "price is 2500")
 	replies := c.replies(t, merchant)
 	if !strings.Contains(replies[0], "Corrected") || !strings.Contains(replies[0], "GH₵2500") {
 		t.Fatalf("correction reply = %q", replies)
 	}
-	if !strings.Contains(replies[len(replies)-1], "floor price") {
-		t.Fatalf("after the correction the floor is asked against the new price, got %q", replies)
+	if !strings.Contains(replies[len(replies)-1], "last price") {
+		t.Fatalf("after the correction the last price is asked against the new price, got %q", replies)
 	}
 	c.say(t, merchant, "2000")
 	finishWhole(t, c, merchant)

@@ -16,7 +16,13 @@ import (
 )
 
 // Product is one item a merchant sells. Prices are in cedis; FloorPrice
-// is the merchant's secret floor, which never reaches the customer.
+// is the merchant's secret last price, which never reaches the customer.
+//
+// A product may be fixed price: the seller's price does not move, so
+// there is nothing to bargain. Fixed is set when her last price is
+// the price itself, or when she says the price is non-negotiable.
+// A fixed product carries FloorPrice equal to ListPrice, and the
+// agent sells it at that price only.
 //
 // A product may be sold by measure:
 // in the real market, goods move by the yard, the litre, the kilo
@@ -33,6 +39,7 @@ type Product struct {
 	Description string  `json:"description"`
 	ListPrice   float64 `json:"listPrice"`
 	FloorPrice  float64 `json:"floorPrice"`
+	Fixed       bool    `json:"fixed,omitempty"`
 	Stock       int     `json:"stock"`
 	Unit        string  `json:"unit,omitempty"`
 	BaseQty     float64 `json:"baseQty,omitempty"`

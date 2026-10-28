@@ -165,11 +165,11 @@ func TestMerchantOnboardsProductAndCustomerBuysIt(t *testing.T) {
 		t.Fatalf("list step = %q", got)
 	}
 	c.say(t, merchant, "GH₵600")
-	if got := c.last(t, merchant); !strings.Contains(got, "floor") || !strings.Contains(got, "never see") {
-		t.Fatalf("floor step = %q", got)
+	if got := c.last(t, merchant); !strings.Contains(got, "last price") || !strings.Contains(got, "never see") {
+		t.Fatalf("last price step = %q", got)
 	}
 	c.say(t, merchant, "480 cedis")
-	// The measure question sits between the floor and the summary:
+	// The measure question sits between the last price and the summary:
 	// does she sell it by measure, or only as a whole?
 	if got := c.last(t, merchant); !strings.Contains(got, "by measure") || !strings.Contains(got, "only as a whole") {
 		t.Fatalf("measure step = %q", got)
@@ -252,7 +252,7 @@ func TestMerchantOnboardsProductAndCustomerBuysIt(t *testing.T) {
 	}
 }
 
-func TestOnboardingRejectsFloorAtOrAboveList(t *testing.T) {
+func TestOnboardingLastPriceAboveListAndEqualMeansFixed(t *testing.T) {
 	merchant := "233550001002"
 	dir := setupChat(t, merchant, shopWithBag)
 	c := &chat{dir: dir}
@@ -265,27 +265,34 @@ func TestOnboardingRejectsFloorAtOrAboveList(t *testing.T) {
 	c.last(t, merchant)
 	c.say(t, merchant, "500")
 	c.last(t, merchant)
-	c.say(t, merchant, "500")
-	if got := c.last(t, merchant); !strings.Contains(got, "below the list price") {
-		t.Fatalf("floor equal to list must be explained and re-asked, got %q", got)
-	}
+	// A last price above her price is not a last price at all:
+	// it is explained in plain words and asked again.
 	c.say(t, merchant, "750")
-	if got := c.last(t, merchant); !strings.Contains(got, "below the list price") {
-		t.Fatalf("floor above list must be explained and re-asked, got %q", got)
+	if got := c.last(t, merchant); !strings.Contains(got, "above your price") || !strings.Contains(got, "last price") {
+		t.Fatalf("last price above the price must be explained and re-asked, got %q", got)
 	}
-	c.say(t, merchant, "450")
-	if got := c.last(t, merchant); !strings.Contains(got, "by measure") {
-		t.Fatalf("a valid floor moves to the measure question, got %q", got)
+	// Her last price is her price: the price does not move, and
+	// the product is fixed price from here on.
+	c.say(t, merchant, "500")
+	replies := strings.Join(c.replies(t, merchant), "\n")
+	if !strings.Contains(replies, "fixed") {
+		t.Fatalf("last price equal to the price should be read back as fixed, got %q", replies)
+	}
+	if !strings.Contains(replies, "by measure") {
+		t.Fatalf("a fixed last price moves to the measure question, got %q", replies)
 	}
 	c.say(t, merchant, "whole")
-	if got := c.last(t, merchant); !strings.Contains(got, "GH₵450") {
-		t.Fatalf("summary after the measure answer = %q", got)
+	summary := c.last(t, merchant)
+	if !strings.Contains(summary, "GH₵500") || !strings.Contains(summary, "fixed") || strings.Contains(summary, "give away") {
+		t.Fatalf("fixed summary = %q", summary)
 	}
 	c.say(t, merchant, "yes")
-	c.last(t, merchant)
+	if got := c.last(t, merchant); !strings.Contains(got, "fixed price") {
+		t.Fatalf("save confirmation for a fixed product = %q", got)
+	}
 	p := catalogue.FindByName(MerchantID, "Test Basket")
-	if p == nil || p.FloorPrice != 450 || p.ListPrice != 500 {
-		t.Fatalf("saved product = %+v, want list 500 floor 450", p)
+	if p == nil || !p.Fixed || p.FloorPrice != 500 || p.ListPrice != 500 {
+		t.Fatalf("saved product = %+v, want fixed at list 500 last 500", p)
 	}
 }
 
@@ -326,7 +333,7 @@ func TestMerchantCatalogueCommands(t *testing.T) {
 	dir := setupChat(t, merchant, shopWithBag)
 	c := &chat{dir: dir}
 
-	// Her own listing shows floors; only her number can ask for it.
+	// Her own listing shows last prices; only her number can ask for it.
 	c.say(t, merchant, "my catalogue")
 	listing := c.last(t, merchant)
 	for _, want := range []string{"Handmade Beaded Bag", "GH₵850", "GH₵680", "GH₵300"} {
@@ -343,17 +350,17 @@ func TestMerchantCatalogueCommands(t *testing.T) {
 		t.Fatalf("list price on disk %v, want 900", p.ListPrice)
 	}
 
-	// A floor at or above the corrected list price is refused.
-	c.say(t, merchant, "change floor of beaded bag to 950")
+	// A last price above the corrected price is refused.
+	c.say(t, merchant, "change last price of beaded bag to 950")
 	if got := c.last(t, merchant); !strings.Contains(got, "Nothing changed") {
-		t.Fatalf("bad floor reply = %q", got)
+		t.Fatalf("bad last price reply = %q", got)
 	}
 	if p := catalogue.FindByName(MerchantID, "beaded bag"); p.FloorPrice != 680 {
 		t.Fatalf("floor on disk %v, want 680 unchanged", p.FloorPrice)
 	}
-	c.say(t, merchant, "change floor of beaded bag to GH₵700")
-	if got := c.last(t, merchant); !strings.Contains(got, "GH₵700") {
-		t.Fatalf("change floor reply = %q", got)
+	c.say(t, merchant, "change last price of beaded bag to GH₵700")
+	if got := c.last(t, merchant); !strings.Contains(got, "GH₵700") || !strings.Contains(got, "last price") {
+		t.Fatalf("change last price reply = %q", got)
 	}
 
 	// The allowance change lands in the shop, and the day book reads
