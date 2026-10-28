@@ -226,6 +226,7 @@ try {
   await say(CUSTOMER, 'customer', 'Accra');
   await say(CUSTOMER, 'customer', 'Akosua Mensah');
   r = await say(CUSTOMER, 'customer', 'no');
+  r = await say(CUSTOMER, 'buyer', 'yes');
   check('her details complete the sale and the payment link follows', last(r).includes('Pay here'), last(r));
 
   const day = JSON.parse(readFileSync(DAYBOOK, 'utf8')).demo;

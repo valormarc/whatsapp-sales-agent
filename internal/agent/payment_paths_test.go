@@ -159,7 +159,7 @@ func TestDirectPathHappyPathEndToEnd(t *testing.T) {
 	// hears it from her, and Efua's figures carry no Seev fee,
 	// because no Seev was anywhere near this money.
 	c.say(t, ownerEfua, "yes")
-	if got := c.last(t, buyer); !strings.Contains(got, "Efua's Store has confirmed your payment of GH₵120. Thank you.") {
+	if got := c.last(t, buyer); !strings.Contains(got, "Payment confirmed: GH₵120") {
 		t.Fatalf("buyer confirmation = %q", got)
 	}
 	notes = strings.Join(c.replies(t, ownerEfua), "\n")
@@ -209,7 +209,7 @@ func TestDirectMerchantNoLeavesItUnpaidAndSheMayClaimAgain(t *testing.T) {
 		t.Fatalf("claims forwarded to Ama = %d, want 2", n)
 	}
 	c.say(t, ownerAma, "yes")
-	if got := c.last(t, buyer); !strings.Contains(got, "Ama's Stall has confirmed your payment of GH₵180.") {
+	if got := c.last(t, buyer); !strings.Contains(got, "Payment confirmed: GH₵180") {
 		t.Fatalf("buyer after the second claim's yes = %q", got)
 	}
 	if o := ordersOnDisk(t, dir)[0]; o["status"] != "paid" || o["settledVia"] != "merchant-confirmed" {
@@ -241,7 +241,7 @@ func TestClaimAmountMismatchIsFlaggedToTheMerchant(t *testing.T) {
 	// A merchant who names the reference settles that claim
 	// outright; her word is what counts, warned or not.
 	c.say(t, ownerEfua, "yes "+ref)
-	if got := c.last(t, buyer); !strings.Contains(got, "Efua's Store has confirmed your payment of GH₵120.") {
+	if got := c.last(t, buyer); !strings.Contains(got, "Payment confirmed: GH₵120") {
 		t.Fatalf("buyer after the referenced yes = %q", got)
 	}
 	if o := ordersOnDisk(t, dir)[0]; o["status"] != "paid" || o["claimStatus"] != "confirmed" {
@@ -318,7 +318,7 @@ func TestClaimsAndConfirmationsNeverCrossShops(t *testing.T) {
 
 	// Ama's own yes settles her own claim.
 	c.say(t, ownerAma, "yes")
-	if got := c.last(t, buyer); !strings.Contains(got, "Ama's Stall has confirmed your payment of GH₵180.") {
+	if got := c.last(t, buyer); !strings.Contains(got, "Payment confirmed: GH₵180") {
 		t.Fatalf("buyer after Ama's yes = %q", got)
 	}
 	if o := ordersOnDisk(t, dir)[0]; o["status"] != "paid" || o["settledVia"] != "merchant-confirmed" {
@@ -361,7 +361,7 @@ func TestLinkSettlementStillSettlesAndMarksTheSeevPath(t *testing.T) {
 	if o["status"] != "paid" || o["paymentPath"] != "seev" {
 		t.Fatalf("order after the webhook = %v, want paid on the seev path", o)
 	}
-	if got := c.last(t, buyer); !strings.Contains(got, "Payment received, thank you.") {
+	if got := c.last(t, buyer); !strings.Contains(got, "Payment confirmed: GH₵161") {
 		t.Fatalf("buyer settlement message = %q", got)
 	}
 }

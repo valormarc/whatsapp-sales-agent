@@ -60,7 +60,7 @@ const MERCHANT = '233550000999';
 // which is what routes them to her shop on the shared number.
 // The last line answers the fulfilment step: an agreement now
 // waits on how the goods reach the buyer before the sale books.
-const scriptA = ['SHOP-EFUA', 'Hi', 'How much is the beaded bag?', 'I can offer 500', '600', '700', '730', 'I will pick it up myself', 'Akosua Mensah', 'no'];
+const scriptA = ['SHOP-EFUA', 'Hi', 'How much is the beaded bag?', 'I can offer 500', '600', '700', '730', 'I will pick it up myself', 'Akosua Mensah', 'no', 'yes'];
 const scriptB = ['SHOP-EFUA', 'How much is the beaded bag?', 'I can offer 400', '420', '450', '480', '500', '550'];
 
 const violations = [];

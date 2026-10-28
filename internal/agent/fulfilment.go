@@ -5,6 +5,7 @@ package agent
 
 import (
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
+	"github.com/valormarc/hackathon-agent/internal/model"
 	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 	"regexp"
@@ -202,6 +203,8 @@ func fulfilPrompt(s *Session) string {
 		return "What name should go on the package?"
 	case "pkgmessage":
 		return "Any message for the seller about this order? Say it now, or say no."
+	case "confirm":
+		return "Please confirm your order, or tell me what to change."
 	default:
 		return "So, how do you want to get it: we send it, or you pick it up?"
 	}
@@ -225,7 +228,7 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 	// name or a note can carry any words at all ("meet me at the
 	// gate" is a note, not a new choice), so the choice readings
 	// below must never see them.
-	if s.FulfilStep == "pkgname" || s.FulfilStep == "pkgmessage" {
+	if s.FulfilStep == "pkgname" || s.FulfilStep == "pkgmessage" || s.FulfilStep == "confirm" {
 		handlePackageDetails(from, s, msg, lower)
 		return
 	}
@@ -456,11 +459,137 @@ func handlePackageDetails(from string, s *Session, msg, lower string) {
 			}
 		}
 		packageNames[key] = f.PackageName
-		s.PendingFulfil = fulfilment{}
+		s.PendingFulfil = f
+		s.FulfilStep = "confirm"
 		sessions[key] = s
-		completeSale(from, s, s.AgreedPrice, f)
+		sendOrderRecap(from, s, f)
+	case "confirm":
+		// The last word before money moves is hers. A yes
+		// completes the sale exactly as it always did; a
+		// correction goes back to the step it belongs to, with
+		// everything else she settled still held.
+		if isClearYes(lower) {
+			s.PendingFulfil = fulfilment{}
+			sessions[key] = s
+			completeSale(from, s, s.AgreedPrice, f)
+			return
+		}
+		if nameRe.MatchString(lower) {
+			whatsapp.SendText(from, "No problem. Let us set the name right.")
+			beginPackageDetails(from, s, f)
+			return
+		}
+		if placeRe.MatchString(lower) {
+			whatsapp.SendText(from, "No problem. Let us set that right.")
+			beginFulfilment(from, s, s.AgreedPrice)
+			return
+		}
+		whatsapp.SendText(from, "Tell me what to change: the name on the package, or how and where the goods reach you. Or say yes and I will send your payment link.")
 	}
 }
+
+var (
+	nameRe  = regexp.MustCompile(`\b(name|package)\b`)
+	placeRe = regexp.MustCompile(`\b(place|location|drop|address|meet|pick ?up|deliver|delivery|collector|collect)\b`)
+)
+
+// sendOrderRecap reads the whole order back to the buyer
+// before the payment link exists, in the agent's own words:
+// the seller's format is a shape (the item and its price, the
+// name for the package, how the goods reach her and where,
+// the size when the product carries one, then the ask to
+// confirm), never a script. The model drafts it from the
+// settled facts and the draft is checked the way a price is
+// checked: the item and the exact agreed figure must be in
+// it, and the voice laws hold. Without a sound draft, the
+// facts are read back plainly.
+func sendOrderRecap(from string, s *Session, f fulfilment) {
+	whatsapp.SendText(from, composeOrderRecap(s, f))
+}
+
+func composeOrderRecap(s *Session, f fulfilment) string {
+	price := money.GHS(s.AgreedPrice)
+	if model.Enabled() {
+		var b strings.Builder
+		b.WriteString("Item: " + s.Product.Name + "\n")
+		b.WriteString("Agreed price: " + price + "\n")
+		if m := sizePhraseRe.FindStringSubmatch(s.Product.Description); m != nil {
+			b.WriteString("Size: " + strings.ToUpper(m[1]) + "\n")
+		}
+		if f.PackageName != "" {
+			b.WriteString("Name for the package: " + f.PackageName + "\n")
+		}
+		switch f.Mode {
+		case "delivery":
+			b.WriteString("Delivery to: " + f.Location + "\n")
+		case "pickup":
+			if f.Collector != "" {
+				b.WriteString("Collection: " + f.Collector + " collects it from the shop\n")
+			} else {
+				b.WriteString("Collection: she collects it from the shop herself\n")
+			}
+		case "meet":
+			b.WriteString("Meeting place: " + f.Location + "\n")
+		default:
+			b.WriteString("Delivery: arranged with the seller\n")
+			if f.Location != "" {
+				b.WriteString("Place she gave: " + f.Location + "\n")
+			}
+		}
+		if f.Note != "" {
+			b.WriteString("Her message for the seller is on the order.\n")
+		}
+		if draft := draftWithBudget(recapCharter, "The settled facts of the order:\n"+b.String()+"\nWrite the read-back now, following the format, in your own words."); draft != "" &&
+			strings.Contains(draft, s.Product.Name) && strings.Contains(draft, price) && voiceClean(draft) {
+			return draft
+		}
+	}
+	// The bare factual read-back.
+	lines := []string{"Please confirm your order:", s.Product.Name + " for " + price + "."}
+	if m := sizePhraseRe.FindStringSubmatch(s.Product.Description); m != nil {
+		lines = append(lines, "Size: "+strings.ToUpper(m[1])+".")
+	}
+	if f.PackageName != "" {
+		lines = append(lines, "The package will carry the name "+f.PackageName+".")
+	}
+	switch f.Mode {
+	case "delivery":
+		lines = append(lines, "Delivery to "+f.Location+".")
+	case "pickup":
+		if f.Collector != "" {
+			lines = append(lines, f.Collector+" will collect it from the shop.")
+		} else {
+			lines = append(lines, "You collect it from the shop yourself.")
+		}
+	case "meet":
+		lines = append(lines, "Meeting place: "+f.Location+".")
+	default:
+		line := "Delivery will be arranged with the seller."
+		if f.Location != "" {
+			line = "Delivery will be arranged with the seller. The place noted is " + f.Location + "."
+		}
+		lines = append(lines, line)
+	}
+	if f.Note != "" {
+		lines = append(lines, "Your message for the seller is on the order.")
+	}
+	lines = append(lines, "Reply yes and I will send your payment link, or tell me what to change.")
+	return strings.Join(lines, "\n")
+}
+
+// recapCharter is the seller's format for the moment before
+// money moves, stated as a shape to follow in the agent's own
+// words: nothing here is wording to recite.
+const recapCharter = `You are the sales agent for a small shop on WhatsApp. A buyer has agreed a price and given her fulfilment details. Before any payment link is sent, read the order back to her so she can confirm it, in your own words, following this format:
+
+- Name the item and the exact agreed price.
+- State the size, when the facts give one.
+- State the name the package will carry, when the facts give one.
+- State how the goods reach her: the delivery place, the meeting place, or who collects, exactly as the facts give it.
+- Note that her message for the seller is on the order, when the facts say so.
+- Close by asking her to confirm, or to say what should change, before the payment link is sent.
+
+Rules: use only the facts given; invent nothing and promise nothing about times or arrangements. Plain correct English, complete sentences, no titles for anyone, no Pidgin. The item name and the price must appear exactly as given.`
 
 // cleanPackageName reads the name for the package out of a short
 // answer: one to five plain words, letters with the marks real

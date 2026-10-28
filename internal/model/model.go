@@ -99,6 +99,11 @@ func extractReply(data []byte) *string {
 
 // Chat makes one chat completion. Messages is an OpenAI-style array.
 // It returns the reply text, or nil on any failure.
+// modelHTTPClient bounds every model call: a slow model must
+// never hold a conversation (or a settlement) hostage for
+// longer than a person would wait for a reply.
+var modelHTTPClient = &http.Client{Timeout: 25 * time.Second}
+
 func Chat(messages []Message, opts Options) *string {
 	if !Enabled() {
 		return nil
@@ -134,7 +139,7 @@ func Chat(messages []Message, opts Options) *string {
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("authorization", "Bearer "+os.Getenv("META_MODEL_API_KEY"))
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := modelHTTPClient.Do(req)
 	if err != nil {
 		return nil
 	}
@@ -210,7 +215,7 @@ func ChatVision(system, text, imageDataURI string) *string {
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("authorization", "Bearer "+os.Getenv("META_MODEL_API_KEY"))
 
-	res, err := http.DefaultClient.Do(req)
+	res, err := modelHTTPClient.Do(req)
 	if err != nil {
 		return nil
 	}

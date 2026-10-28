@@ -181,7 +181,7 @@ func TestUnpaidWatchHealsALandedPaymentInsteadOfReminding(t *testing.T) {
 		t.Fatalf("order = %+v, want paid", got)
 	}
 	buyerNotes := c.replies(t, "233550001802")
-	if len(buyerNotes) != 1 || !strings.Contains(buyerNotes[0], "Payment received, thank you") {
+	if len(buyerNotes) != 1 || !strings.Contains(buyerNotes[0], "Payment confirmed: GH\u20b5875") || !strings.Contains(buyerNotes[0], "Thanks for buying from") {
 		t.Fatalf("buyer notes = %v", buyerNotes)
 	}
 	merchantNotes := c.replies(t, merchant)

@@ -237,3 +237,18 @@ The engine and the model split the work:
 - Truth first, per my own rule: arrange the conditions so the
   right choice is easy and dignified. Where persuasion and truth pull apart,
   truth wins.
+- Before the payment link, the order is read back to the buyer and she
+  confirms it: the item and the agreed price, the size when the product
+  carries one, the name for the package, and how the goods reach her.
+  The shape is fixed; the words are the agent's own, composed from the
+  order's facts each time, and a correction returns to the step it
+  belongs to with everything else held. Only her yes sends the link.
+- Once a payment is confirmed, the buyer's confirmation follows the
+  same discipline. Its shape: the confirmation and the exact amount,
+  the order reference, what happens with the goods from the order's
+  own facts, and thanks for buying from the shop, by name. The words
+  are composed per order, never recited, and no promise the shop has
+  not made may appear in them: no rider's number, no phone call, no
+  packing or dispatch claim. After a settled order, selling stops: a
+  buyer's thanks is met with a warm, brief closing that acknowledges
+  her order, never with the shelf pitched again.

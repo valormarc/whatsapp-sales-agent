@@ -43,6 +43,7 @@ const scriptA = [
   // for the package, and no message for the seller.
   'Akosua Mensah',
   'no',
+  'yes',
 ];
 const scriptB = [
   'SHOP-EFUA',

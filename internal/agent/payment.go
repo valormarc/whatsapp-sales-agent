@@ -285,7 +285,7 @@ func settleClaim(merchantPhone string, merchant *catalogue.Merchant, o *orders.O
 			x.SettledVia = "merchant-confirmed"
 			x.ClaimStatus = "confirmed"
 		})
-		whatsapp.SendText(o.From, merchant.Name+" has confirmed your payment of "+money.GHS(total)+". Thank you.")
+		whatsapp.SendText(o.From, ComposeDirectSettleText(o))
 		day := daybook.Default.GetDayState(merchant.ID, daybook.Options{Allowance: merchant.DailyGiveawayAllowance})
 		whatsapp.SendText(merchantPhone, "Confirmed. "+o.ProductName+" paid in full by MoMo to your number: "+money.GHS(total)+" is yours, no Seev fee on this one. Day book: "+insights.DayReportText(day))
 		return

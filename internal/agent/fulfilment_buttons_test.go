@@ -71,6 +71,7 @@ func TestTapDeliveryThenDetailsThenSale(t *testing.T) {
 		t.Fatalf("after the name = %q, want the message question", got)
 	}
 	c.say(t, buyer, "Please call when the rider leaves")
+	c.say(t, buyer, "yes")
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "The package will carry the name Akosua Mensah.") ||
 		!strings.Contains(got, "Your message for the seller is on the order.") ||
@@ -115,6 +116,7 @@ func TestTapPickupSplitsThenSomebody(t *testing.T) {
 		t.Fatalf("after the collector = %q, want the message question, not the name question", got)
 	}
 	c.say(t, buyer, "no")
+	c.say(t, buyer, "yes")
 	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Pay here") {
 		t.Fatalf("completion = %q", got)
 	}
@@ -169,6 +171,7 @@ func TestPackageNameIsRememberedForTheNextOrder(t *testing.T) {
 	}
 	c.say(t, buyer, "same")
 	c.say(t, buyer, "no")
+	c.say(t, buyer, "yes")
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "The package will carry the name Akosua Mensah.") {
 		t.Fatalf("second completion = %q", got)
@@ -184,6 +187,7 @@ func TestDetailsDeclineAndCancel(t *testing.T) {
 	tap(t, buyer, "ff_self")
 	c.say(t, buyer, "Akosua Mensah")
 	c.say(t, buyer, "no message")
+	c.say(t, buyer, "yes")
 	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Pay here") {
 		t.Fatalf("no-message completion = %q", got)
 	}

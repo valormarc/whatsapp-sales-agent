@@ -23,6 +23,7 @@ func TestSaleNoticeIsLaidOutInLines(t *testing.T) {
 	c.say(t, buyer, "Akosua Mensah")
 	c.last(t, buyer)
 	c.say(t, buyer, "Please call when the rider leaves")
+	c.say(t, buyer, "yes")
 	c.replies(t, buyer)
 
 	notes := c.replies(t, ownerEfua)

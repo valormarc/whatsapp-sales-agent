@@ -111,11 +111,13 @@ func (c *chat) finishDetails(t *testing.T, from string) {
 	t.Helper()
 	c.say(t, from, "Akosua Mensah")
 	c.say(t, from, "no")
+	c.say(t, from, "yes")
 }
 
 func (c *chat) finishNote(t *testing.T, from string) {
 	t.Helper()
 	c.say(t, from, "no")
+	c.say(t, from, "yes")
 }
 
 func (c *chat) last(t *testing.T, to string) string {

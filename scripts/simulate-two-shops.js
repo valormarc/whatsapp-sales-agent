@@ -248,12 +248,14 @@ try {
   await say(BUYER_AMA, 'buyer (Ama)', 'Koforidua');
   await say(BUYER_AMA, 'buyer (Ama)', 'Akosua Mensah');
   r = await say(BUYER_AMA, 'buyer (Ama)', 'no');
+  r = await say(BUYER_AMA, 'buyer', 'yes');
   check('Ama\'s buyer completes with the payment link', r.join(' ').includes('Pay here'), r.join(' '));
   r = await say(BUYER_EFUA, 'buyer (Efua)', '740');
   check('Efua\'s buyer agrees the bag at GH₵740', r.join(' ').includes('yours for GH₵740'), r.join(' '));
   await say(BUYER_EFUA, 'buyer (Efua)', 'Accra');
   await say(BUYER_EFUA, 'buyer (Efua)', 'Akosua Mensah');
   r = await say(BUYER_EFUA, 'buyer (Efua)', 'no');
+  r = await say(BUYER_EFUA, 'buyer', 'yes');
   check('Efua\'s buyer completes with the payment link', r.join(' ').includes('Pay here'), r.join(' '));
 
   const day = JSON.parse(readFileSync(DAYBOOK, 'utf8'));

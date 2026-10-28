@@ -298,6 +298,15 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		}
 	}
 
+	// A closing pleasantry is part of the shop's conversation
+	// and is answered warmly, never steered: a buyer who has
+	// just paid and says thank you is closing, not wandering
+	// off topic, and the shelf is not pitched at her again.
+	if courtesyRe.MatchString(lower) && parseOffer(lower) == nil {
+		whatsapp.SendText(from, courtesyLine(shopID, from, merchant))
+		return
+	}
+
 	// The lane. People put general questions to any AI they can
 	// reach: what a word means, a sum, who the president is. This
 	// agent works for the merchant and answers only about her

@@ -215,6 +215,7 @@ try {
   // follow in words, and her last answer completes the sale.
   await say(CUSTOMER, 'customer', 'Akosua Mensah');
   r = await say(CUSTOMER, 'customer', 'no');
+  r = await say(CUSTOMER, 'buyer', 'yes');
   check('her details complete the sale and the payment link follows', last(r).includes('Pay here'), last(r));
 
   const day = JSON.parse(readFileSync(DAYBOOK, 'utf8')).demo;
@@ -294,6 +295,7 @@ try {
   await say(CUTTER, 'cutter', 'Koforidua');
   await say(CUTTER, 'cutter', 'Akosua Mensah');
   r = await say(CUTTER, 'cutter', 'no');
+  r = await say(CUTTER, 'buyer', 'yes');
   check('her details complete the cut sale with the link', last(r).includes('Pay here'), last(r));
 
   const orders = JSON.parse(readFileSync(join(DATA, 'orders.json'), 'utf8'));

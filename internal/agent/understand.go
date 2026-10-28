@@ -62,6 +62,7 @@ const (
 	intentOrderPayment   = "order_payment"   // the owner asks about the payment on an order
 	intentAskBuyer       = "ask_buyer"       // the owner tells the agent to ask her buyer
 	intentShelf          = "shelf"           // she wants to see what the shop has
+	intentCourtesy       = "courtesy"        // thanks, gratitude, a goodbye: the conversation closing warmly
 	intentAsk            = "ask"             // a question the facts can answer
 	intentOffTopic       = "offtopic"        // nothing to do with the shop
 	intentUnclear        = "unclear"         // a person would still ask what she means
@@ -155,6 +156,7 @@ The acts you can name:
 - "order_payment": the shop owner is asking about the payment on an order: whether it has been paid, how it was paid (through the payment link or straight to her own MoMo number), what is happening with it. When a claim or an open order is in the facts and she asks about "the payment" or "this order" without naming another, that is the order she means.
 - "ask_buyer": the shop owner is telling you to ask her buyer something, or to find something out from the buyer: "ask the buyer", "ask her", "find out from her". You carry the question to the buyer yourself; never ask the owner what to ask when the facts show the open matter.
 - "shelf": she wants to see what the shop has, or start again from the shelf.
+- "courtesy": she is thanking the shop, expressing gratitude, or saying goodbye, most often right after a completed purchase. This is part of the shop's conversation, never off-topic. Draft the reply in "reply": short, warm, correct English. When the facts show her completed order, acknowledge it briefly by its reference or product. Never pitch the shelf, never list goods, never name a price in a courtesy reply.
 - "ask": a question about the shop that the facts you are given can answer, or a request to explain something already said. Draft the answer in "reply": short, plain, warm, in correct English, using ONLY the facts given. An explanation is an answer, never a question back.
 - "offtopic": the message has nothing to do with this shop, its goods, an order or a payment.
 - "unclear": even reading kindly, a person would have to ask what is meant. Draft ONE short clarifying question in "reply", in her own terms, offering the likely two readings.
@@ -315,7 +317,7 @@ func parseUnderstood(out *string) *understood {
 	}
 	switch u.Intent {
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
-		intentItem, intentOrderStatus, intentOrderPayment, intentAskBuyer, intentShelf, intentAsk, intentOffTopic, intentUnclear:
+		intentItem, intentOrderStatus, intentOrderPayment, intentAskBuyer, intentShelf, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
 		return &u
 	}
 	return nil
@@ -341,6 +343,20 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 	switch u.Intent {
 	case intentOffTopic:
 		laneStrike(from, s, merchant)
+		return true
+	case intentCourtesy:
+		// Thanks is a closing, not a new sale: the reply is
+		// warm and brief, acknowledges her completed order
+		// when she has one, and never pitches the shelf at a
+		// person who has just bought. A draft that carries a
+		// figure or a pitch is not a courtesy; the plain line
+		// stands in for it.
+		reply := strings.TrimSpace(u.Reply)
+		if reply == "" || !voiceClean(reply) || strings.Contains(reply, "₵") ||
+			strings.Contains(strings.ToLower(reply), "here is what we have") {
+			reply = courtesyLine(shopID, from, merchant)
+		}
+		whatsapp.SendText(from, reply)
 		return true
 	case intentShelf:
 		sendPieces(from, "Welcome to "+merchant.Name+".", productListText(shopID))
@@ -567,3 +583,18 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 // nothing understood: plain, honest, and it names what she can
 // ask for, in her own chat.
 const merchantHelpText = "I did not catch that one. I can show your catalogue, add a product when you describe it or send its photo, change a price or a last price, set your daily allowance, and tell you how today is going. Say \"my catalogue\", or ask me how today is going."
+
+// courtesyRe reads a closing pleasantry in the no-model net:
+// thanks and goodbyes are part of the shop's conversation and
+// are never steered as off-topic.
+var courtesyRe = regexp.MustCompile(`^(thank|thanks|thank you|bye|goodbye|great|perfect|lovely|nice one|well done|ok thanks|thank u)\b`)
+
+// courtesyLine is the plain closing the net answers a
+// pleasantry with: warm, brief, and grounded in her completed
+// order when she has one.
+func courtesyLine(shopID, from string, merchant *catalogue.Merchant) string {
+	if latest := orders.Default.NewestFor(shopID, from); latest != nil && latest.Status == "paid" {
+		return "You are welcome. Your order " + latest.Reference + " is with " + merchant.Name + "."
+	}
+	return "You are welcome."
+}
