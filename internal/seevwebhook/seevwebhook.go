@@ -155,6 +155,13 @@ func SettleVerified(order *orders.Order, buyerText string) {
 	orders.Default.Update(order.Reference, func(o *orders.Order) {
 		o.Status = "paid"
 		o.PaymentPath = "seev"
+		// A claim the buyer also filed (she said she had paid,
+		// and she had, through the link) is answered by this
+		// settlement: it closes as confirmed, so it never
+		// lingers as work waiting on the merchant's word.
+		if o.ClaimStatus == "open" {
+			o.ClaimStatus = "confirmed"
+		}
 	})
 	s := checkout.SettlementFor(charged)
 	whatsapp.SendText(order.From, buyerText)
