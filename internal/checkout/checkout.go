@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"os"
@@ -139,14 +140,21 @@ func CreatePaymentLink(r LinkRequest) Link {
 	req.Header.Set("idempotency-key", r.Reference)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
+		// A failed link must never be a silent one: the provider's
+		// answer (or the transport error) is the only evidence of
+		// why, so it is logged where the operator can read it. The
+		// buyer still hears only that the link is not coming up.
+		log.Printf("seev checkout for %s: request failed: %v", r.Reference, err)
 		return Link{URL: nil, DryRun: false, ProviderRef: nil}
 	}
 	defer res.Body.Close()
-	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return Link{URL: nil, DryRun: false, ProviderRef: nil}
-	}
 	raw, err := io.ReadAll(res.Body)
 	if err != nil {
+		log.Printf("seev checkout for %s: reading the response failed: %v", r.Reference, err)
+		return Link{URL: nil, DryRun: false, ProviderRef: nil}
+	}
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		log.Printf("seev checkout for %s: status %d: %.300s", r.Reference, res.StatusCode, string(raw))
 		return Link{URL: nil, DryRun: false, ProviderRef: nil}
 	}
 	var parsed struct {
