@@ -224,16 +224,50 @@ func (b *Book) Update(reference string, mutate func(*Order)) *Order {
 	return &o
 }
 
-// refStamp is the ordering key inside a reference: references are
-// "HACK-" plus the millisecond stamp the sale closed at (bumped
-// past collisions), so the stamp orders a shop's orders in time.
-// An unparseable reference sorts as the oldest of all.
+// refStamp is the ordering key inside a reference: the figure
+// after the last dash. References are now a shop's code plus the
+// shop's own serial (EFUA-0007), so the serial orders a shop's
+// orders in time; the references minted before that shape were
+// "HACK-" plus a millisecond stamp, whose tail orders them the
+// same way. An unparseable reference sorts as the oldest of all.
 func refStamp(reference string) int64 {
-	n, err := strconv.ParseInt(strings.TrimPrefix(reference, "HACK-"), 10, 64)
+	n, err := strconv.ParseInt(reference[strings.LastIndex(reference, "-")+1:], 10, 64)
 	if err != nil {
 		return 0
 	}
 	return n
+}
+
+// CountFor counts a shop's orders in the book, every status. A
+// new order's serial is this count plus one (bumped past any key
+// already taken), so a shop's references run 0001, 0002, ... in
+// the order her sales complete.
+func (b *Book) CountFor(merchantID string) int {
+	n := 0
+	for _, o := range b.loadAll() {
+		if o.MerchantID == merchantID {
+			n++
+		}
+	}
+	return n
+}
+
+// NewestFor returns the buyer's most recent order in one shop,
+// whatever its status, or nil. Order checking reads here: "check
+// my order" pulls up her latest one in the shop she is standing
+// in, and only ever hers.
+func (b *Book) NewestFor(merchantID, buyer string) *Order {
+	var best *Order
+	for _, o := range b.loadAll() {
+		if o.MerchantID != merchantID || o.From != buyer {
+			continue
+		}
+		oo := o
+		if best == nil || refStamp(oo.Reference) > refStamp(best.Reference) {
+			best = &oo
+		}
+	}
+	return best
 }
 
 // NewestUnpaidFor returns the buyer's most recent unpaid order in

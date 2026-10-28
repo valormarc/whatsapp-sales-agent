@@ -164,9 +164,11 @@ func createClaim(from string, merchant *catalogue.Merchant, order *orders.Order,
 }
 
 // claimRefRe finds an order reference inside a merchant's answer:
-// "yes HACK-..." names the claim outright instead of settling the
-// oldest open one.
-var claimRefRe = regexp.MustCompile(`\bhack-(\d+)\b`)
+// "yes EFUA-0003" names the claim outright instead of settling
+// the oldest open one. A reference is a shop's code, a dash and
+// its serial; the shape minted before shop codes (HACK-<stamp>)
+// matches the same pattern.
+var claimRefRe = regexp.MustCompile(`\b([a-z]{2,}-\d+)\b`)
 
 // isClaimYes reads the merchant's confirming word. A question is
 // never a confirmation, and "not received" is a no wearing yes's
@@ -210,8 +212,8 @@ func isClaimNo(lower string) bool {
 // in her shop is not consumed here at all: it falls through to
 // her ordinary handling, and it can never reach another shop's
 // claim, because the lookups below are keyed to her shop alone.
-// claimLeadAnswer reads a referenced answer ("yes HACK-...",
-// "no HACK-...") by its leading word. isClaimYes rightly demands
+// claimLeadAnswer reads a referenced answer ("yes EFUA-0003",
+// "no EFUA-0003") by its leading word. isClaimYes rightly demands
 // the whole message, which a reference can never satisfy, so a
 // named claim is answered by the word the merchant led with.
 func claimLeadAnswer(lower string) (yes, no bool) {
@@ -234,7 +236,7 @@ func handleMerchantClaim(from string, merchant *catalogue.Merchant, lower string
 		if !yes && !no {
 			return false
 		}
-		ref := "HACK-" + m[1]
+		ref := strings.ToUpper(m[1])
 		o := orders.Default.GetOrder(ref)
 		if o == nil || o.MerchantID != merchant.ID || o.Status != "pending" || o.ClaimStatus != "open" {
 			whatsapp.SendText(from, "That reference is not an open payment claim at "+merchant.Name+" just now.")

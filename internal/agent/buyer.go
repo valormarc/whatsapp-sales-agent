@@ -96,6 +96,15 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		return
 	}
 
+	// Checking an order she already made: she quotes the
+	// reference she was given at the sale, or asks after her
+	// order, and it is read back to her (ordercheck.go). The
+	// check is read-only and leaves the stage she is in exactly
+	// where it stood.
+	if handleOrderCheck(from, merchant, msg, lower) {
+		return
+	}
+
 	// Delivery, and the one total. Real buyers ask about delivery
 	// before the item price as often as after it, and they want one
 	// figure, not two to add up. Asked while a price is in play, the

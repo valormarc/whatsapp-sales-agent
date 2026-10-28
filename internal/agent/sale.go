@@ -4,6 +4,8 @@
 package agent
 
 import (
+	"fmt"
+
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/checkout"
 	"github.com/valormarc/hackathon-agent/internal/daybook"
@@ -12,9 +14,7 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
-	"strconv"
 	"strings"
-	"time"
 )
 
 // completeSale finishes a sale whose fulfilment is settled: the
@@ -25,14 +25,22 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	p := s.Product
 	shopID := s.MerchantID
 	merchant := catalogue.GetMerchant(shopID)
-	// The reference is the order's key in the book. It is built from
-	// the millisecond clock, so two deals closed inside the same
-	// millisecond would collide and the second would silently
-	// overwrite the first; bump the stamp until the key is free.
-	base := time.Now().UnixMilli()
-	reference := "HACK-" + strconv.FormatInt(base, 10)
-	for n := int64(1); orders.Default.GetOrder(reference) != nil; n++ {
-		reference = "HACK-" + strconv.FormatInt(base+n, 10)
+	// The reference is the order's key in the book and the
+	// buyer's receipt: the shop's own code and the shop's own
+	// count, so the code alone names whose order it is (EFUA-0007
+	// is Efua's seventh order) and no other shop can ever mint
+	// the same one. The count is bumped past any key already in
+	// the book, so a reference is never reused and an order is
+	// never silently overwritten.
+	code := merchant.ShopCode
+	if code == "" {
+		code = strings.ToUpper(shopID)
+	}
+	serial := orders.Default.CountFor(shopID) + 1
+	reference := fmt.Sprintf("%s-%04d", code, serial)
+	for orders.Default.GetOrder(reference) != nil {
+		serial++
+		reference = fmt.Sprintf("%s-%04d", code, serial)
 	}
 	// Delivery money has two purses, and the shop's own setting
 	// (deliveryPaidToOf) says which one it falls into. When the
@@ -181,6 +189,11 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	if f.Note != "" {
 		pieces = append(pieces, "Your message for the seller is on the order.")
 	}
+	// Her receipt: the reference goes to her as its own piece, so
+	// it sits in her chat the way a shop hands over a receipt
+	// number. It is recorded against this order in the book, and
+	// she can quote it any time to have the order pulled up.
+	pieces = append(pieces, "Your order reference is "+reference+". Keep it: send it to me any time and I will pull up your order.")
 	pieces = append(pieces, linkPiece)
 	// The second door, offered beside the link: plenty of buyers
 	// will not tap a link from a number they just met, but they

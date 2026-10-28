@@ -430,7 +430,15 @@ func HandleInbound(in Inbound) {
 	// her, wiping the old shop's session completely so no haggle,
 	// product or price can follow her across.
 	boundID := bindings[from]
-	if shop, rest := parseShopEntry(lower, boundID == ""); shop != nil {
+	// A quoted order reference is not travel: EFUA-0001 names an
+	// order at Efua's, and a buyer standing in another shop who
+	// quotes it is checking that order, not moving house. Entry
+	// parsing is skipped for such a message when she is already
+	// bound somewhere, and the order check answers her where she
+	// stands. Unbound, the reference's shop code still brings her
+	// to the right shop's door, as any code does.
+	quotingRef := boundID != "" && orderRefRe.MatchString(msg)
+	if shop, rest := parseShopEntry(lower, boundID == ""); shop != nil && !quotingRef {
 		switch {
 		case boundID == "":
 			bindings[from] = shop.ID
