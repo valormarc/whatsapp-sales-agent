@@ -237,6 +237,54 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 
 	switch flow.Step {
 	case "name":
+		// A whole advert pasted in one message is read whole:
+		// she copied the advert she already posts everywhere
+		// and sent it once, so the agent does the separating.
+		// The first line is the name, the rest is her
+		// description, the marked price is taken from the whole
+		// message, and the walk then asks only for what the
+		// advert did not carry. What was read is told back to
+		// her, so nothing is taken from her words in silence.
+		if draft, note, isAdvert := parsePastedAdvert(text); isAdvert {
+			if draft.Name != "" && catalogue.FindByName(s.MerchantID, draft.Name) != nil {
+				whatsapp.SendText(from, "You already sell something called "+draft.Name+". Give this one a different name, or say cancel to stop.")
+				return
+			}
+			flow.Name = draft.Name
+			if draft.ListPrice > 0 {
+				flow.ListPrice = draft.ListPrice
+			}
+			if draft.Description != "" {
+				flow.Description = draft.Description
+			}
+			if draft.Unit != "" {
+				flow.Unit, flow.BaseQty = draft.Unit, draft.BaseQty
+			}
+			if note != "" {
+				if flow.Description != "" {
+					flow.Description += "\n" + note + "."
+				} else {
+					flow.SizeNote = note
+				}
+			}
+			var read []string
+			if draft.ListPrice > 0 {
+				read = append(read, "I took the price from your message: "+money.GHS(draft.ListPrice)+".")
+			}
+			if draft.Name != "" && draft.Description != "" {
+				read = append(read, "I have taken the first line as the name, and the rest as the description.")
+			} else if draft.Name == "" && draft.Description != "" {
+				read = append(read, "I have taken your words as the description.")
+			}
+			if note != "" {
+				read = append(read, "I have noted the size, "+strings.TrimPrefix(note, "Size ")+", with the description.")
+			}
+			if len(read) > 0 {
+				whatsapp.SendText(from, strings.Join(read, " "))
+			}
+			gotoNextOnboardingStep(from, flow)
+			return
+		}
 		// Her line is read the way a person reads it: a price
 		// riding in it (@250GHS, 250 cedis) is her list price and
 		// is never asked for again, and a size riding in it is

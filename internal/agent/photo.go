@@ -60,20 +60,37 @@ type throwDraft struct {
 	BaseQty     float64
 }
 
+// figurePattern is one money figure as sellers write it,
+// thousands comma and all: "4500", "1,500", "12,500". The comma
+// form comes first in the alternation, so a reader never stops
+// at the comma: "Ghc 1,500" is fifteen hundred cedis, and a
+// reader that takes only the "1" has priced a laptop at GH₵1.
+const figurePattern = `\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?`
+
+// parseFigure parses a figure matched by figurePattern: the
+// thousands commas are grouping, not decimals, so they come out
+// before the parse.
+func parseFigure(s string) (float64, error) {
+	return strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
+}
+
 var (
 	// An @ figure is the groups' own price mark: "@250ghc". The
 	// cedi word that rides on the figure is part of the price
 	// expression, so the span covers it and it leaves her words
 	// with the figure.
-	atPriceRe = regexp.MustCompile(`@\s*(\d+(?:\.\d{1,2})?)(?:\s*(?:ghs|ghc|ghana\s+cedis|cedis|gh))?`)
+	atPriceRe = regexp.MustCompile(`@\s*(` + figurePattern + `)(?:\s*(?:ghs|ghc|ghana\s+cedis|cedis|gh))?`)
 	// A figure with a cedi word beside it, on either side:
 	// "ghs 400", "450gh", "GH₵450", "450 cedis".
-	cediBeforeRe = regexp.MustCompile(`(?i)(?:gh₵|ghs|ghc|ghana\s+cedis|cedis|₵)\s*(\d+(?:\.\d{1,2})?)`)
-	cediAfterRe  = regexp.MustCompile(`(?i)(\d+(?:\.\d{1,2})?)\s*(?:ghs|ghc|gh|ghana\s+cedis|cedis)\b`)
+	cediBeforeRe = regexp.MustCompile(`(?i)(?:gh₵|ghs|ghc|ghana\s+cedis|cedis|₵)\s*(` + figurePattern + `)`)
+	cediAfterRe  = regexp.MustCompile(`(?i)(` + figurePattern + `)\s*(?:ghs|ghc|gh|ghana\s+cedis|cedis)\b`)
 	// A size names its number: "size 44" is a size, never a price.
 	sizeNumberRe = regexp.MustCompile(`(?i)\bsize\s*(\d+(?:\.\d+)?)`)
 	// A caption that is nothing but a figure is a price on its own.
-	bareFigureRe = regexp.MustCompile(`^\s*@?\s*(?:(?:gh₵|ghs|ghc|cedis|₵)\s*)?(\d+(?:\.\d{1,2})?)\s*(?:gh|ghs|ghc|cedis)?\s*\.?\s*$`)
+	bareFigureRe = regexp.MustCompile(`^\s*@?\s*(?:(?:gh₵|ghs|ghc|cedis|₵)\s*)?(` + figurePattern + `)\s*(?:gh|ghs|ghc|cedis)?\s*\.?\s*$`)
+	// throwFigureRe finds figures in a short caption for the
+	// lone-figure rule, commas and all.
+	throwFigureRe = regexp.MustCompile(`(` + figurePattern + `)`)
 )
 
 // throwPrice reads the seller's price out of her caption and
@@ -84,7 +101,7 @@ var (
 // caption. Anything else reads no price at all.
 func throwPrice(caption string) (float64, []int, bool) {
 	if m := atPriceRe.FindStringSubmatchIndex(caption); m != nil {
-		if f, err := strconv.ParseFloat(caption[m[2]:m[3]], 64); err == nil && f > 0 {
+		if f, err := parseFigure(caption[m[2]:m[3]]); err == nil && f > 0 {
 			return f, []int{m[0], m[1]}, true
 		}
 	}
@@ -96,7 +113,7 @@ func throwPrice(caption string) (float64, []int, bool) {
 	var hits []hit
 	for _, re := range []*regexp.Regexp{cediBeforeRe, cediAfterRe} {
 		if m := re.FindStringSubmatchIndex(caption); m != nil {
-			if f, err := strconv.ParseFloat(caption[m[2]:m[3]], 64); err == nil && f > 0 {
+			if f, err := parseFigure(caption[m[2]:m[3]]); err == nil && f > 0 {
 				hits = append(hits, hit{f, []int{m[0], m[1]}, m[0]})
 			}
 		}
@@ -111,7 +128,7 @@ func throwPrice(caption string) (float64, []int, bool) {
 		return first.value, first.span, true
 	}
 	if m := bareFigureRe.FindStringSubmatchIndex(caption); m != nil {
-		if f, err := strconv.ParseFloat(caption[m[2]:m[3]], 64); err == nil && f > 0 {
+		if f, err := parseFigure(caption[m[2]:m[3]]); err == nil && f > 0 {
 			return f, []int{m[0], m[1]}, true
 		}
 	}
@@ -126,7 +143,7 @@ func throwPrice(caption string) (float64, []int, bool) {
 		}
 		var found *hit
 		count := 0
-		for _, m := range offerRe.FindAllStringSubmatchIndex(caption, -1) {
+		for _, m := range throwFigureRe.FindAllStringSubmatchIndex(caption, -1) {
 			inside := false
 			for _, sp := range spans {
 				if m[0] < sp[1] && sp[0] < m[1] {
@@ -146,7 +163,7 @@ func throwPrice(caption string) (float64, []int, bool) {
 			if w := wordAfterFigure(caption[m[1]:]); w != "" && !priceTalkWords[w] {
 				continue
 			}
-			f, err := strconv.ParseFloat(caption[m[2]:m[3]], 64)
+			f, err := parseFigure(caption[m[2]:m[3]])
 			if err != nil || f <= 0 {
 				continue
 			}

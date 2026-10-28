@@ -15,6 +15,78 @@ import (
 // customer should never meet it there.
 var sizePhraseRe = regexp.MustCompile(`(?i)\bsize[:\s]+([a-z0-9]+)\b`)
 
+var lineContentRe = regexp.MustCompile(`[a-zA-Z0-9]`)
+
+// advertLines splits a pasted message into the lines that carry
+// words or figures. Blank lines and decoration-only lines (the
+// rows of arrows and emojis an advert ends with) carry nothing a
+// listing needs and are dropped.
+func advertLines(text string) []string {
+	var lines []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && lineContentRe.MatchString(line) {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+// parsePastedAdvert reads a whole advert pasted into the name
+// step in one message, the way sellers actually post: the name
+// on the first line, the details under it, the price at the end.
+// Not everybody has time to feed an agent one answer at a time;
+// she copies the advert she already has and sends it once, and
+// the agent does the separating.
+//
+// Two shapes count as an advert: a message of two or more real
+// lines, or one long line carrying its details comma by comma
+// (the write-up shape a photo caption takes). Anything smaller
+// is an ordinary name line and returns ok=false, so the caller
+// reads it with parseTypedNameLine as before.
+//
+// The reading mirrors a photo throw-in: the marked price is read
+// from the whole message and taken out of her words, a measure
+// rides along when she named one, the first line is the name
+// (read with the settled price beside it, so a model number in
+// it stays part of the name), and the remaining lines are her
+// description in her own line breaks. The size note is returned
+// separately: it rides into the description the caller settles.
+func parsePastedAdvert(text string) (draft throwDraft, sizeNote string, ok bool) {
+	trimmed := strings.TrimSpace(text)
+	lines := advertLines(trimmed)
+	if len(lines) < 2 {
+		// One line: only a long write-up, details carried comma
+		// by comma, is an advert. It is read exactly the way a
+		// long photo caption is read: her words become the
+		// description, her marked figure the price, and the
+		// walk asks her for the name alone.
+		if len(strings.Fields(trimmed)) > 8 && strings.Contains(trimmed, ",") {
+			return throwDraftFromCaption(trimmed), "", true
+		}
+		return throwDraft{}, "", false
+	}
+	rest := trimmed
+	if price, span, found := throwPrice(trimmed); found {
+		draft.ListPrice = price
+		rest = trimmed[:span[0]] + " " + trimmed[span[1]:]
+	}
+	if q, found := parseQuantity(trimmed); found {
+		draft.Unit, draft.BaseQty = q.Unit, q.Qty
+	}
+	restLines := advertLines(rest)
+	if len(restLines) == 0 {
+		return draft, "", true
+	}
+	name, _, note := parseTypedNameLine(restLines[0], draft.ListPrice)
+	draft.Name = name
+	sizeNote = note
+	if len(restLines) > 1 {
+		draft.Description = strings.Join(restLines[1:], "\n")
+	}
+	return draft, sizeNote, true
+}
+
 // parseTypedNameLine reads the seller's name line and returns the
 // clean product name, the price her line carried if it carried
 // one, and the size note if it named a size. The price is read by

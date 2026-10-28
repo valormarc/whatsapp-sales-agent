@@ -118,6 +118,13 @@ missing almost every time, because no group post carries it, and the
 agent never guesses it. Nothing goes live until she has seen the whole
 listing and said yes.
 
+The same reading applies when she pastes the advert as text in the
+guided walk: the whole advert in one message, name on the first line,
+details under it, price at the end. Not everybody has time to answer
+one question at a time, and the advert she already has is the whole
+answer. The agent separates it herself, and figures keep the commas
+sellers write them with: "Ghc 1,500" is fifteen hundred cedis.
+
 ## Her last price
 
 The agent asks for the lowest price in the seller's own words: her
