@@ -5,6 +5,8 @@
 //	POST /webhook        inbound messages; acks fast, processes after
 //	GET  /healthz        liveness
 //	POST /webhooks/seev  Seev payment events: marks orders paid, notifies
+//	GET  /privacy        privacy policy page
+//	GET  /terms          terms of service page
 package server
 
 import (
@@ -73,6 +75,10 @@ type webhookPayload struct {
 // Handler returns the HTTP handler for the agent.
 func Handler() http.Handler {
 	mux := http.NewServeMux()
+
+	mux.HandleFunc("GET /privacy", pageHandler(privacyPage))
+
+	mux.HandleFunc("GET /terms", pageHandler(termsPage))
 
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
