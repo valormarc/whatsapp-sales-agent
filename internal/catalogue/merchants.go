@@ -153,7 +153,11 @@ func CreateMerchant(name, ownerWhatsApp string) (Merchant, error) {
 		Name:          name,
 		ShopCode:      shopCodeFor(c, name),
 		OwnerWhatsApp: ownerWhatsApp,
-		Products:      []Product{},
+		// Her money goes to the number she chats from unless she
+		// says otherwise: that is the number her payment account is
+		// opened on and the number buyers are told to pay directly.
+		PayoutPhone: ownerWhatsApp,
+		Products:    []Product{},
 	}
 	if c.Merchants == nil {
 		c.Merchants = map[string]Merchant{}

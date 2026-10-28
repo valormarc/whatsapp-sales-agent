@@ -67,7 +67,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		}
 	}
 	total := price + chargedFee
-	link := checkout.CreatePaymentLink(checkout.LinkRequest{Amount: total, Reference: reference})
+	link := checkout.CreatePaymentLink(checkout.LinkRequest{Amount: total, Reference: reference, Subaccount: merchant.SubaccountCode})
 	status := "link_failed"
 	if link.URL != nil {
 		status = "pending"

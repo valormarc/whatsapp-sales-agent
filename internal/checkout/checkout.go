@@ -86,6 +86,10 @@ type LinkRequest struct {
 	Amount        float64
 	Reference     string
 	RecipientName string // defaults to "Customer"
+	// Subaccount is the selling shop's own Seev subaccount code,
+	// when it has one: the payment is split at settlement, the
+	// seller's share going to her own MoMo.
+	Subaccount string
 }
 
 type createBody struct {
@@ -100,6 +104,7 @@ type createBody struct {
 		OrderReference string `json:"order_reference"`
 	} `json:"meta"`
 	RedirectURL string `json:"redirect_url,omitempty"`
+	Subaccount  string `json:"subaccount,omitempty"`
 }
 
 // CreatePaymentLink opens a hosted checkout for an agreed deal. It
@@ -124,6 +129,7 @@ func CreatePaymentLink(r LinkRequest) Link {
 	body.Recipient.Name = name
 	body.Recipient.Email = "customer@example.com"
 	body.Meta.OrderReference = r.Reference
+	body.Subaccount = r.Subaccount
 	if v := os.Getenv("SEEV_REDIRECT_URL"); v != "" {
 		body.RedirectURL = v
 	}

@@ -114,6 +114,8 @@ type Merchant struct {
 	OwnerWhatsApp          string    `json:"ownerWhatsApp,omitempty"`
 	ShopCode               string    `json:"shopCode,omitempty"`
 	PayoutPhone            string    `json:"payoutPhone,omitempty"`
+	SubaccountCode         string    `json:"subaccountCode,omitempty"`
+	PayoutHolderName       string    `json:"payoutHolderName,omitempty"`
 	DeliveryFee            float64   `json:"deliveryFee,omitempty"`
 	DeliveryNote           string    `json:"deliveryNote,omitempty"`
 	DeliveryPaidTo         string    `json:"deliveryPaidTo,omitempty"`

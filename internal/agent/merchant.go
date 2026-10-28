@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
+	"github.com/valormarc/hackathon-agent/internal/checkout"
 	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/wants"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
@@ -142,6 +143,15 @@ func handleMerchantMessage(from, text, merchantID string) {
 	// day questions. With no open claim in her shop it consumes
 	// nothing and her message falls through untouched.
 	if handleMerchantClaim(from, merchant, lower) {
+		return
+	}
+
+	// The payment setup retry lives here, beside the claim, rather
+	// than with her catalogue commands: a shop whose payment setup
+	// failed at signup is usually still empty-shelved, and the
+	// empty-shelf help below would swallow the command before the
+	// command path ever saw it.
+	if retryPaymentSetup(from, merchant, lower) {
 		return
 	}
 
@@ -391,6 +401,48 @@ func enterOnboardingConfirm(from string, flow *OnboardingFlow) {
 // onboarding flow. It returns true when the message was a command,
 // whether it succeeded or not, so the caller does not fall through to
 // the day-question path.
+var paymentSetupRe = regexp.MustCompile(`\bset up my payment\b|\bsetup my payment\b|\bpayment account\b`)
+var paymentNameRe = regexp.MustCompile(`^payment name\s+(.+)$`)
+
+// retryPaymentSetup (re)creates the shop's own Seev subaccount
+// from what is already known: the holder name settled at signup,
+// or a fresh read of the name on her MoMo number. It answers true
+// when it handled the message. A payment problem never touches the
+// shop itself; this is a side errand with a plain outcome.
+func retryPaymentSetup(from string, merchant *catalogue.Merchant, lower string) bool {
+	name := ""
+	if m := paymentNameRe.FindStringSubmatch(lower); m != nil {
+		name = strings.TrimSpace(m[1])
+	} else if !paymentSetupRe.MatchString(lower) {
+		return false
+	}
+	if merchant.SubaccountCode != "" && name == "" {
+		whatsapp.SendText(from, "Your payment account is already set up. Money from your payment links settles to your MoMo in the name "+merchant.PayoutHolderName+".")
+		return true
+	}
+	holder := merchant.PayoutHolderName
+	if name != "" {
+		holder = name
+	}
+	if holder == "" {
+		if resolved, ok := checkout.ResolveAccount(merchant.PayoutPhone); ok {
+			holder = resolved
+		}
+	}
+	if holder == "" {
+		whatsapp.SendText(from, "I could not read the name on the MoMo account for "+checkout.LocalNumber(merchant.PayoutPhone)+". Tell me the name like this: payment name Ama Serwaa.")
+		return true
+	}
+	code, ok := checkout.CreateSubaccount(merchant.Name, merchant.PayoutPhone, holder)
+	if !ok {
+		whatsapp.SendText(from, "Seev could not set up the payment account this time either. Your shop is unaffected. We can try again whenever you say \"set up my payment\".")
+		return true
+	}
+	_ = catalogue.SetSubaccount(merchant.ID, code, holder)
+	whatsapp.SendText(from, "It is done. Your payment account is set up: money from your payment links settles to your MoMo in the name "+holder+", usually the next day. Of every sale you keep 99%; 1% stays with the platform.")
+	return true
+}
+
 func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant, text, lower string) bool {
 	if myCatalogueRe.MatchString(lower) {
 		lines := []string{"Here is your catalogue:"}
@@ -419,6 +471,9 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			}
 		} else {
 			lines = append(lines, "No delivery fee set yet. Say \"set delivery fee 25\" to give buyers one total to pay.")
+		}
+		if merchant.SubaccountCode != "" {
+			lines = append(lines, "Your payment account is set up: link money settles to your MoMo in the name "+merchant.PayoutHolderName+".")
 		}
 		whatsapp.SendText(from, strings.Join(lines, "\n"))
 		return true

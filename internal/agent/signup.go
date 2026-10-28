@@ -15,15 +15,22 @@ import (
 	"strings"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
+	"github.com/valormarc/hackathon-agent/internal/checkout"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
-// SignupFlow is one in-progress "open a shop" walk. The only step
-// today is the shop name: creation itself needs nothing else from
-// her, because her number, which she is chatting from, is her owner
-// identity.
+// SignupFlow is one in-progress "open a shop" walk. The shop name
+// comes first, because her number, which she is chatting from, is
+// her owner identity and needs no asking. When payments are wired,
+// one more thing is settled before the shop opens: the name on the
+// MoMo account her link money will settle to, so her own Seev
+// subaccount can be created in the same sitting. Seev can usually
+// read that name off the number itself, and then she only confirms
+// it; typing it is the fallback, never the first ask.
 type SignupFlow struct {
-	Step string // "name"
+	Step       string // "name", then "holder" or "confirmholder" when payments are wired
+	Name       string
+	HolderName string
 }
 
 var sellIntentRe = regexp.MustCompile(`\b(open|start|create|set up)\b[^.!?]*\bshop\b|\bnew shop\b|\bi want to sell\b|\bi would like to sell\b|\bi want to start selling\b|\bbecome a (seller|merchant)\b`)
@@ -53,17 +60,80 @@ func advanceSignup(from string, s *Session, text, lower string) {
 		whatsapp.SendText(from, "Dropped it. No shop was created. Say \"open a shop\" whenever you are ready.")
 		return
 	}
-
-	name := strings.TrimSpace(text)
-	if name == "" {
-		whatsapp.SendText(from, "What is your shop called?")
-		return
+	flow := s.Signup
+	if flow == nil {
+		flow = &SignupFlow{Step: "name"}
+		s.Signup = flow
 	}
 
-	shop, err := catalogue.CreateMerchant(name, from)
+	switch flow.Step {
+	case "holder":
+		holder := strings.TrimSpace(text)
+		if holder == "" || strings.ContainsAny(holder, "0123456789") {
+			whatsapp.SendText(from, "I need the name on the MoMo account, the name the account itself carries. What name is on it?")
+			return
+		}
+		flow.HolderName = holder
+		finishSignup(from, flow)
+	case "confirmholder":
+		if isClearYes(lower) {
+			finishSignup(from, flow)
+			return
+		}
+		holder := strings.TrimSpace(text)
+		if holder == "" || strings.ContainsAny(holder, "0123456789") {
+			whatsapp.SendText(from, "Say yes if that is the account your money should go to, or tell me the name on the right account.")
+			return
+		}
+		flow.HolderName = holder
+		finishSignup(from, flow)
+	default: // "name"
+		name := strings.TrimSpace(text)
+		if name == "" {
+			whatsapp.SendText(from, "What is your shop called?")
+			return
+		}
+		flow.Name = name
+		if !checkout.Enabled() {
+			finishSignup(from, flow)
+			return
+		}
+		// Payments are wired, so her own payment account is part of
+		// opening the shop. Seev can usually read the name on her
+		// MoMo account from the number: she confirms it. Only when
+		// the read fails does she have to type it.
+		if resolved, ok := checkout.ResolveAccount(from); ok {
+			flow.HolderName = resolved
+			flow.Step = "confirmholder"
+			whatsapp.SendText(from, "Your shop is "+name+". One thing before it opens: money from your payment links will go to the MoMo account on this number, "+checkout.LocalNumber(from)+". The name on that account reads "+resolved+". Say yes if that is the right account, or tell me the name on the right account.")
+			return
+		}
+		flow.Step = "holder"
+		whatsapp.SendText(from, "Your shop is "+name+". One thing before it opens: what name is on the MoMo account for this number? Money from your payment links will go to that account.")
+	}
+}
+
+// finishSignup creates the shop and, when payments are wired and a
+// holder name was settled, opens her own Seev subaccount in the
+// same sitting. The subaccount is never a gate: if its creation
+// fails, the shop still opens and she is told plainly, with a retry
+// in her own commands ("set up my payment").
+func finishSignup(from string, flow *SignupFlow) {
+	shop, err := catalogue.CreateMerchant(flow.Name, from)
 	if err != nil {
 		whatsapp.SendText(from, "I could not open the shop just yet: "+err.Error()+". Tell me the shop name again, or say cancel.")
 		return
+	}
+
+	payoutLine := ""
+	if checkout.Enabled() && flow.HolderName != "" {
+		_ = catalogue.SetSubaccount(shop.ID, "", flow.HolderName)
+		if code, ok := checkout.CreateSubaccount(shop.Name, shop.PayoutPhone, flow.HolderName); ok {
+			_ = catalogue.SetSubaccount(shop.ID, code, flow.HolderName)
+			payoutLine = "Your payment account is set up too: money from your payment links settles to your MoMo in the name " + flow.HolderName + ", usually the next day. Of every sale you keep 99%; 1% stays with the platform."
+		} else {
+			payoutLine = "One thing needs attention: I could not set up your payment account just now. Your shop is open and you can stock it and sell. Say \"set up my payment\" whenever you are ready and we will do it again."
+		}
 	}
 
 	// Her shop exists now, so she stops being a pre-shop sender: the
@@ -76,5 +146,8 @@ func advanceSignup(from string, s *Session, text, lower string) {
 		Onboarding: &OnboardingFlow{Step: "name"},
 	}
 	whatsapp.SendText(from, "Your shop "+shop.Name+" is open, and this number is its owner, so I will know you whenever you chat. "+shareTextFor(shop))
+	if payoutLine != "" {
+		whatsapp.SendText(from, payoutLine)
+	}
 	whatsapp.SendText(from, "Let us add a new product. What is it called? You can say cancel at any point and nothing will be saved.")
 }

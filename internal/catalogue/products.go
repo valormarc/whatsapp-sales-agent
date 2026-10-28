@@ -259,6 +259,22 @@ func SetDeliveryFee(merchantID string, amount float64) error {
 	})
 }
 
+// SetSubaccount records the shop's own payment account: the name
+// on the MoMo account its link money settles to, and the Seev
+// subaccount code once creation succeeds. The holder name is kept
+// even when creation fails, so a retry needs nothing re-asked.
+func SetSubaccount(merchantID, code, holderName string) error {
+	return updateMerchant(merchantID, func(m *Merchant) error {
+		if code != "" {
+			m.SubaccountCode = code
+		}
+		if holderName != "" {
+			m.PayoutHolderName = holderName
+		}
+		return nil
+	})
+}
+
 // SetDeliveryNote sets how the shop's goods travel, in the merchant's
 // own words. Buyers hear it exactly as written when they ask about
 // delivery. An empty note clears it.
