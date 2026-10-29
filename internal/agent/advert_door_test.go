@@ -174,7 +174,8 @@ func TestAnAlbumBurstIsAcknowledgedOnce(t *testing.T) {
 	}
 }
 
-// A different product held during an open listing is also
+// A burst of different products during an open listing is
+// kept as a batch (see burst.go), and the keeping is
 // acknowledged once per burst, not once per photo.
 func TestADifferentProductBurstIsAcknowledgedOnce(t *testing.T) {
 	owner := "233550002406"
@@ -192,11 +193,18 @@ func TestADifferentProductBurstIsAcknowledgedOnce(t *testing.T) {
 	}
 	count := 0
 	for _, r := range rest {
-		if strings.Contains(r, "One at a time") {
+		if strings.Contains(r, "kept") {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Fatalf("the held products should earn one line between them, got %q", rest)
+		t.Fatalf("the kept products should earn one line between them, got %q", rest)
+	}
+	s := sessions[sessionKey(MerchantID, owner)]
+	if s == nil || len(s.BurstBatch) != 2 {
+		t.Fatalf("both different products should be kept in the batch, got %+v", s)
+	}
+	if len(s.Onboarding.PhotoRefs) != 1 {
+		t.Fatalf("the open listing should still hold only its own photo, got %v", s.Onboarding.PhotoRefs)
 	}
 }

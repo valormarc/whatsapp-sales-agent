@@ -389,11 +389,28 @@ func TestPhotoBarePriceArrivingBeforeNameIsNotSavedAsName(t *testing.T) {
 	if s == nil || s.Onboarding == nil || s.Onboarding.Name != "" {
 		t.Fatalf("the price must not be accepted as a product name, session = %+v", s)
 	}
-	if s.Onboarding.ListPrice != 270 || s.Onboarding.FloorPrice != 250 {
-		t.Fatalf("the list and last prices should both be retained, flow = %+v", s.Onboarding)
+	// The figure is noted, not attached: the listing has no
+	// name, so the price has no settled owner yet.
+	if s.Onboarding.ListPrice != 270 || s.Onboarding.FloorPrice != 0 || s.Onboarding.PendingFigure != 250 {
+		t.Fatalf("the figure should be pending and unattached, flow = %+v", s.Onboarding)
 	}
-	if !strings.Contains(got, "last price") || !strings.Contains(got, "product's name") {
-		t.Fatalf("the reply should explain the carried last price and ask for a name, got %q", got)
+	if !strings.Contains(got, "will not attach") || !strings.Contains(got, "What is it called?") {
+		t.Fatalf("the reply should explain the unattached figure and ask for a name, got %q", got)
+	}
+
+	// Once she names the listing herself, the pending figure
+	// is attached to it, judged against its list price.
+	c.say(t, owner, "Double Clothes Rack")
+	got = strings.Join(c.replies(t, owner), "\n")
+	s = sessions[sessionKey(MerchantID, owner)]
+	if s == nil || s.Onboarding == nil || s.Onboarding.Name != "Double Clothes Rack" {
+		t.Fatalf("the listing should carry her name, session = %+v", s)
+	}
+	if s.Onboarding.FloorPrice != 250 || s.Onboarding.PendingFigure != 0 {
+		t.Fatalf("the pending figure should now be the last price, flow = %+v", s.Onboarding)
+	}
+	if !strings.Contains(got, "attached") || !strings.Contains(got, "last price") {
+		t.Fatalf("the reply should report the attachment, got %q", got)
 	}
 }
 func TestDifferentUncaptionedPhotoIsNotMerged(t *testing.T) {
@@ -417,8 +434,11 @@ func TestDifferentUncaptionedPhotoIsNotMerged(t *testing.T) {
 	if s == nil || s.Onboarding == nil || len(s.Onboarding.PhotoRefs) != 1 {
 		t.Fatalf("a different uncaptioned photo must not join the open listing, session = %+v", s)
 	}
-	if strings.Contains(got, "Photo added to Corner Rack") || !strings.Contains(got, "have not attached it") {
+	if strings.Contains(got, "Photo added to Corner Rack") || !strings.Contains(got, "kept it separate") {
 		t.Fatalf("ambiguous new photo should be held clearly, got %q", got)
+	}
+	if len(s.BurstHeld) != 1 {
+		t.Fatalf("the ambiguous photo should be parked as a held item, held = %+v", s.BurstHeld)
 	}
 }
 

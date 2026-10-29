@@ -311,6 +311,9 @@ func thinkSellerWalkIntent(from string, s *Session, walk, question, given, msg s
 // choice, the piece size) keep their own handling and are
 // not read here.
 func serveSellerWalkTurn(from string, s *Session, merchant *catalogue.Merchant, text, lower string) bool {
+	// When this turn ends the listing (a call-off read here),
+	// a kept burst batch is presented next (see burst.go).
+	defer presentBurstIfReady(from, s)
 	flow := s.Onboarding
 	if flow == nil || controlWord(lower) == "cancel" {
 		return false

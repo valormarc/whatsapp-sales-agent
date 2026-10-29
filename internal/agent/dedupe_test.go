@@ -46,6 +46,9 @@ func TestSameProductNameContainment(t *testing.T) {
 		{"Studded thong slippers", "Thong Sandals", false},
 		{"Heels", "Heels", true},
 		{"Ankara Fabric", "Kente Cloth", false},
+		{"Rack", "Bathroom Corner Rack Set", false},
+		{"Slides", "B Buckle Slides", false},
+		{"Dress", "Dress", true},
 	}
 	for _, tc := range cases {
 		if got := sameProductName(tc.a, tc.b); got != tc.want {

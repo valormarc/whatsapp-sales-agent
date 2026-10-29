@@ -379,21 +379,17 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	// needs the picture, so it happens only in live mode; her
 	// words never wait on it.
 	var visionDesc string
+	// This photo's own main colour, as read. It is recorded
+	// on whatever the photo turns out to belong to — the open
+	// listing when the photo joins it, the burst item when it
+	// is kept as its own product — never on both: a stranger's
+	// colour on the open listing would corrupt its colour
+	// rule at save.
+	var photoColour string
 	if dataURI, ok := whatsapp.DownloadMedia(imageID); ok {
 		if md := model.DraftListing(dataURI, caption); md != nil {
 			visionDesc = md.Description
-			if md.Colour != "" {
-				seen := false
-				for _, c := range flow.ColoursSeen {
-					if c == md.Colour {
-						seen = true
-						break
-					}
-				}
-				if !seen {
-					flow.ColoursSeen = append(flow.ColoursSeen, md.Colour)
-				}
-			}
+			photoColour = md.Colour
 			if draft.Name == "" {
 				draft.Name = md.Name
 			}
@@ -422,18 +418,42 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			draft.Description = ""
 		}
 	}
-	// A photo of a DIFFERENT product while a photo listing is
-	// already open (the second item in an album she forwarded)
-	// does not merge into the listing under way and does not
-	// disturb it: listings are taken one at a time, and she is
-	// told what the open one is waiting for.
+	// The same media already collected on the open listing,
+	// sent again, changes nothing whatever its fresh read
+	// says: it is that listing's own photo by identity, not
+	// by judgement.
+	if s.Onboarding != nil && imageID != "" {
+		for _, ref := range flow.PhotoRefs {
+			if ref == imageID {
+				if photoAckCovered(flow.RepeatAckAt) {
+					return
+				}
+				flow.RepeatAckAt = time.Now()
+				whatsapp.SendText(from, "I am still on that same photo.")
+				return
+			}
+		}
+	}
+	// A photo of a DIFFERENT product, with its name and price
+	// read, while a photo listing is already open (the second
+	// item in a burst she forwarded) does not merge into the
+	// listing under way and is not dropped either: it is kept
+	// as its own item in the burst batch (see burst.go), with
+	// every detail the read gave it, and the batch is priced
+	// and saved together once the open listing finishes.
+	// Sellers forward a whole range at once; making them send
+	// photos one by one, or dropping the rest, fails the real
+	// shape of their work. A burst photo without a full read
+	// (no name, or no price) cannot be batched and still
+	// falls to the gate below.
 	if s.Onboarding != nil && flow.Photo && flow.Name != "" && draft.Name != "" &&
-		!sameProductName(flow.Name, draft.Name) {
+		draft.ListPrice > 0 && !sameProductName(flow.Name, draft.Name) {
+		addToBurst(s, draft, imageID, caption, photoColour)
 		if photoAckCovered(flow.HeldAckAt) {
 			return
 		}
 		flow.HeldAckAt = time.Now()
-		whatsapp.SendText(from, "One at a time: I am still listing "+flow.Name+". "+photoStepReminder(flow))
+		whatsapp.SendText(from, "Got it ✅ I have kept "+draft.Name+" to add with the others. "+photoStepReminder(flow))
 		return
 	}
 	// The gate for a photo-opened listing that already has an
@@ -462,14 +482,19 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		contradicts := draft.ListPrice > 0 && flow.ListPrice > 0 && draft.ListPrice != flow.ListPrice
 		unidentified := draft.Name == "" && draft.ListPrice <= 0
 		if !already && len(flow.PhotoRefs) > 0 && (contradicts || unidentified) {
+			// The photo is not attached, and it is not dropped
+			// either: it is parked as a held item of its own,
+			// to open as its own listing once this one
+			// finishes (see burst.go).
+			parkPendingPhoto(s, draft, imageID, caption, photoColour)
 			if photoAckCovered(flow.HeldAckAt) {
 				return
 			}
 			flow.HeldAckAt = time.Now()
 			if contradicts {
-				whatsapp.SendText(from, "One at a time: I am still listing "+flow.Name+". "+photoStepReminder(flow))
+				whatsapp.SendText(from, "I have kept that photo separate, to add after this one: it does not match "+flow.Name+". "+photoStepReminder(flow))
 			} else {
-				whatsapp.SendText(from, "One at a time: I am still listing "+flow.Name+". I could not identify this new photo, so I have not attached it. "+photoStepReminder(flow)+" If it is a different item, send it again with its name once this listing is finished.")
+				whatsapp.SendText(from, "I could not identify this new photo, so I have kept it separate to add after this listing. "+photoStepReminder(flow))
 			}
 			return
 		}
@@ -500,6 +525,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		// listing's kept photos even though it earns no reply.
 		// A media id already collected is not collected
 		// twice (collectFlowPhoto keeps each id once).
+		noteFlowColour(flow, photoColour)
 		collectFlowPhoto(flow, imageID)
 		if photoAckCovered(flow.RepeatAckAt) {
 			return
@@ -508,8 +534,40 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		whatsapp.SendText(from, "I am still on that same photo.")
 		return
 	}
+	// The last door before a photo may join a photo-opened
+	// listing: it must positively match that listing (see
+	// photoPositivelyMatches). Anything less — the listing
+	// has no name yet, the photo has no name, its name is a
+	// stranger's, its price or measure conflicts — is never
+	// merged in and never fills the listing's fields. A
+	// complete product of its own joins the burst batch; any
+	// other photo is parked as a held item, to be settled in
+	// its own listing afterwards. This is the state
+	// ownership rule: a listing's fields are filled only by
+	// evidence that belongs to it.
+	if s.Onboarding != nil && flow.PhotoOpened {
+		switch {
+		case flow.Name == "" && draft.Name != "" && draft.ListPrice > 0:
+			addToBurst(s, draft, imageID, caption, photoColour)
+			if photoAckCovered(flow.HeldAckAt) {
+				return
+			}
+			flow.HeldAckAt = time.Now()
+			whatsapp.SendText(from, "Got it ✅ I have kept "+draft.Name+" to add with the others. "+photoStepReminder(flow))
+			return
+		case flow.Name == "" || !photoPositivelyMatches(flow, draft):
+			parkPendingPhoto(s, draft, imageID, caption, photoColour)
+			if photoAckCovered(flow.HeldAckAt) {
+				return
+			}
+			flow.HeldAckAt = time.Now()
+			whatsapp.SendText(from, "I have kept that photo separate, to add after this one. "+photoStepReminder(flow))
+			return
+		}
+	}
 	flow.Photo = true
 	flow.PhotoRef = imageID
+	noteFlowColour(flow, photoColour)
 	photoKept := collectFlowPhoto(flow, imageID)
 	if flow.Name == "" {
 		flow.Name = draft.Name
@@ -624,6 +682,15 @@ func sameProductName(a, b string) bool {
 	for _, w := range strings.Fields(kb) {
 		wb[w] = true
 	}
+	// A single word never proves a match by containment: a
+	// generic category word ("Rack") sits inside countless
+	// different products' names ("Bathroom Corner Rack
+	// Set"), and treating it as the same goods merges
+	// strangers. One-word names match only when exact,
+	// which the check above already settled.
+	if len(wa) < 2 || len(wb) < 2 {
+		return false
+	}
 	subset := func(x, y map[string]bool) bool {
 		for w := range x {
 			if !y[w] {
@@ -633,6 +700,29 @@ func sameProductName(a, b string) bool {
 		return true
 	}
 	return subset(wa, wb) || subset(wb, wa)
+}
+
+// photoPositivelyMatches judges whether a new photo's read
+// positively identifies it as the open photo listing's own
+// goods: a real name match (see sameProductName), and no
+// conflict in the priced or measured facts. Absence of a
+// contradiction is not a match: a photo that cannot be
+// positively identified is never collected onto a listing
+// it may not belong to.
+func photoPositivelyMatches(flow *OnboardingFlow, draft throwDraft) bool {
+	if flow == nil || flow.Name == "" || draft.Name == "" {
+		return false
+	}
+	if !sameProductName(flow.Name, draft.Name) {
+		return false
+	}
+	if draft.ListPrice > 0 && flow.ListPrice > 0 && draft.ListPrice != flow.ListPrice {
+		return false
+	}
+	if draft.Unit != "" && flow.Unit != "" && draft.Unit != flow.Unit {
+		return false
+	}
+	return true
 }
 
 // photoStepReminder names, shortly, the one thing a repeated
@@ -663,6 +753,20 @@ func photoStepReminder(flow *OnboardingFlow) string {
 // shape only, never the content.
 func isAdvertDump(text string) bool {
 	return strings.Count(text, "\n") >= 3 || len(strings.Fields(text)) > 25
+}
+
+// noteFlowColour records one photo's main colour on the
+// listing that photo belongs to, once, in the order seen.
+func noteFlowColour(flow *OnboardingFlow, colour string) {
+	if colour == "" {
+		return
+	}
+	for _, c := range flow.ColoursSeen {
+		if c == colour {
+			return
+		}
+	}
+	flow.ColoursSeen = append(flow.ColoursSeen, colour)
 }
 
 // photoAckWindow is the span one photo acknowledgement

@@ -41,11 +41,21 @@ const maxProductPhotos = 6
 // colours themselves are the photo reads' own reports;
 // this code only compares and joins them.
 func applyColourRule(flow *OnboardingFlow, name, description string) (string, string) {
-	if flow == nil || len(flow.ColoursSeen) < 2 {
+	if flow == nil {
+		return name, description
+	}
+	return applyColourRuleFor(flow.ColoursSeen, name, description)
+}
+
+// applyColourRuleFor is the colour rule over an explicit set
+// of colours read from one item's photos; a burst item carries
+// its own set, apart from any open listing (see burst.go).
+func applyColourRuleFor(colours []string, name, description string) (string, string) {
+	if len(colours) < 2 {
 		return name, description
 	}
 	fields := strings.Fields(name)
-	for _, colour := range flow.ColoursSeen {
+	for _, colour := range colours {
 		cf := strings.Fields(colour)
 		if len(cf) == 0 || len(cf) > len(fields) {
 			continue
@@ -68,7 +78,7 @@ func applyColourRule(flow *OnboardingFlow, name, description string) (string, st
 		name = strings.Join(fields, " ")
 	}
 	if !strings.Contains(strings.ToLower(description), "comes in") {
-		line := "Comes in " + joinColourList(flow.ColoursSeen) + "."
+		line := "Comes in " + joinColourList(colours) + "."
 		trimmed := strings.TrimSpace(description)
 		if trimmed != "" && !strings.HasSuffix(trimmed, ".") {
 			description = trimmed + ". "
@@ -120,12 +130,21 @@ func collectFlowPhoto(flow *OnboardingFlow, imageID string) bool {
 // product. A photo that cannot be fetched is simply not
 // kept; the listing itself never waits on pictures.
 func attachFlowPhotos(merchantID string, product catalogue.Product, flow *OnboardingFlow) {
-	if flow == nil || len(flow.PhotoRefs) == 0 {
+	if flow == nil {
+		return
+	}
+	attachPhotos(merchantID, product, flow.PhotoRefs)
+}
+
+// attachPhotos is attachFlowPhotos over an explicit set of
+// media ids; a burst item carries its own set (see burst.go).
+func attachPhotos(merchantID string, product catalogue.Product, refs []string) {
+	if len(refs) == 0 {
 		return
 	}
 	_ = os.MkdirAll(datadir.Path("photos"), 0o755)
 	var kept []string
-	for i, id := range flow.PhotoRefs {
+	for i, id := range refs {
 		data, mime, ok := downloadMediaBytesFn(id)
 		if !ok || len(data) == 0 {
 			continue

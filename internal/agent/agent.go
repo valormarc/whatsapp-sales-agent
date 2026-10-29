@@ -207,6 +207,18 @@ type Session struct {
 	// removal waiting for her yes. Only ever set on the merchant's own
 	// session; customers never reach the code that reads them.
 	Onboarding    *OnboardingFlow
+	// BurstBatch holds the products a seller forwarded while
+	// one listing was open, each read with its details and
+	// waiting to be priced together (see burst.go).
+	// BurstAwaiting marks that the batch has been presented
+	// and her next figures belong to it.
+	BurstBatch    []burstItem
+	BurstAwaiting bool
+	// BurstHeld holds burst items whose read price the
+	// harvest itself doubted: they are never priced from
+	// the batch, and open afterwards as ordinary gated
+	// listings where she confirms the price herself.
+	BurstHeld []burstItem
 	PendingRemove string
 
 	// LastMerchantNote is the last substantive thing the agent

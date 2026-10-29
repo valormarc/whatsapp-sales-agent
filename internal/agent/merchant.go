@@ -87,6 +87,15 @@ type OnboardingFlow struct {
 	// is her own statement and is never gated.
 	PriceNeedsConfirm bool
 	PriceConfirmed    bool
+	// PendingFigure is a figure she stated while this listing
+	// still had no name. It is deliberately NOT a list price
+	// or a last price yet: a price cannot be owned by a
+	// product whose identity is not settled, and a later
+	// photo must never inherit it by arriving while the name
+	// is still missing. It is attached only when she herself
+	// supplies the name for this same listing (see
+	// settlePendingFigure).
+	PendingFigure float64
 	// DupName is the shop's existing product that a new listing's
 	// name has clashed with, held while she decides between
 	// replacing it and renaming hers (step "dupchoice").
@@ -222,6 +231,14 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 			return
 		}
 		advanceOnboarding(from, s, text, lower)
+		return
+	}
+
+	// A presented burst batch is waiting on its prices: her
+	// figures belong to it before anything else reads them
+	// (see burst.go). A message with no figures in it is not
+	// its answer and falls through untouched.
+	if s.BurstAwaiting && handleBurstAnswer(from, s, text, lower) {
 		return
 	}
 
@@ -429,6 +446,9 @@ func enterDupChoice(from string, s *Session, flow *OnboardingFlow) bool {
 
 // advanceOnboarding feeds one merchant message to the onboarding flow.
 func advanceOnboarding(from string, s *Session, text, lower string) {
+	// When this turn ends the listing, a kept burst batch is
+	// presented next (see burst.go).
+	defer presentBurstIfReady(from, s)
 	flow := s.Onboarding
 
 	if controlWord(lower) == "cancel" {
@@ -481,6 +501,9 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			}
 			flow.DupName = ""
 			whatsapp.SendText(from, "Done, the old one is off the shelf. This listing takes its place.")
+			if note := settlePendingFigure(flow); note != "" {
+				whatsapp.SendText(from, note)
+			}
 			gotoNextOnboardingStep(from, flow)
 		case isClearNo(lower):
 			whatsapp.SendText(from, "Alright, the old one stays. What name should this new one carry?")
@@ -495,6 +518,9 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 				return
 			}
 			flow.DupName = ""
+			if note := settlePendingFigure(flow); note != "" {
+				whatsapp.SendText(from, note)
+			}
 			gotoNextOnboardingStep(from, flow)
 		}
 
@@ -534,32 +560,23 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 
 	case "name":
 		// A seller can answer before the photo read-back reaches
-		// her screen. A bare figure is never a product name: when
-		// a photo supplied the list price, carry a smaller figure
-		// as the last price instead of saving "250" as the item.
-		// The listing still needs a real name before it can go live.
+		// her screen. A bare figure is never a product name, and
+		// it is not attached to this listing's prices either:
+		// the product has no name yet, so the figure has no
+		// settled owner. It is noted as a pending figure, and
+		// attached only when she herself names this listing
+		// (see settlePendingFigure). Attaching it here let a
+		// later photo inherit the price by supplying the
+		// missing name, which is how one product's last price
+		// landed on another product on the live number.
 		if flow.Photo && bareFigureRe.MatchString(text) {
 			if amount := parseOffer(lower); amount != nil && *amount > 0 {
-				label := ""
-				switch {
-				case flow.ListPrice <= 0:
-					flow.ListPrice = *amount
-					flow.PriceNeedsConfirm = false
-					flow.PriceConfirmed = true
-					label = "list price"
-				case *amount < flow.ListPrice:
-					flow.FloorPrice = *amount
-					flow.Fixed = false
-					label = "last price"
-				case *amount == flow.ListPrice:
-					flow.FloorPrice = *amount
-					flow.Fixed = true
-					label = "fixed price"
-				default:
+				if flow.ListPrice > 0 && *amount > flow.ListPrice {
 					whatsapp.SendText(from, "I read that figure, "+money.GHS(*amount)+", as a price, not a product name. It is above the current list price of "+money.GHS(flow.ListPrice)+". If the list price is wrong, say 'price is 500'. What is the product called?")
 					return
 				}
-				whatsapp.SendText(from, "I have kept "+money.GHS(*amount)+" as the "+label+". I still need the product's name. What is it called?")
+				flow.PendingFigure = *amount
+				whatsapp.SendText(from, "I have noted "+money.GHS(*amount)+", but I will not attach it to a product until I know what this one is called. What is it called?")
 				return
 			}
 		}
@@ -601,6 +618,9 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			return
 		}
 		var read []string
+		if note := settlePendingFigure(flow); note != "" {
+			read = append(read, note)
+		}
 		if price > 0 {
 			read = append(read, "I took the price from your line: "+money.GHS(price)+".")
 		}
@@ -746,6 +766,40 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		default:
 			whatsapp.SendText(from, "Nothing is saved until you say yes. Shall I add "+flow.Name+" at "+money.GHS(flow.ListPrice)+"? Say yes to save it, or no to drop it.")
 		}
+	}
+}
+
+// settlePendingFigure attaches a figure she stated before
+// this listing had a name, now that she has named the
+// listing herself. The attachment is judged against the
+// settled list price exactly as if she had said it at the
+// price steps: below it, it is her last price; equal to it,
+// a fixed price; with no list price yet, it is the list
+// price; above the list price it is not attached at all.
+// It returns the line telling her what was done, or ""
+// when there is nothing pending.
+func settlePendingFigure(flow *OnboardingFlow) string {
+	if flow == nil || flow.PendingFigure <= 0 || flow.Name == "" {
+		return ""
+	}
+	amount := flow.PendingFigure
+	flow.PendingFigure = 0
+	switch {
+	case flow.ListPrice <= 0:
+		flow.ListPrice = amount
+		flow.PriceNeedsConfirm = false
+		flow.PriceConfirmed = true
+		return "I have attached the " + money.GHS(amount) + " you gave earlier as the list price for " + flow.Name + "."
+	case amount < flow.ListPrice:
+		flow.FloorPrice = amount
+		flow.Fixed = false
+		return "I have attached the " + money.GHS(amount) + " you gave earlier as the last price for " + flow.Name + "."
+	case amount == flow.ListPrice:
+		flow.FloorPrice = amount
+		flow.Fixed = true
+		return "I have attached the " + money.GHS(amount) + " you gave earlier as the fixed price for " + flow.Name + "."
+	default:
+		return "The " + money.GHS(amount) + " you gave earlier is above the list price for " + flow.Name + ", so I have not attached it."
 	}
 }
 
