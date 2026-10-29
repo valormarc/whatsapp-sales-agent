@@ -63,8 +63,12 @@ const (
 	intentItem           = "item"            // she is asking about a product on the shelf
 	intentPicture        = "picture"         // she wants to see the product before she goes on
 	intentOrderStatus    = "order_status"    // she is asking after an order she already made
+	intentOrderSent      = "order_sent"      // the owner reports the goods for a paid order have gone out
+	intentOrderReceived  = "order_received"  // the buyer confirms her paid order reached her
+	intentOrderMissing   = "order_missing"   // the buyer reports her paid order has not arrived
 	intentOrderPayment   = "order_payment"   // the owner asks about the payment on an order
 	intentAskBuyer       = "ask_buyer"       // the owner tells the agent to ask her buyer
+	intentNewListing     = "new_listing"     // the owner is giving the agent a product to list
 	intentShelf          = "shelf"           // she wants to see what the shop has
 	intentCourtesy       = "courtesy"        // thanks, gratitude, a goodbye: the conversation closing warmly
 	intentAsk            = "ask"             // a question the facts can answer
@@ -160,8 +164,12 @@ The acts you can name:
 - "item": she is asking about, or wants, a product on the shelf. Put the product's name, as it appears in the facts, in "item".
 - "picture": she wants to SEE a product before she goes on: asking for its photo in any words, or saying she will not buy until she has seen it. Put the product's name in "item" when she names one; when she plainly means the one she was last looking at, leave "item" empty and the platform will use that one. A picture ask is never a generic question and never a buy: the picture is served first.
 - "order_status": she is asking after an order she already made: where it stands, whether it is paid, what happens next with it.
+- "order_sent": the shop owner is reporting that the goods for a paid order have gone out to the buyer: she has sent it, dispatched it, given it to the rider or the station, or made it ready for collection. Only the owner names this act; a buyer never does.
+- "order_received": the buyer is confirming that the goods from her paid order have arrived and she has them: "it has come", "I have received it", "the parcel reached me". Not thanks on its own; she is reporting the arrival.
+- "order_missing": the buyer is reporting that the goods from her paid order have NOT arrived: they never came, she is still waiting and it is overdue, the parcel is lost. Asking where an order is, without saying it has failed to arrive, is "order_status", not this.
 - "order_payment": the shop owner is asking about the payment on an order: whether it has been paid, how it was paid (through the payment link or straight to her own MoMo number), what is happening with it. When a claim or an open order is in the facts and she asks about "the payment" or "this order" without naming another, that is the order she means.
 - "ask_buyer": the shop owner is telling you to ask her buyer something, or to find something out from the buyer: "ask the buyer", "ask her", "find out from her". You carry the question to the buyer yourself; never ask the owner what to ask when the facts show the open matter.
+- "new_listing": the shop owner is giving you a product to sell: describing goods she stocks, pasting an advert for a product, naming a product with its price or description so it can be listed. Goods copy meant for the shelf is this act, never a question; a statement about her shop, her orders or her day is not.
 - "shelf": she wants to see what the shop has, or start again from the shelf.
 - "courtesy": she is thanking the shop, expressing gratitude, or saying goodbye, most often right after a completed purchase. This is part of the shop's conversation, never off-topic. Draft the reply in "reply": short, warm, correct English. When the facts show her completed order, acknowledge it briefly by its reference or product. Never pitch the shelf, never list goods, never name a price in a courtesy reply.
 - "ask": a question about the shop that the facts you are given can answer, or a request to explain something already said. Draft the answer in "reply": short, plain, warm, in correct English, using ONLY the facts given. An explanation is an answer, never a question back.
@@ -196,7 +204,17 @@ func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, sh
 			b.WriteString("She has already told the shop she paid directly, and that claim is waiting for the merchant to confirm.\n")
 		}
 	} else if latest := orders.Default.NewestFor(shopID, from); latest != nil && latest.Status == "paid" {
-		b.WriteString("Her latest order (" + latest.Reference + ", " + latest.ProductName + ") is paid.\n")
+		b.WriteString("Her latest order (" + latest.Reference + ", " + latest.ProductName + ") is paid.")
+		switch latest.DeliveryState {
+		case "sent":
+			b.WriteString(" The seller has marked it sent.\n")
+		case "received":
+			b.WriteString(" She has already confirmed it reached her.\n")
+		case "missing":
+			b.WriteString(" She has already told the shop it has not arrived.\n")
+		default:
+			b.WriteString("\n")
+		}
 	} else {
 		b.WriteString("She has no open order waiting for payment.\n")
 	}
@@ -252,6 +270,14 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 			shot = "She sent a screenshot with it."
 		}
 		b.WriteString("An open payment claim waits for her word: order " + o.Reference + ", the buyer " + o.From + " says she paid " + money.GHS(amt) + " for the " + o.ProductName + " straight to the owner's MoMo number. " + shot + " The owner settles it by replying yes or no.\n")
+	}
+	for _, o := range paidOrdersOf(shopID) {
+		switch o.DeliveryState {
+		case "missing":
+			b.WriteString("A buyer says her order has not arrived and it needs her attention: " + o.Reference + ", the " + o.ProductName + ", buyer " + o.From + ".\n")
+		case "":
+			b.WriteString("A paid order is waiting to be sent: " + o.Reference + ", the " + o.ProductName + ", buyer " + o.From + ". When she says she has sent it, that is the order she means.\n")
+		}
 	}
 	open := 0
 	for _, o := range orders.Default.All() {
@@ -332,7 +358,7 @@ func parseUnderstood(out *string) *understood {
 	}
 	switch u.Intent {
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
-		intentItem, intentPicture, intentOrderStatus, intentOrderPayment, intentAskBuyer, intentShelf, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
+		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderPayment, intentAskBuyer, intentNewListing, intentShelf, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
 		return &u
 	}
 	return nil
@@ -383,6 +409,10 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		}
 		sendPieces(from, orderReadback(merchant, o)...)
 		return true
+	case intentOrderReceived:
+		return buyerConfirmReceived(from, merchant, shopID)
+	case intentOrderMissing:
+		return buyerReportMissing(from, merchant, shopID)
 	case intentItem:
 		p := catalogue.FindProduct(shopID, strings.ToLower(u.Item))
 		if p == nil {
@@ -583,6 +613,8 @@ func reissueLink(from string, s *Session, merchant *catalogue.Merchant, order *o
 // catalogue moves on a model's reading alone.
 func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopID, msg string, u *understood) bool {
 	switch u.Intent {
+	case intentOrderSent:
+		return merchantMarkSent(from, merchant, shopID, msg)
 	case intentOrderPayment:
 		return merchantOrderPayment(from, merchant, shopID, msg)
 	case intentAskBuyer:

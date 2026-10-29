@@ -8,6 +8,7 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/model"
 	"github.com/valormarc/hackathon-agent/internal/money"
+	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
@@ -34,6 +35,8 @@ Read her message and decide:
 - intent "shop": she names a shop (by name or code), or picks a shop or a product from results she was shown. Give "shop" as the shop code, and when she picked a product give it in matches too.
 - intent "search": she wants a kind of thing, whether or not she has a shop in mind, and whether she asks it as a question ("which shop has laptops?"), a need ("I am looking for a laptop"), or a statement. Give "item" as the thing in her own words, and "matches": every product in the facts that genuinely fits it BY MEANING, not by wording. A laptop is a notebook computer under any brand name; slides and sandals are the same family; a phone is not a laptop. Name each match by its shop code and its exact product name from the facts. Only products in the facts, never an invention. When she asks by price (the cheapest, the most affordable), she still means the thing itself; order your matches by list price, cheapest first.
 - intent "picture": she is asking to SEE a picture of a thing: "show me picture", "send pic", and also "I am not buying without pic", which means the same thing: the picture comes before any buying. Give "item" as the thing she wants to see and "matches" for it exactly as a search. A price wish inside the picture ask ("send pic of the cheapest heel") orders those matches by list price, cheapest first, so the first match is the one she means. A pick that carries a picture ask in the same breath is this intent, not a pick: "the strappy ones, can I see a picture?" said about a shown result is her choosing that result BY asking to see it — the picture is what she wants, so answer the picture ask rather than only landing her in the shop.
+- intent "order_received": she is telling you that an order she already PAID for has arrived and she has the goods now. The facts name her paid orders when she has any; give "shop" as that order's shop code. This is about an order she already made, never a new purchase.
+- intent "order_missing": she is telling you that an order she already paid for has NOT arrived: it never came, it is lost, she is still waiting and it is overdue. The facts name her paid orders when she has any; give "shop" as that order's shop code. Merely asking where an order stands is a search of another kind, not this.
 - intent "browse": she asks what shops or goods there are.
 - intent "no_shop": she says she has no particular shop, without naming a thing she wants. If she names a thing as well, it is a search.
 - intent "offtopic": her message is not about buying or shops at all.
@@ -110,6 +113,30 @@ func understandDiscovery(from, text string) *discoveryUnderstanding {
 		if w := recentSpeakerWords(pre, 4); w != "" {
 			facts += "\nWhat she said earlier in this chat, oldest first: " + w + "."
 		}
+	}
+	// Her paid orders are facts too: a buyer whose session is
+	// gone (the agent restarted, days passed) still owns her
+	// orders, and her word about one of them (it arrived, it
+	// never came) is served from the book, not treated as a
+	// new arrival looking for a shop.
+	for _, o := range orders.Default.All() {
+		if o.From != from || o.Status != "paid" {
+			continue
+		}
+		shop := catalogue.GetMerchant(o.MerchantID)
+		if shop == nil {
+			continue
+		}
+		state := "not yet marked sent"
+		switch o.DeliveryState {
+		case "sent":
+			state = "marked sent by the seller"
+		case "received":
+			state = "already confirmed received by her"
+		case "missing":
+			state = "already reported by her as not arrived"
+		}
+		facts += "\nShe has a paid order at " + shop.Name + " (shop code " + shop.ShopCode + "): " + o.Reference + ", the " + o.ProductName + ", " + state + "."
 	}
 	reply := model.Chat([]model.Message{
 		{Role: "user", Content: facts + "\nHer message: \"" + text + "\""},
@@ -258,8 +285,60 @@ func handleUnboundBuyer(from, text string) {
 	discoveryNet(from, text)
 }
 
+// newestPaidOrderAnywhere finds the buyer's paid order
+// across every shop that her words mean: the shop the
+// thinking named first, then the order in transit (the one
+// that can arrive, or fail to), then her newest paid order.
+func newestPaidOrderAnywhere(from, shopHint string) *orders.Order {
+	var hintShop *catalogue.Merchant
+	if shopHint != "" {
+		hintShop = resolveDiscoveryShop(shopHint)
+	}
+	var hinted, inTransit, any *orders.Order
+	for _, o := range orders.Default.All() {
+		oo := o
+		if oo.From != from || oo.Status != "paid" {
+			continue
+		}
+		any = &oo
+		if oo.DeliveryState == "sent" {
+			inTransit = &oo
+		}
+		if hintShop != nil && oo.MerchantID == hintShop.ID {
+			hinted = &oo
+			if oo.DeliveryState == "sent" {
+				return &oo
+			}
+		}
+	}
+	if hinted != nil {
+		return hinted
+	}
+	if inTransit != nil {
+		return inTransit
+	}
+	return any
+}
+
 func actOnDiscovery(from string, u *discoveryUnderstanding) bool {
 	switch u.Intent {
+	case "order_received", "order_missing":
+		// A delivery report from a buyer with no live shop
+		// session: her order pins the shop, she is bound to
+		// it, and the loop's own acts serve her word.
+		o := newestPaidOrderAnywhere(from, u.Shop)
+		if o == nil {
+			return false
+		}
+		shop := catalogue.GetMerchant(o.MerchantID)
+		if shop == nil {
+			return false
+		}
+		bindings[from] = shop.ID
+		if u.Intent == "order_received" {
+			return buyerConfirmReceived(from, shop, shop.ID)
+		}
+		return buyerReportMissing(from, shop, shop.ID)
 	case "picture":
 		// The picture comes first: she is put inside the
 		// matched product's shop and served the picture

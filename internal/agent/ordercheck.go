@@ -76,6 +76,14 @@ func orderReadback(merchant *catalogue.Merchant, o *orders.Order) []string {
 	switch {
 	case o.Status == "paid":
 		pieces = append(pieces, "It is paid. Thank you.")
+		switch o.DeliveryState {
+		case "sent":
+			pieces = append(pieces, "The seller has sent it; it is on its way. When it reaches you, tell me and I will let them know.")
+		case "received":
+			pieces = append(pieces, "You confirmed it reached you. Thank you.")
+		case "missing":
+			pieces = append(pieces, "You told me it has not arrived, and I have passed that to the seller with your number.")
+		}
 	case o.ClaimStatus == "open":
 		pieces = append(pieces, "You told me you have paid "+merchant.Name+" directly, and I am waiting for them to confirm it.")
 	default:

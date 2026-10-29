@@ -124,6 +124,16 @@ type Order struct {
 	// the buyer reports the link dead and the agent re-issues.
 	// Zero on orders placed before the field existed means one.
 	LinkAttempts int `json:"linkAttempts,omitempty"`
+
+	// DeliveryState follows the goods after payment, the loop
+	// the sale opens: "" (paid, not yet sent), "sent",
+	// "received" (the buyer confirmed it reached her), and
+	// "missing" (the buyer says it has not arrived, passed to
+	// the seller). SentAt and ReceivedAt stamp the two moves
+	// the seller and the buyer each report.
+	DeliveryState string `json:"deliveryState,omitempty"`
+	SentAt        string `json:"sentAt,omitempty"`
+	ReceivedAt    string `json:"receivedAt,omitempty"`
 }
 
 // All returns every order in the book, in reference order, for
