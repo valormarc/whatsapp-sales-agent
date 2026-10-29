@@ -132,6 +132,11 @@ type Session struct {
 	Location      string
 	PendingFulfil fulfilment
 
+	// FeeQuotePlace is the delivery place whose fee is being
+	// quoted by the seller in a "quote" shop, while the buyer
+	// waits at the feewait step (see deliveryfees.go).
+	FeeQuotePlace string
+
 	// Basket holds the items already agreed in this same
 	// order while the buyer haggles over one more: each was
 	// settled on its own (its own haggle, its own draw on

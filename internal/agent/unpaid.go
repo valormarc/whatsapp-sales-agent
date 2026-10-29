@@ -56,6 +56,10 @@ func CheckUnpaidOrders(now time.Time) {
 	// The watch is not a conversation, but a settlement it
 	// triggers may draft; each sweep opens a fresh budget.
 	model.BeginTurn()
+	// The same sweep carries the delivery-fee timeout: a
+	// seller who has not quoted in time leaves her buyer
+	// offered the other ways (see deliveryfees.go).
+	CheckFeeQuotes(now)
 	for _, o := range orders.Default.All() {
 		if o.Status != "pending" || o.ProviderRef == nil || *o.ProviderRef == "" || o.UnpaidAlerted {
 			continue

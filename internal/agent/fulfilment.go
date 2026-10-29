@@ -39,9 +39,11 @@ type fulfilment struct {
 // delivery terms: a fee, a note, or both. Such a shop's buyers are
 // offered the choice (delivery on those terms, or pickup free);
 // a shop with neither is asked only where the buyer is, so her
-// seller can arrange things with her.
+// seller can arrange things with her. A shop that quotes its
+// fees per order has terms too: it delivers, at a fee the
+// seller names for each order (see deliveryfees.go).
 func shopHasDeliveryTerms(merchant *catalogue.Merchant) bool {
-	return merchant != nil && (merchant.DeliveryFee > 0 || strings.TrimSpace(merchant.DeliveryNote) != "")
+	return merchant != nil && (merchant.DeliveryFee > 0 || strings.TrimSpace(merchant.DeliveryNote) != "" || deliveryStyleOf(merchant) == "quote")
 }
 
 // deliveryOptionLine builds the delivery offer from the shop's own
@@ -60,6 +62,11 @@ func deliveryOptionLine(merchant *catalogue.Merchant, knownLocation string) stri
 	note := strings.TrimRight(strings.TrimSpace(merchant.DeliveryNote), ".")
 	var line string
 	switch {
+	case deliveryStyleOf(merchant) == "quote":
+		line = "Delivery is priced when you order: the shop quotes the fee for your place, and you see it inside your full total before you pay anything."
+		if note != "" {
+			line = note + ". " + line
+		}
 	case deliveryPaidToOf(merchant) == "carrier" && merchant.DeliveryFee > 0:
 		feeLine := "Delivery is " + money.GHS(merchant.DeliveryFee) + ", paid to " + carrierTarget(merchant.DeliveryNote) + " when it reaches you."
 		if note != "" {
@@ -109,7 +116,11 @@ func beginFulfilment(from string, s *Session, price float64) {
 	// knows her would ask. One question, and a "different"
 	// lands on the ordinary choice below, untouched.
 	if s.Location == "" {
-		if remembered, ok := rememberedFulfilment(shopID, from, merchant); ok && (remembered.Location != "" || remembered.Mode == "pickup") {
+		// A quote shop's delivery fee is named fresh for every
+		// order, so last time's delivery is never held up as
+		// this time's way: she chooses again, and the fee is
+		// quoted again.
+		if remembered, ok := rememberedFulfilment(shopID, from, merchant); ok && (remembered.Location != "" || remembered.Mode == "pickup") && !(deliveryStyleOf(merchant) == "quote" && remembered.Mode == "delivery") {
 			s.RememberedFulfil = remembered
 			s.FulfilStep = "usual"
 			sessions[key] = s
@@ -242,6 +253,10 @@ func fulfilPrompt(s *Session) string {
 		return "Where are you based?"
 	case "pickupkind":
 		return "Who will come for it: yourself, or somebody you send?"
+	case "feewait":
+		return "I am still waiting for the shop to give the delivery fee. The moment it comes, I will show you your full total."
+	case "feeexpired":
+		return "The shop has not given the delivery fee yet. Say wait to keep waiting, or tell me if you would rather pick it up or meet up."
 	case "size":
 		return sizeQuestionText(s)
 	case "pkgname":
@@ -278,7 +293,6 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 	shopID := s.MerchantID
 	key := sessionKey(shopID, from)
 	p := s.Product
-	fee := deliveryFeeOf(merchant)
 
 	// An add she has been asked to confirm outranks the open
 	// question: her yes or no belongs to the add until she
@@ -423,6 +437,20 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		beginPackageDetails(from, s, f)
 	}
 
+	// deliver settles a chosen delivery to a named place. In
+	// a "set" shop the place's own fee is known the moment the
+	// place is (see deliveryFeeFor), and the sale goes on to
+	// its details. In a "quote" shop the fee is the seller's
+	// to name for this order, so the sale pauses and asks her
+	// (see deliveryfees.go).
+	deliver := func(loc string) {
+		if deliveryStyleOf(merchant) == "quote" {
+			beginFeeQuote(from, s, merchant, loc)
+			return
+		}
+		complete(fulfilment{Mode: "delivery", Fee: deliveryFeeFor(merchant, loc), Location: loc})
+	}
+
 	// How the goods move can be changed at any point in the step:
 	// these readings run before whichever question is open. A
 	// meet-up is read first (its place rides in the same message),
@@ -467,7 +495,7 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		if loc == "" {
 			loc = cleanPlace(msg)
 		}
-		complete(fulfilment{Mode: "delivery", Fee: fee, Location: loc})
+		deliver(loc)
 	case "meetwhere":
 		place := extractMeetPlace(msg)
 		if place == "" {
@@ -501,6 +529,25 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 			return
 		}
 		complete(fulfilment{Mode: "pickup"})
+	case "feewait":
+		// She is waiting on the seller's fee. Changing how the
+		// goods move was already read above (pickup, meet-up, a
+		// collector); anything else is talk while she waits,
+		// and the wait is held up again, never mistaken for a
+		// place or a name.
+		whatsapp.SendText(from, fulfilPrompt(s))
+		return
+	case "feeexpired":
+		// The seller never answered in time, and she was
+		// offered the ways out. Waiting is hers to choose: it
+		// asks the seller again. The other ways were read
+		// above; anything else holds the offer up again.
+		if waitWordRe.MatchString(lower) {
+			reopenFeeQuote(from, s, merchant)
+			return
+		}
+		whatsapp.SendText(from, fulfilPrompt(s))
+		return
 	default: // "choice"
 		// A question about the sale itself (the total, delivery)
 		// is answered, and the fulfilment question is held up
@@ -518,7 +565,7 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 				loc = s.Location
 			}
 			if loc != "" {
-				complete(fulfilment{Mode: "delivery", Fee: fee, Location: loc})
+				deliver(loc)
 			} else {
 				s.FulfilStep = "where"
 				sessions[key] = s
@@ -530,12 +577,16 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		// (a capitalised name, nothing else in the message): that
 		// is delivery, to that place.
 		if loc := barePlace(msg); loc != "" {
-			complete(fulfilment{Mode: "delivery", Fee: fee, Location: loc})
+			deliver(loc)
 			return
 		}
 		whatsapp.SendText(from, fulfilPrompt(s))
 	}
 }
+
+// waitWordRe reads a buyer choosing to keep waiting after a
+// fee quote has timed out.
+var waitWordRe = regexp.MustCompile(`(?i)^\s*(wait|i will wait|i'll wait|keep waiting|let me wait|waiting)\s*\.?\s*$`)
 
 // selfWordSet is how a buyer answers "who will come" with herself.
 var selfWordSet = map[string]bool{
@@ -554,6 +605,7 @@ func dropPendingSale(from string, s *Session) {
 	if s.Qty > 0 {
 		view = wholeProductOf(shopID, p)
 	}
+	cancelFeeQuote(shopID, from)
 	sessions[sessionKey(shopID, from)] = &Session{Stage: "browsing", MerchantID: shopID, LastViewed: view, Location: s.Location, History: s.History}
 	whatsapp.SendText(from, "Okay, cancelled. Tell me what else you need.")
 }
@@ -569,6 +621,10 @@ func dropPendingSale(from string, s *Session) {
 // last time in this shop held up to confirm when there is one.
 func beginPackageDetails(from string, s *Session, f fulfilment) {
 	key := sessionKey(s.MerchantID, from)
+	// The fulfilment is settled now, by whichever road got
+	// here: an open fee quote for this buyer is finished
+	// business, answered or not.
+	cancelFeeQuote(s.MerchantID, from)
 	s.PendingFulfil = f
 	// A product that comes in sizes is not sold sizeless:
 	// every sized line in the order owes its size here,

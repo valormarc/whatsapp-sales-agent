@@ -126,6 +126,16 @@ func (p Product) UnitPrice() float64 {
 //     Unset means "carrier": the
 //     common case is the default, and a shop only leaves it by
 //     her own word in chat.
+//   - DeliveryStyle, how the fee itself is known: "set" (the
+//     fees below are given up front) or "quote" (the seller
+//     names the fee for each delivery order as it comes, and
+//     the buyer sees it, inside her full total, before she
+//     pays anything). Unset means "set".
+//   - DeliveryAreas, the exceptions to the standard fee in a
+//     "set" shop: a named area and its own fee. A buyer whose
+//     stated place names the area pays that area's fee; every
+//     other place pays the standard DeliveryFee. She sets them
+//     one message at a time, never sixteen questions.
 type Merchant struct {
 	ID                     string    `json:"id"`
 	Name                   string    `json:"name"`
@@ -139,6 +149,15 @@ type Merchant struct {
 	DeliveryFee            float64   `json:"deliveryFee,omitempty"`
 	DeliveryNote           string    `json:"deliveryNote,omitempty"`
 	DeliveryPaidTo         string    `json:"deliveryPaidTo,omitempty"`
+	DeliveryStyle          string    `json:"deliveryStyle,omitempty"`
+	DeliveryAreas          []AreaFee `json:"deliveryAreas,omitempty"`
+}
+
+// AreaFee is one named area's own delivery fee in a "set"
+// shop, an exception to the shop's standard DeliveryFee.
+type AreaFee struct {
+	Area string  `json:"area"`
+	Fee  float64 `json:"fee"`
 }
 
 // Catalogue is the whole store file: merchants by id.

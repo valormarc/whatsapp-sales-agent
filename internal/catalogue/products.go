@@ -292,6 +292,46 @@ func SetSubaccount(merchantID, code, holderName string) error {
 	})
 }
 
+// SetDeliveryStyle sets how the shop's delivery fees are
+// known: "set" (given up front) or "quote" (the seller names
+// the fee for each delivery order as it comes).
+func SetDeliveryStyle(merchantID, style string) error {
+	if style != "set" && style != "quote" {
+		return errors.New("the delivery style must be set or quote")
+	}
+	return updateMerchant(merchantID, func(m *Merchant) error {
+		m.DeliveryStyle = style
+		return nil
+	})
+}
+
+// SetDeliveryArea sets one named area's own delivery fee in
+// a "set" shop, replacing any fee already recorded for that
+// area (matched by name, case-insensitively). A fee of zero
+// removes the area, back to the standard fee.
+func SetDeliveryArea(merchantID, area string, fee float64) error {
+	area = strings.TrimSpace(area)
+	if area == "" {
+		return errors.New("the area needs a name")
+	}
+	if fee < 0 {
+		return ErrNegativeDeliveryFee
+	}
+	return updateMerchant(merchantID, func(m *Merchant) error {
+		out := m.DeliveryAreas[:0]
+		for _, a := range m.DeliveryAreas {
+			if !strings.EqualFold(a.Area, area) {
+				out = append(out, a)
+			}
+		}
+		m.DeliveryAreas = out
+		if fee > 0 {
+			m.DeliveryAreas = append(m.DeliveryAreas, AreaFee{Area: area, Fee: fee})
+		}
+		return nil
+	})
+}
+
 // SetDeliveryNote sets how the shop's goods travel, in the merchant's
 // own words. Buyers hear it exactly as written when they ask about
 // delivery. An empty note clears it.

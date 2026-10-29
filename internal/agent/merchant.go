@@ -122,6 +122,13 @@ var (
 	// will read it back exactly as she wrote it.
 	setDeliveryFeeRe  = regexp.MustCompile(`^set delivery fee (.+)$`)
 	setDeliveryNoteRe = regexp.MustCompile(`(?i)^set delivery note (.+)$`)
+	// How the fee is known is her choice too: quoted per order,
+	// or set up front; and in a set shop, a named area can carry
+	// its own fee ("set area fee Osu 30", or several at once:
+	// "set area fees Osu 30, Kasoa 45").
+	setDeliveryQuoteRe = regexp.MustCompile(`(?i)^(set delivery per order|quote delivery( fees)?|delivery per order|quote the delivery fee each time)$`)
+	setDeliverySetRe   = regexp.MustCompile(`(?i)^(set delivery (fees )?(up front|fixed)|delivery fees up front)$`)
+	setAreaFeeRe       = regexp.MustCompile(`(?i)^set area fees? (.+)$`)
 	// Measure commands: a product gains a measure ("set measure of
 	// <item> to <qty> <unit>") or loses it ("sell <item> whole
 	// only", "<item> whole only"), in her own words.
@@ -213,6 +220,15 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 			return
 		}
 		whatsapp.SendText(from, "No problem. "+name+" stays in your catalogue.")
+		return
+	}
+
+	// Her answer to an open per-order delivery fee request
+	// (see deliveryfees.go). It sits after her in-progress
+	// flows, which own her words while they are open, and
+	// before her commands. With no open request in her shop
+	// it consumes nothing.
+	if handleMerchantFeeQuote(from, merchant, text, lower) {
 		return
 	}
 
@@ -870,11 +886,8 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			lines = append(lines, line)
 		}
 		lines = append(lines, "Your daily giveaway allowance is "+money.GHS(merchant.DailyGiveawayAllowance)+". Your last prices are yours only; customers never see them.")
-		if merchant.DeliveryFee > 0 || merchant.DeliveryNote != "" {
-			line := "Delivery:"
-			if merchant.DeliveryFee > 0 {
-				line += " " + money.GHS(merchant.DeliveryFee) + " a trip."
-			}
+		if deliveryStyleOf(merchant) == "quote" {
+			line := "Delivery: you quote the fee for each order as it comes, and the buyer sees it inside her full total before she pays."
 			if merchant.DeliveryNote != "" {
 				line += " " + merchant.DeliveryNote
 			}
@@ -884,8 +897,29 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			} else {
 				lines = append(lines, "The delivery money is not yours: your buyers pay whoever brings the item, when it arrives.")
 			}
+		} else if merchant.DeliveryFee > 0 || merchant.DeliveryNote != "" || len(merchant.DeliveryAreas) > 0 {
+			line := "Delivery:"
+			if merchant.DeliveryFee > 0 {
+				line += " " + money.GHS(merchant.DeliveryFee) + " a trip."
+			}
+			if merchant.DeliveryNote != "" {
+				line += " " + merchant.DeliveryNote
+			}
+			lines = append(lines, line)
+			if len(merchant.DeliveryAreas) > 0 {
+				parts := make([]string, 0, len(merchant.DeliveryAreas))
+				for _, a := range merchant.DeliveryAreas {
+					parts = append(parts, a.Area+" "+money.GHS(a.Fee))
+				}
+				lines = append(lines, "Area fees: "+strings.Join(parts, ", ")+". Everywhere else pays the standard fee.")
+			}
+			if deliveryPaidToOf(merchant) == "merchant" {
+				lines = append(lines, "The delivery money comes to you, inside the total your buyers pay here.")
+			} else {
+				lines = append(lines, "The delivery money is not yours: your buyers pay whoever brings the item, when it arrives.")
+			}
 		} else {
-			lines = append(lines, "No delivery fee set yet. Say \"set delivery fee 25\" to give buyers one total to pay.")
+			lines = append(lines, "No delivery fee set yet. Say \"set delivery fee 25\" to give buyers one total to pay, \"set area fee Osu 30\" where a place costs different, or \"set delivery per order\" and I will ask you for the fee on each delivery.")
 		}
 		if merchant.SubaccountCode != "" {
 			lines = append(lines, "Your payment account is set up: link money settles to your MoMo in the name "+merchant.PayoutHolderName+".")
@@ -909,6 +943,55 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 		} else {
 			whatsapp.SendText(from, "Done. Delivery now costs your buyers "+money.GHS(*amount)+" a trip, on top of the item price. They see one total before they pay.")
 		}
+		if *amount > 0 && deliveryStyleOf(merchant) == "quote" {
+			whatsapp.SendText(from, "You are quoting delivery per order just now, so this fee is not being used. Say \"set delivery up front\" to charge this fee on every delivery instead.")
+		}
+		return true
+	}
+
+	if setDeliveryQuoteRe.MatchString(strings.TrimSpace(text)) {
+		if err := catalogue.SetDeliveryStyle(merchant.ID, "quote"); err != nil {
+			whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
+			return true
+		}
+		whatsapp.SendText(from, "Done. Now, whenever a buyer chooses delivery, I will ask you for that order's fee and show it to her inside her full total before she pays anything. If you do not answer within a few minutes, she can choose pickup or meet-up instead, so she is never left waiting.")
+		return true
+	}
+
+	if setDeliverySetRe.MatchString(strings.TrimSpace(text)) {
+		if err := catalogue.SetDeliveryStyle(merchant.ID, "set"); err != nil {
+			whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
+			return true
+		}
+		whatsapp.SendText(from, "Done. Your delivery fees are the ones you set up front: your standard fee, and your area fees where you have set them. Buyers see the fee for their place inside their total before they pay.")
+		return true
+	}
+
+	if m := setAreaFeeRe.FindStringSubmatch(text); m != nil {
+		areas := parseAreaFees(m[1])
+		if len(areas) == 0 {
+			whatsapp.SendText(from, "I could not read the areas in that. Try: set area fee Osu 30, or set area fees Osu 30, Kasoa 45.")
+			return true
+		}
+		for _, a := range areas {
+			if err := catalogue.SetDeliveryArea(merchant.ID, a.Area, a.Fee); err != nil {
+				whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
+				return true
+			}
+		}
+		wasQuote := deliveryStyleOf(merchant) == "quote"
+		if wasQuote {
+			_ = catalogue.SetDeliveryStyle(merchant.ID, "set")
+		}
+		parts := make([]string, 0, len(areas))
+		for _, a := range areas {
+			parts = append(parts, a.Area+" "+money.GHS(a.Fee))
+		}
+		line := "Done. Delivery to " + strings.Join(parts, ", ") + " now carries its own fee. Everywhere else pays your standard fee."
+		if wasQuote {
+			line += " You were quoting per order; your fees are now the ones set up front."
+		}
+		whatsapp.SendText(from, line)
 		return true
 	}
 

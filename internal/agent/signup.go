@@ -196,5 +196,6 @@ func finishSignup(from string, flow *SignupFlow) {
 	if payoutLine != "" {
 		whatsapp.SendText(from, payoutLine)
 	}
+	whatsapp.SendText(from, "For delivery, whenever you are ready: say \"set delivery fee 25\" for one fee everywhere, \"set area fee Osu 30\" where a place costs different, or \"set delivery per order\" and I will ask you for the fee on each delivery. Say \"set delivery note\" followed by how your goods travel, and buyers will hear it exactly as you wrote it.")
 	whatsapp.SendText(from, "Let us add a new product. What is it called? You can say cancel at any point and nothing will be saved.")
 }
