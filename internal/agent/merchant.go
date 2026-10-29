@@ -519,6 +519,36 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		}
 
 	case "name":
+		// A seller can answer before the photo read-back reaches
+		// her screen. A bare figure is never a product name: when
+		// a photo supplied the list price, carry a smaller figure
+		// as the last price instead of saving "250" as the item.
+		// The listing still needs a real name before it can go live.
+		if flow.Photo && bareFigureRe.MatchString(text) {
+			if amount := parseOffer(lower); amount != nil && *amount > 0 {
+				label := ""
+				switch {
+				case flow.ListPrice <= 0:
+					flow.ListPrice = *amount
+					flow.PriceNeedsConfirm = false
+					flow.PriceConfirmed = true
+					label = "list price"
+				case *amount < flow.ListPrice:
+					flow.FloorPrice = *amount
+					flow.Fixed = false
+					label = "last price"
+				case *amount == flow.ListPrice:
+					flow.FloorPrice = *amount
+					flow.Fixed = true
+					label = "fixed price"
+				default:
+					whatsapp.SendText(from, "I read that figure, "+money.GHS(*amount)+", as a price, not a product name. It is above the current list price of "+money.GHS(flow.ListPrice)+". If the list price is wrong, say 'price is 500'. What is the product called?")
+					return
+				}
+				whatsapp.SendText(from, "I have kept "+money.GHS(*amount)+" as the "+label+". I still need the product's name. What is it called?")
+				return
+			}
+		}
 		// A whole advert pasted in one message is read whole:
 		// she copied the advert she already posts everywhere
 		// and sent it once, so the agent does the separating.
