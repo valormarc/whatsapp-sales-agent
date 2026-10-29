@@ -62,8 +62,14 @@ func parseShopEntry(lower string, allowName bool) (*catalogue.Merchant, string) 
 			continue
 		}
 		if shop := catalogue.MerchantByShopCode(w); shop != nil {
-			rest := strings.TrimSpace(bareWordSplit.ReplaceAllString(
-				strings.Replace(lower, w, " ", 1), " "))
+			// The rest is her message with the code word
+			// taken out, and only its spacing tidied: her
+			// punctuation is part of her meaning, and
+			// collapsing it would break her figures apart
+			// (a budget of 1,500 must not reach the buyer
+			// roads as 1 500).
+			rest := strings.Join(strings.Fields(
+				strings.Replace(lower, w, " ", 1)), " ")
 			return shop, rest
 		}
 	}

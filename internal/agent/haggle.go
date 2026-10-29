@@ -26,6 +26,11 @@ var numbersRe = regexp.MustCompile(`(\d+(?:\.\d+)?)`)
 // final stand, the merchant's own amounts): "Ankara 3 yards"
 // carries no offer, and in "200 for 3 yards" the 200 is the offer
 // and the 3 is the quantity it applies to (see measure.go).
+// budgetFrameRe marks a figure she frames as her budget:
+// it is context for the conversation, never an offer of
+// that amount for the thing in front of her.
+var budgetFrameRe = regexp.MustCompile(`(?i)\bbudget\b[^0-9]{0,14}\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:is\s+)?(?:my\s+)?budget\b`)
+
 func parseOffer(text string) *float64 {
 	stripped := strings.ReplaceAll(text, ",", "")
 	spans := quantityNumberSpans(stripped)
@@ -34,6 +39,9 @@ func parseOffer(text string) *float64 {
 	// quoting her reference is about that order, so its
 	// figures are excluded from offer reading altogether.
 	for _, idx := range orderRefRe.FindAllStringSubmatchIndex(stripped, -1) {
+		spans = append(spans, [2]int{idx[0], idx[1]})
+	}
+	for _, idx := range budgetFrameRe.FindAllStringIndex(stripped, -1) {
 		spans = append(spans, [2]int{idx[0], idx[1]})
 	}
 	for _, m := range offerRe.FindAllStringSubmatchIndex(stripped, -1) {
