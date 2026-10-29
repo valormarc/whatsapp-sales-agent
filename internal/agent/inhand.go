@@ -177,6 +177,7 @@ func reopenInHand(from string, s *Session, merchant *catalogue.Merchant) {
 // exactly as the buyer's own yes would have; a no ends it
 // with nothing charged and the buyer told why.
 func handleMerchantInHand(from string, merchant *catalogue.Merchant, text, lower string) bool {
+	merchant = merchantAwaiting(from, merchant, func(id string) bool { return oldestOpenInHand(id) != nil })
 	q := oldestOpenInHand(merchant.ID)
 	if q == nil {
 		return false

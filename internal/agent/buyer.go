@@ -109,6 +109,15 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		return
 	}
 
+	// Buy again, on plain words alone: asking for the same
+	// order again is a structural ask with one referent in
+	// the book, like a cancellation, so the net names it
+	// even ahead of the thinking. With no model it is also
+	// the only road that hears it.
+	if reorderRe.MatchString(lower) && startReorder(from, s, merchant, shopID, msg) {
+		return
+	}
+
 	// Thinking first. On an open turn (not inside a guided
 	// flow: no haggle running, no fulfilment, no pending close,
 	// no onboarding), the agent thinks before it answers: the

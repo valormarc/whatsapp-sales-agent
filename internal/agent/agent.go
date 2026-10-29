@@ -137,6 +137,12 @@ type Session struct {
 	// waits at the feewait step (see deliveryfees.go).
 	FeeQuotePlace string
 
+	// FeePark holds a repeat order's settled fulfilment
+	// details across the wait for a fresh delivery fee quote,
+	// so the fee is the only thing the repeat ever waits for
+	// (see reorder.go and deliveryfees.go).
+	FeePark *fulfilment
+
 	// InHandOK records that the seller has confirmed she has
 	// this sale's item in hand, when the sale needed that
 	// confirmation before payment (see inhand.go).

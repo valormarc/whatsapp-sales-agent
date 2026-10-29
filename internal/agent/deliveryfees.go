@@ -57,6 +57,11 @@ type feeQuote struct {
 	CreatedAt string  `json:"createdAt"`
 	Status    string  `json:"status"` // open, answered, declined, expired, cancelled
 	Fee       float64 `json:"fee,omitempty"`
+	// Parked carries a repeat order's settled details (see
+	// reorder.go) across the fee wait, so when the fee lands
+	// the sale goes straight to its recap instead of asking
+	// again for what the book already holds.
+	Parked *fulfilment `json:"parked,omitempty"`
 }
 
 var feeQuotesMu sync.Mutex
@@ -201,10 +206,16 @@ func deliveryFeeFor(merchant *catalogue.Merchant, place string) float64 {
 // and that nothing is paid before she sees the full total.
 func beginFeeQuote(from string, s *Session, merchant *catalogue.Merchant, loc string) {
 	shopID := s.MerchantID
-	openFeeQuote(feeQuote{
+	q := feeQuote{
 		ShopID: shopID, Buyer: from, Item: s.itemLabel(),
 		Price: basketGoods(s) + s.AgreedPrice, Place: loc,
-	})
+	}
+	if s.FeePark != nil {
+		parked := *s.FeePark
+		q.Parked = &parked
+		s.FeePark = nil
+	}
+	openFeeQuote(q)
 	s.FulfilStep = "feewait"
 	s.FeeQuotePlace = loc
 	sessions[sessionKey(shopID, from)] = s
@@ -256,7 +267,28 @@ func feeAnswerOf(msg, lower string) (fee float64, declined bool, ok bool) {
 // Her figure answers the shop's oldest open request; a
 // refusal tells that buyer plainly and hands her the choice
 // again.
+// merchantAwaiting resolves whose open request a seller's
+// answer belongs to: her current shop when it is waiting,
+// otherwise any other shop she owns that is. A seller with
+// two shops answers once, in her own chat, and the answer
+// belongs to the request that stands open, not to whichever
+// shop her last conversation happened to sit in.
+func merchantAwaiting(from string, current *catalogue.Merchant, waiting func(string) bool) *catalogue.Merchant {
+	if waiting(current.ID) {
+		return current
+	}
+	for id := range shopsOfOwner(from) {
+		if id != current.ID && waiting(id) {
+			if m := catalogue.GetMerchant(id); m != nil {
+				return m
+			}
+		}
+	}
+	return current
+}
+
 func handleMerchantFeeQuote(from string, merchant *catalogue.Merchant, msg, lower string) bool {
+	merchant = merchantAwaiting(from, merchant, func(id string) bool { return oldestOpenFeeQuote(id) != nil })
 	q := oldestOpenFeeQuote(merchant.ID)
 	if q == nil {
 		return false
@@ -294,7 +326,20 @@ func handleMerchantFeeQuote(from string, merchant *catalogue.Merchant, msg, lowe
 		sendPieces(buyer,
 			merchant.Name+" says delivery to "+q.Place+" is "+money.GHS(fee)+".",
 			purse)
-		beginPackageDetails(buyer, sess, fulfilment{Mode: "delivery", Fee: fee, Location: q.Place})
+		if q.Parked != nil {
+			// A repeat order rides through on its parked
+			// details: the fee was the only missing fact, and
+			// it has just landed, so the recap is next.
+			f := *q.Parked
+			f.Fee = fee
+			f.Location = q.Place
+			sess.PendingFulfil = f
+			sess.FulfilStep = "confirm"
+			sessions[key] = sess
+			sendOrderRecap(buyer, sess, f)
+		} else {
+			beginPackageDetails(buyer, sess, fulfilment{Mode: "delivery", Fee: fee, Location: q.Place})
+		}
 		whatsapp.SendText(from, "Done. I have told the buyer delivery to "+q.Place+" is "+money.GHS(fee)+", and her order is going ahead.")
 	} else {
 		whatsapp.SendText(buyer, merchant.Name+" has quoted "+money.GHS(fee)+" for delivery to "+q.Place+". When you are ready to buy, tell me and we will use it.")
