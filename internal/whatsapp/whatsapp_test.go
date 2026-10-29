@@ -57,3 +57,38 @@ func TestButtonsPayloadMatchesTheGraphSchema(t *testing.T) {
 		t.Fatalf("first button = %+v", first)
 	}
 }
+
+func TestCTAPayloadMatchesTheGraphSchema(t *testing.T) {
+	payload := buildCTAPayload("233200000000", "Pay here to complete your order.", "Click to pay GH₵875", "https://pay.example.test/ABC")
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Type        string `json:"type"`
+		Interactive struct {
+			Type string `json:"type"`
+			Body struct {
+				Text string `json:"text"`
+			} `json:"body"`
+			Action struct {
+				Name       string `json:"name"`
+				Parameters struct {
+					DisplayText string `json:"display_text"`
+					URL         string `json:"url"`
+				} `json:"parameters"`
+			} `json:"action"`
+		} `json:"interactive"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Type != "interactive" || got.Interactive.Type != "cta_url" || got.Interactive.Action.Name != "cta_url" {
+		t.Fatalf("payload shape = %s", raw)
+	}
+	if got.Interactive.Body.Text != "Pay here to complete your order." ||
+		got.Interactive.Action.Parameters.DisplayText != "Click to pay GH₵875" ||
+		got.Interactive.Action.Parameters.URL != "https://pay.example.test/ABC" {
+		t.Fatalf("payload contents = %s", raw)
+	}
+}

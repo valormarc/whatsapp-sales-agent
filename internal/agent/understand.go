@@ -512,14 +512,11 @@ func sendPaymentLink(from string, s *Session, merchant *catalogue.Merchant, orde
 	if s != nil {
 		s.PaymentURL = url
 	}
-	pieces := []string{
-		"Of course. Here is the payment link for your order " + order.Reference + " (" + order.ProductName + ", " + money.GHS(order.Charged()) + ").",
-		"Pay here to complete your order: " + url,
-	}
+	sendPieces(from, "Of course. Here is the payment link for your order "+order.Reference+" ("+order.ProductName+", "+money.GHS(order.Charged())+").")
+	sendPayButton(from, order.Charged(), url)
 	if merchant.PayoutPhone != "" {
-		pieces = append(pieces, "Or send MoMo directly to "+merchant.Name+"'s number, "+merchant.PayoutPhone+", and send me the screenshot here.")
+		whatsapp.SendText(from, "Or send MoMo directly to "+merchant.Name+"'s number, "+merchant.PayoutPhone+", and send me the screenshot here.")
 	}
-	sendPieces(from, pieces...)
 	return true
 }
 
@@ -594,14 +591,11 @@ func reissueLink(from string, s *Session, merchant *catalogue.Merchant, order *o
 	if s != nil {
 		s.PaymentURL = *link.URL
 	}
-	pieces := []string{
-		"That link has expired, so I have made you a fresh one. The old one will not work now.",
-		"Pay here to complete your order: " + *link.URL,
-	}
+	sendPieces(from, "That link has expired, so I have made you a fresh one. The old one will not work now.")
+	sendPayButton(from, order.Charged(), *link.URL)
 	if merchant.PayoutPhone != "" {
-		pieces = append(pieces, "Or send MoMo directly to "+merchant.Name+"'s number, "+merchant.PayoutPhone+", and send me the screenshot here.")
+		whatsapp.SendText(from, "Or send MoMo directly to "+merchant.Name+"'s number, "+merchant.PayoutPhone+", and send me the screenshot here.")
 	}
-	sendPieces(from, pieces...)
 	return true
 }
 

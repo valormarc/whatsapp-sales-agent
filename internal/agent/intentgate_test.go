@@ -485,7 +485,7 @@ func TestLinkCreationSurvivesAnIdempotencyCollision(t *testing.T) {
 	tap(t, buyer, "ff_self")
 	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Pay here to complete your order: https://pay.seevplus.com/PAY-test") {
+	if !strings.Contains(got, "Pay here to complete your order.") || !strings.Contains(got, "Click to pay GH₵") || !strings.Contains(got, "https://pay.seevplus.com/PAY-test") {
 		t.Fatalf("the sale should still close with a link, got %q", got)
 	}
 	if strings.Contains(got, "not coming up right now") {
@@ -536,7 +536,7 @@ func TestLinkFailedOrderCanStillBePaid(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "New payment link for order EFUA-0001")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Pay here to complete your order: https://pay.seevplus.com/PAY-test") {
+	if !strings.Contains(got, "Pay here to complete your order.") || !strings.Contains(got, "Click to pay GH₵") || !strings.Contains(got, "https://pay.seevplus.com/PAY-test") {
 		t.Fatalf("a new-link ask on a link_failed order should mint the link, got %q", got)
 	}
 	if strings.Contains(got, "It is not paid yet") {
@@ -552,7 +552,7 @@ func TestLinkFailedOrderCanStillBePaid(t *testing.T) {
 	c.replies(t, buyer2)
 	c.say(t, buyer2, "I want to pay now")
 	got = strings.Join(c.replies(t, buyer2), "\n")
-	if !strings.Contains(got, "Pay here to complete your order: https://pay.seevplus.com/PAY-test") {
+	if !strings.Contains(got, "Pay here to complete your order.") || !strings.Contains(got, "Click to pay GH₵") || !strings.Contains(got, "https://pay.seevplus.com/PAY-test") {
 		t.Fatalf("asking to pay on a link_failed order should mint the link it never had, got %q", got)
 	}
 }

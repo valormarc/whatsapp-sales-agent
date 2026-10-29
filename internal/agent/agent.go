@@ -277,6 +277,23 @@ func sendPieces(from string, pieces ...string) {
 	}
 }
 
+// sendPayButton presents a payment link the way a buyer
+// should meet it: a button she taps, with the amount she is
+// about to pay on the button's face, never a raw link
+// sitting in the chat. WhatsApp caps a button's words at 25
+// characters; an amount too long for the button rides in
+// the body instead, so the figure she pays is always in
+// front of her before she taps.
+func sendPayButton(to string, total float64, url string) {
+	display := "Click to pay " + money.GHS(total)
+	body := "Pay here to complete your order."
+	if len([]rune(display)) > 25 {
+		display = "Click to pay"
+		body = "Pay here to complete your order: " + money.GHS(total) + "."
+	}
+	whatsapp.SendPayButton(to, body, display, url)
+}
+
 // ackWords are the bare acknowledgements a buyer sends to mean
 // "received", never "sold": in my own buying chats "Ok",
 // "I'll contact you" and "I'll buy" none of them ever closed

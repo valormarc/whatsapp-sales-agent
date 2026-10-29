@@ -8,6 +8,7 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/daybook"
 	"github.com/valormarc/hackathon-agent/internal/money"
+	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
@@ -88,7 +89,11 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// request (the net's shape; the thinking above serves the
 	// request first whenever it can be read).
 	if s.Stage == "agreed" && linkRe.MatchString(lower) {
-		whatsapp.SendText(from, "Pay here to complete your order: "+s.PaymentURL)
+		amount := s.AgreedPrice
+		if o := orders.Default.NewestUnpaidFor(shopID, from); o != nil {
+			amount = o.Charged()
+		}
+		sendPayButton(from, amount, s.PaymentURL)
 		return
 	}
 

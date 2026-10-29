@@ -54,8 +54,11 @@ func setupChat(t *testing.T, merchantNumber, catalogueJSON string) string {
 }
 
 type outboxRecord struct {
-	To   string `json:"to"`
-	Body string `json:"body"`
+	To      string   `json:"to"`
+	Body    string   `json:"body"`
+	Kind    string   `json:"kind,omitempty"`
+	Buttons []string `json:"buttons,omitempty"`
+	URL     string   `json:"url,omitempty"`
 }
 
 // chat is a tiny transcript reader over the dry-run outbox. Offsets
@@ -93,7 +96,14 @@ func (c *chat) replies(t *testing.T, to string) []string {
 			t.Fatalf("outbox line not JSON: %v", err)
 		}
 		if rec.To == to {
-			mine = append(mine, rec.Body)
+			body := rec.Body
+			if rec.Kind == "cta_url" && len(rec.Buttons) > 0 {
+				// A tap-to-pay button reads as its body, then
+				// the button and where it leads, the way the
+				// phone presents them together.
+				body += "\n" + rec.Buttons[0] + ": " + rec.URL
+			}
+			mine = append(mine, body)
 		}
 	}
 	out := mine[c.seen[to]:]

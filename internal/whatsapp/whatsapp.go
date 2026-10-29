@@ -47,6 +47,9 @@ type outboxRecord struct {
 	// Buttons holds the reply button titles of an interactive
 	// buttons message (Kind "buttons"); Body holds its text.
 	Buttons []string `json:"buttons,omitempty"`
+	// URL is the target of a tap-to-open button message
+	// (Kind "cta_url"); Buttons holds its one display text.
+	URL string `json:"url,omitempty"`
 }
 
 type sendPayload struct {
@@ -326,6 +329,62 @@ func buildButtonsPayload(to, body string, buttons []Button) buttonsPayload {
 		btn.Reply.Title = b.Title
 		payload.Interactive.Action.Buttons = append(payload.Interactive.Action.Buttons, btn)
 	}
+	return payload
+}
+
+type ctaPayload struct {
+	MessagingProduct string `json:"messaging_product"`
+	To               string `json:"to"`
+	Type             string `json:"type"`
+	Interactive      struct {
+		Type string `json:"type"`
+		Body struct {
+			Text string `json:"text"`
+		} `json:"body"`
+		Action struct {
+			Name       string `json:"name"`
+			Parameters struct {
+				DisplayText string `json:"display_text"`
+				URL         string `json:"url"`
+			} `json:"parameters"`
+		} `json:"action"`
+	} `json:"interactive"`
+}
+
+// SendPayButton sends one tap-to-pay message: a short body
+// and a single button that opens the payment page when
+// tapped, its display text carrying what she is about to
+// pay. In dry-run mode it is logged to the outbox as kind
+// "cta_url" with the display text and the target recorded,
+// so tests and simulators see exactly what a phone shows.
+func SendPayButton(to, body, displayText, url string) Result {
+	token := os.Getenv("WHATSAPP_TOKEN")
+	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")
+	_ = os.MkdirAll(datadir.Dir(), 0o755)
+	record := outboxRecord{At: nowISO(), To: to, Body: body, Kind: "cta_url", Buttons: []string{displayText}, URL: url}
+
+	if token == "" || phoneID == "" {
+		dry := record
+		dry.DryRun = true
+		appendOutbox(dry)
+		fmt.Printf("[dry-run cta -> %s] %s (%s)\n", to, body, displayText)
+		return Result{DryRun: true}
+	}
+
+	return post(record, buildCTAPayload(to, body, displayText, url))
+}
+
+// buildCTAPayload shapes one tap-to-open button message the
+// way the Graph API's schema demands: the interactive type
+// is "cta_url" and the action carries the same name, with
+// the display text and the target as its parameters.
+func buildCTAPayload(to, body, displayText, url string) ctaPayload {
+	payload := ctaPayload{MessagingProduct: "whatsapp", To: to, Type: "interactive"}
+	payload.Interactive.Type = "cta_url"
+	payload.Interactive.Body.Text = body
+	payload.Interactive.Action.Name = "cta_url"
+	payload.Interactive.Action.Parameters.DisplayText = displayText
+	payload.Interactive.Action.Parameters.URL = url
 	return payload
 }
 

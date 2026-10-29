@@ -163,7 +163,6 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		Allowance:   merchant.DailyGiveawayAllowance,
 	})
 	sessions[sessionKey(shopID, from)] = &Session{Stage: "agreed", MerchantID: shopID, Product: p, AgreedPrice: price, PaymentURL: url, Location: s.Location}
-	linkPiece := "Pay here to complete your order: " + url
 	// The completion goes out in the two families. The total
 	// is a record: one message on the fixed paper, never split
 	// (see records.go). What happens with the goods is talk,
@@ -209,22 +208,25 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	// number. It is recorded against this order in the book, and
 	// she can quote it any time to have the order pulled up.
 	pieces = append(pieces, "Your order reference is "+reference+". Keep it: send it to me any time and I will pull up your order.")
-	pieces = append(pieces, linkPiece)
-	// The second door, offered beside the link: plenty of buyers
-	// will not tap a link from a number they just met, but they
-	// will send MoMo to the merchant's own number, the way they
-	// already buy every day. The offer is worded from the order's
-	// own payout phone, and is only made when the shop has one on
-	// record: a number is never invented. Choosing it, and what a
-	// screenshot can and cannot prove, lives in payment.go.
+	sendPieces(from, pieces...)
+	// The link itself arrives as a tap-to-pay button with
+	// the total on its face, not as a raw address in the chat.
+	sendPayButton(from, total, url)
+	// The second door, offered beside the button: plenty of
+	// buyers will not tap a link from a number they just met,
+	// but they will send MoMo to the merchant's own number,
+	// the way they already buy every day. The offer is worded
+	// from the order's own payout phone, and is only made
+	// when the shop has one on record: a number is never
+	// invented. Choosing it, and what a screenshot can and
+	// cannot prove, lives in payment.go.
 	if payout != "" {
 		shopName := ""
 		if merchant != nil {
 			shopName = merchant.Name
 		}
-		pieces = append(pieces, "Or send MoMo directly to "+shopName+"'s number, "+payout+", and send me the screenshot here.")
+		whatsapp.SendText(from, "Or send MoMo directly to "+shopName+"'s number, "+payout+", and send me the screenshot here.")
 	}
-	sendPieces(from, pieces...)
 	if merchantPhone != "" {
 		// The notice is the seller's receipt for the sale, and
 		// it is a record: one message on the fixed paper, the

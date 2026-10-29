@@ -6,6 +6,9 @@ package agent
 // and the seller's notice in its fixed order.
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -61,5 +64,41 @@ func TestSellerNoticeMatchesTheDemoOrder(t *testing.T) {
 			t.Fatalf("notice lines out of order or missing %q:\n%s", want, joined)
 		}
 		at = i
+	}
+}
+
+func TestCompletionSendsATapToPayButton(t *testing.T) {
+	dir, c := setupTwitterShops(t)
+	buyer := "233550009777"
+	agreeBagAtList(t, c, buyer)
+	c.say(t, buyer, "Delivery please, to Koforidua")
+	c.replies(t, buyer)
+	c.finishDetails(t, buyer)
+
+	data, err := os.ReadFile(filepath.Join(dir, "data", "outbox.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var rec outboxRecord
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			continue
+		}
+		if rec.To == buyer && rec.Kind == "cta_url" {
+			found = true
+			if len(rec.Buttons) != 1 || rec.Buttons[0] != "Click to pay GH₵875" {
+				t.Fatalf("pay button = %v, want the total on its face", rec.Buttons)
+			}
+			if rec.URL == "" || !strings.Contains(rec.Body, "Pay here to complete your order.") {
+				t.Fatalf("pay button record = %+v", rec)
+			}
+		}
+		if rec.To == buyer && strings.Contains(rec.Body, "pay.seevplus.com") && rec.Kind != "cta_url" {
+			t.Fatalf("a raw payment link still reaches the buyer as text: %q", rec.Body)
+		}
+	}
+	if !found {
+		t.Fatal("no tap-to-pay button was sent for the completed sale")
 	}
 }

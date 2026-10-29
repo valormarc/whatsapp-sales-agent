@@ -357,8 +357,9 @@ func verifyLinkPayment(from string, merchant *catalogue.Merchant, order *orders.
 	case checkout.IsFailedStatus(check.Status):
 		sendPieces(from,
 			"I have checked with the payment service, and that payment did not go through, so nothing was charged.",
-			"Your order "+order.Reference+" is still open. You can try again with the same link: "+orderPaymentURL(order),
+			"Your order "+order.Reference+" is still open. You can try again:",
 		)
+		sendPayButton(from, order.Charged(), orderPaymentURL(order))
 	default:
 		whatsapp.SendText(from, "I have checked with the payment service, and your payment has not come through yet. Your order "+order.Reference+" for the "+order.ProductName+" is still open. If the money has only just left your phone, give it a small moment and tell me again, and I will check again. If you sent it to the shop's MoMo number instead, say so and I will pass it to the shop to confirm.")
 	}
