@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/datadir"
+	"github.com/valormarc/hackathon-agent/internal/model"
+	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
@@ -32,6 +35,82 @@ import (
 // The gate runs inside the ordinary turn lock, ahead of the
 // step machines, which is what enforces it: a reply is only
 // ever composed after the intent has had its say.
+
+// The stage intents a pending sale can be met with, as the
+// thinking names them.
+const (
+	stageIntentAnswer  = "answer"
+	stageIntentPicture = "picture"
+	stageIntentCancel  = "cancel"
+	stageIntentConfirm = "confirm"
+	stageIntentAsk     = "question"
+	stageIntentChange  = "change"
+	stageIntentOther   = "other"
+)
+
+// stageIntentCharter briefs the thinking for one turn of a
+// pending sale. The judgement is the model's, made from the
+// whole situation (what was asked, what the sale is, what
+// she says), never from a word list in code: the same words
+// are an answer in one place and a call-off in another, and
+// only the meaning tells them apart. Code enforces the stop
+// list after the judgement: a picture or a cancellation is
+// served before the open question may read her words again.
+const stageIntentCharter = `You are the intent reader for a pending sale in a WhatsApp shop in Ghana. A price has been agreed and the agent has asked the buyer ONE open question (about how the goods reach her, the name for the package, a message for the seller, or a final confirm). Before the shop may treat her reply as an answer, you read what she actually means in this situation.
+
+Think from the whole context, never from isolated words. The same phrase can be an answer, an instruction for the order, or the end of the sale, depending on what was asked. Judge what she is trying to accomplish with this message.
+
+Answer with strict JSON only: {"intent": "..."}
+
+The intents:
+- "picture": she wants to SEE the product before she goes on: asking for a photo in any words, saying she will not buy or pay until she has seen it, asking what it looks like. This overrides the open question completely: she is not answering it.
+- "cancel": she is ending this pending purchase: calling it off, dropping the whole thing, changing her mind about buying. Judge by the situation: at the seller-message question, declining the optional message ("I don't want a message", "no note") is an ANSWER, not a cancel; a note telling the seller where to leave the goods ("leave it with the security man") is an ANSWER, not a cancel.
+- "confirm": only at the final confirm question: she agrees to the order as read back, or tells the agent to go ahead and send the payment link.
+- "answer": she is answering the open question, in whatever shape the answer naturally takes (a place, a name, a choice, a note, a plain no to an optional thing).
+- "question": she is asking something about the sale (the total, delivery, the product) and expects an answer before she goes on.
+- "change": only at the final confirm question: she wants something in the order corrected.
+- "other": none of these fits.`
+
+// thinkStageIntent asks the thinking what a buyer's reply
+// inside a pending sale means, against the open question
+// she was asked. It returns "" when no model can be read,
+// and the caller then keeps its older behaviour.
+func thinkStageIntent(from string, s *Session, merchant *catalogue.Merchant, msg string) string {
+	if s == nil || s.Product == nil || merchant == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("The shop is " + merchant.Name + ". The pending sale is the " + s.Product.Name + " at " + money.GHS(s.AgreedPrice) + ".\n")
+	b.WriteString("The open question she was just asked: \"" + fulfilPrompt(s) + "\"\n")
+	if s.FulfilStep == "confirm" {
+		f := s.PendingFulfil
+		b.WriteString("The order she is confirming: " + f.Mode + ", package name " + f.PackageName + ", note " + f.Note + ".\n")
+	}
+	b.WriteString("Her message: \"" + msg + "\"")
+	sys := stageIntentCharter
+	timeout := 10000
+	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, TimeoutMs: &timeout})
+	if out == nil {
+		return ""
+	}
+	text := *out
+	open := strings.Index(text, "{")
+	closeIdx := strings.LastIndex(text, "}")
+	if open == -1 || closeIdx <= open {
+		return ""
+	}
+	var raw struct {
+		Intent string `json:"intent"`
+	}
+	if err := json.Unmarshal([]byte(text[open:closeIdx+1]), &raw); err != nil {
+		return ""
+	}
+	switch raw.Intent {
+	case stageIntentAnswer, stageIntentPicture, stageIntentCancel, stageIntentConfirm, stageIntentAsk, stageIntentChange, stageIntentOther:
+		return raw.Intent
+	}
+	return ""
+}
 
 // picRequest is one buyer waiting on one product photo the
 // chat does not hold yet, keyed by shop.

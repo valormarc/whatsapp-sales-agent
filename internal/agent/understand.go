@@ -26,10 +26,13 @@ package agent
 // not the mind: they catch what the thinking declined and
 // everything on a day the model cannot be reached, and they
 // are byte for byte the behaviour the agent had before it
-// learned to think. Guided flows (a haggle the model already
-// leads, the fulfilment steps, an onboarding walk, a pending
-// close) own their turns and are never interrupted by this
-// step.
+// learned to think. Guided flows keep their own shapes (a
+// haggle the model already leads, an onboarding walk, a
+// pending close), and the fulfilment steps are read by
+// their own stage intent layer (intentgate.go) before a
+// step may treat a reply as its answer, so a picture ask or
+// a call-off inside a pending sale is judged by meaning
+// first, exactly as an open turn is here.
 
 import (
 	"encoding/json"
@@ -58,6 +61,7 @@ const (
 	intentPaymentWant    = "payment_want"    // she wants to pay now, or asks for the link
 	intentPaymentClaim   = "payment_claim"   // she says she has paid directly: a claim, never proof
 	intentItem           = "item"            // she is asking about a product on the shelf
+	intentPicture        = "picture"         // she wants to see the product before she goes on
 	intentOrderStatus    = "order_status"    // she is asking after an order she already made
 	intentOrderPayment   = "order_payment"   // the owner asks about the payment on an order
 	intentAskBuyer       = "ask_buyer"       // the owner tells the agent to ask her buyer
@@ -152,6 +156,7 @@ The acts you can name:
 - "payment_want": she wants to pay now, or asks for the payment link: "send me the payment link", "I want to pay now", "let me pay", asking for the link again without saying it is dead.
 - "payment_claim": she says she has paid, in her own words, whether or not she uses the word paid: "I just sent the money", "check your phone, I have done it", "I have made the payment". Whether she paid by the link or to the shop's number, this is the act: the platform then verifies a link payment with the payment service itself, and sends only a payment to the shop's own number to the merchant to confirm. Her word alone never settles anything.
 - "item": she is asking about, or wants, a product on the shelf. Put the product's name, as it appears in the facts, in "item".
+- "picture": she wants to SEE a product before she goes on: asking for its photo in any words, or saying she will not buy until she has seen it. Put the product's name in "item" when she names one; when she plainly means the one she was last looking at, leave "item" empty and the platform will use that one. A picture ask is never a generic question and never a buy: the picture is served first.
 - "order_status": she is asking after an order she already made: where it stands, whether it is paid, what happens next with it.
 - "order_payment": the shop owner is asking about the payment on an order: whether it has been paid, how it was paid (through the payment link or straight to her own MoMo number), what is happening with it. When a claim or an open order is in the facts and she asks about "the payment" or "this order" without naming another, that is the order she means.
 - "ask_buyer": the shop owner is telling you to ask her buyer something, or to find something out from the buyer: "ask the buyer", "ask her", "find out from her". You carry the question to the buyer yourself; never ask the owner what to ask when the facts show the open matter.
@@ -317,7 +322,7 @@ func parseUnderstood(out *string) *understood {
 	}
 	switch u.Intent {
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
-		intentItem, intentOrderStatus, intentOrderPayment, intentAskBuyer, intentShelf, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
+		intentItem, intentPicture, intentOrderStatus, intentOrderPayment, intentAskBuyer, intentShelf, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
 		return &u
 	}
 	return nil
@@ -378,6 +383,28 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 			s.Stage = "browsing"
 		}
 		sendPieces(from, "Still available.", p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Want to make an offer?"))
+		return true
+	case intentPicture:
+		// The picture is served before anything is sold:
+		// the product she named, or the one she was just
+		// looking at.
+		var p *catalogue.Product
+		if strings.TrimSpace(u.Item) != "" {
+			p = catalogue.FindProduct(shopID, strings.ToLower(u.Item))
+		}
+		if p == nil {
+			p = s.LastViewed
+		}
+		if p == nil {
+			return false
+		}
+		s.LastViewed = p
+		if sendProductPhotos(from, p) {
+			whatsapp.SendText(from, p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Make me an offer and let us see."))
+			return true
+		}
+		answerPictureAsk(from, merchant, p)
+		whatsapp.SendText(from, "It is this: "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Make me an offer and let us see."))
 		return true
 	case intentPaymentClaim:
 		order := orders.Default.NewestUnpaidFor(shopID, from)

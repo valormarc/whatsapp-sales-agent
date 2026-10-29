@@ -1,11 +1,59 @@
 package agent
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 )
+
+// stubStageModel stands in for the thinking the way the
+// live model is briefed: it reads the stage charter's
+// request and answers with the intent the words MEAN. The
+// phrases the tests use are chosen to carry no trigger
+// words at all, so a pass can only come from the meaning
+// being read, never from a pattern in the code.
+func stubStageModel(t *testing.T) {
+	t.Helper()
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		system, her := "", ""
+		for _, m := range body.Messages {
+			if m.Role == "system" {
+				system = m.Content
+			}
+			if i := strings.LastIndex(m.Content, "Her message:"); i >= 0 {
+				her = strings.ToLower(m.Content[i:])
+			}
+		}
+		content := `{"intent":"unclear","reply":""}`
+		if strings.Contains(system, "intent reader for a pending sale") {
+			content = `{"intent":"answer"}`
+			switch {
+			case strings.Contains(her, "see what it looks like"), strings.Contains(her, "not buying without pic"), strings.Contains(her, "show me pic"):
+				content = `{"intent":"picture"}`
+			case strings.Contains(her, "forget it"), strings.Contains(her, "drop the whole thing"):
+				content = `{"intent":"cancel"}`
+			}
+		}
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []any{map[string]any{"message": map[string]any{"content": content}}},
+		})
+	}))
+	t.Cleanup(stub.Close)
+	t.Setenv("META_MODEL_API_KEY", "stub-key")
+	t.Setenv("META_MODEL_API_BASE", stub.URL+"/v1")
+}
 
 // The intent gate: a picture ask is served as a picture ask
 // wherever it lands, a call-off ends the sale wherever it
@@ -17,6 +65,7 @@ import (
 
 func TestPictureAskAtTheChoiceStepServesThePicNotTheSale(t *testing.T) {
 	_, c := setupTwitterShops(t)
+	stubStageModel(t)
 	buyer := "233550009101"
 	agreeBagAtList(t, c, buyer)
 
@@ -44,6 +93,7 @@ func TestPictureAskAtTheChoiceStepServesThePicNotTheSale(t *testing.T) {
 
 func TestPictureAskAtThePackageQuestionIsNotTheName(t *testing.T) {
 	_, c := setupTwitterShops(t)
+	stubStageModel(t)
 	buyer := "233550009102"
 	agreeBagAtList(t, c, buyer)
 	tap(t, buyer, "ff_self")
@@ -67,6 +117,7 @@ func TestPictureAskAtThePackageQuestionIsNotTheName(t *testing.T) {
 
 func TestForgetItAtTheNoteStepCancelsAndANoteIsNotACancel(t *testing.T) {
 	dir, c := setupTwitterShops(t)
+	stubStageModel(t)
 
 	buyer := "233550009103"
 	agreeBagAtList(t, c, buyer)
@@ -95,6 +146,7 @@ func TestForgetItAtTheNoteStepCancelsAndANoteIsNotACancel(t *testing.T) {
 func TestDiscoveryPictureAskBindsServesAndTheOwnerAnswers(t *testing.T) {
 	stubPhotoMedia(t)
 	dir, c := setupTwitterShops(t)
+	stubDiscoveryModel(t)
 	buyer := "233550009105"
 
 	c.say(t, buyer, "I'm looking for a bag")
@@ -157,5 +209,39 @@ func TestEntryEchoSelectsTheProductItDoesNotDeal(t *testing.T) {
 	}
 	if strings.Contains(got, "Deal.") || strings.Contains(got, "Where are you based?") || strings.Contains(got, "What name should go on the package?") {
 		t.Fatalf("the echoed line must not close a deal: %q", got)
+	}
+}
+
+// The meaning proof: neither phrase below carries a word
+// any pattern could catch (no pic, photo or picture; no
+// cancel or forget), so only a reader of meaning can route
+// them: the first to the picture, the second to the end of
+// the sale.
+func TestStageIntentReadsMeaningNotWords(t *testing.T) {
+	dir, c := setupTwitterShops(t)
+	stubStageModel(t)
+
+	buyer := "233550009107"
+	agreeBagAtList(t, c, buyer)
+	c.say(t, buyer, "Before I pay I need to see what it looks like")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "I don't have the pic of the Handmade Beaded Bag") {
+		t.Fatalf("a meaning-only picture ask at the choice step = %q", got)
+	}
+	if !strings.Contains(got, "how do you want to get it") {
+		t.Fatalf("the open question should be held up again after the picture: %q", got)
+	}
+	c.replies(t, ownerEfua)
+
+	buyer2 := "233550009108"
+	agreeBagAtList(t, c, buyer2)
+	tap(t, buyer2, "ff_self")
+	c.say(t, buyer2, "Akosua Mensah")
+	c.say(t, buyer2, "Actually, drop the whole thing")
+	if got := c.last(t, buyer2); !strings.Contains(got, "Okay, cancelled") {
+		t.Fatalf("a meaning-only call-off at the note step = %q, want the sale cancelled", got)
+	}
+	if got := ordersCount(t, dir); got != 0 {
+		t.Fatalf("orders after the call-off = %d, want none", got)
 	}
 }

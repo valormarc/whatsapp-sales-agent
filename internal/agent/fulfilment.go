@@ -235,12 +235,17 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 	p := s.Product
 	fee := deliveryFeeOf(merchant)
 
-	// The intent gate runs before any step reads her words: a
-	// picture ask is served as a picture ask and the open
-	// question is asked again, so her ask is never taken as a
-	// name, a place or a note, and the sale does not advance
+	// The intent layer runs before any step reads her words:
+	// the thinking reads what she means against the open
+	// question, and two meanings outrank the question itself.
+	// A picture intent is served as a picture ask and the
+	// question is asked again; a cancel ends the sale. Her
+	// words are never taken as a name, a place or a note when
+	// she meant something else, and the sale does not advance
 	// while she waits to see the goods.
-	if picRe.MatchString(lower) {
+	stageIntent := thinkStageIntent(from, s, merchant, msg)
+	switch stageIntent {
+	case stageIntentPicture:
 		whole := p
 		if s.Qty > 0 {
 			whole = wholeProductOf(shopID, p)
@@ -248,6 +253,17 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		answerPictureAsk(from, merchant, whole)
 		reaskFulfilStep(from, s)
 		return
+	case stageIntentCancel:
+		dropPendingSale(from, s)
+		return
+	case stageIntentConfirm:
+		if s.FulfilStep == "confirm" {
+			f := s.PendingFulfil
+			s.PendingFulfil = fulfilment{}
+			sessions[key] = s
+			completeSale(from, s, s.AgreedPrice, f)
+			return
+		}
 	}
 
 	// The package details are collected in words, never buttons,
@@ -256,11 +272,13 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 	// gate" is a note, not a new choice), so the choice readings
 	// below must never see them.
 	if s.FulfilStep == "pkgname" || s.FulfilStep == "pkgmessage" || s.FulfilStep == "confirm" {
-		handlePackageDetails(from, s, msg, lower)
+		handlePackageDetails(from, s, msg, lower, stageIntent)
 		return
 	}
 
-	if fulfilCancelRe.MatchString(lower) {
+	// The thinking has already ruled on a call-off for this
+	// turn; the older word net only speaks when it could not.
+	if stageIntent == "" && fulfilCancelRe.MatchString(lower) {
 		dropPendingSale(from, s)
 		return
 	}
@@ -446,11 +464,11 @@ func askPackageMessage(from string, s *Session) {
 // don't want a message" must decline the note, not kill the sale.
 var detailsCancelRe = regexp.MustCompile(`^(cancel|cancel it|forget it|drop it|drop the sale|leave it|leave the sale)[.!]?$`)
 
-// saleCancelRe is the same call-off wearing its natural
-// lead-ins ("What? Just forget it"): still the whole
-// message, so a note that merely carries the words onward
-// ("leave it at the gate") is never read as one.
-var saleCancelRe = regexp.MustCompile(`^(what[?!. ]*)?(oh[,. ]*)?(just )?(cancel|cancel it|forget it|drop it|drop the sale|leave it|leave the sale|i don'?t want it|do not want it)[.!]?$`)
+// A call-off wearing natural lead-ins ("What? Just forget
+// it") is the intent layer's judgement to make, from the
+// meaning; no word pattern here tries to read it, because a
+// note carrying the same words onward ("leave it at the
+// gate") must survive.
 
 // handlePackageDetails reads the two details answers. A name is
 // cleaned conservatively; anything that is not name-shaped is
@@ -459,9 +477,12 @@ var saleCancelRe = regexp.MustCompile(`^(what[?!. ]*)?(oh[,. ]*)?(just )?(cancel
 // no (in its ordinary shapes) means no message, and everything
 // else is her note, carried onto the order and into the
 // merchant's notice word for word.
-func handlePackageDetails(from string, s *Session, msg, lower string) {
+func handlePackageDetails(from string, s *Session, msg, lower, stageIntent string) {
 	key := sessionKey(s.MerchantID, from)
-	if detailsCancelRe.MatchString(lower) || saleCancelRe.MatchString(lower) {
+	// The intent layer has already ruled on this turn when
+	// it could be read; the narrow word net below only
+	// speaks for the bare forms on a day it could not.
+	if stageIntent == "" && detailsCancelRe.MatchString(lower) {
 		dropPendingSale(from, s)
 		return
 	}
