@@ -29,6 +29,13 @@ var numbersRe = regexp.MustCompile(`(\d+(?:\.\d+)?)`)
 func parseOffer(text string) *float64 {
 	stripped := strings.ReplaceAll(text, ",", "")
 	spans := quantityNumberSpans(stripped)
+	// An order reference is a name, not money: the serial
+	// inside EFUA-0001 is never an offer of 1, and a message
+	// quoting her reference is about that order, so its
+	// figures are excluded from offer reading altogether.
+	for _, idx := range orderRefRe.FindAllStringSubmatchIndex(stripped, -1) {
+		spans = append(spans, [2]int{idx[0], idx[1]})
+	}
 	for _, m := range offerRe.FindAllStringSubmatchIndex(stripped, -1) {
 		inside := false
 		for _, sp := range spans {

@@ -46,7 +46,7 @@ func handleOrderCheck(from string, merchant *catalogue.Merchant, msg, lower stri
 		// She names her order and asks for its link in the same
 		// breath: that is a payment request, not a status check,
 		// so the check steps aside and the thinking serves it.
-		if o.Status == "pending" && linkRe.MatchString(lower) {
+		if o.Unpaid() && linkRe.MatchString(lower) {
 			return false
 		}
 		sendPieces(from, orderReadback(merchant, o)...)

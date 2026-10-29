@@ -107,7 +107,7 @@ func merchantAskBuyer(from string, merchant *catalogue.Merchant, shopID string, 
 	}
 	buyer := order.From
 	question := ""
-	if order.ClaimStatus == "open" || order.Status == "pending" {
+	if order.ClaimStatus == "open" || order.Unpaid() {
 		question = "Hello, I am helping " + merchant.Name + " with this chat. The shop is checking on your payment for the " + order.ProductName + " (order " + order.Reference + "): did you pay through the payment link that was sent to you, or straight to the shop's MoMo number?"
 	} else if strings.TrimSpace(u.Reply) != "" && voiceClean(u.Reply) && figuresClean(u.Reply, order.Charged(), order.Price) {
 		question = u.Reply

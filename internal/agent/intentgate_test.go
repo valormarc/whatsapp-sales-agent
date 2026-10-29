@@ -44,6 +44,14 @@ func stubStageModel(t *testing.T) {
 			}
 		}
 		content := `{"intent":"unclear","reply":""}`
+		if strings.Contains(system, "You are the thinking of a WhatsApp sales agent") {
+			switch {
+			case strings.Contains(her, "new payment link"):
+				content = `{"intent":"payment_expired","reply":""}`
+			case strings.Contains(her, "i want to pay now"):
+				content = `{"intent":"payment_want","reply":""}`
+			}
+		}
 		if strings.Contains(system, "intent reader for a seller") {
 			content = `{"intent":"answer"}`
 			her := ""
@@ -501,5 +509,50 @@ func TestLinkCreationSurvivesAnIdempotencyCollision(t *testing.T) {
 	}
 	if o.Status != "pending" || o.LinkAttempts != 2 || providerRef != "PAY-EFUA-0001" {
 		t.Fatalf("the order should point at the session the fresh key opened: %+v", o)
+	}
+}
+
+// A link_failed order is still an unpaid order, and every
+// path that serves the buyer about paying must see it:
+// asking for a new link by reference steps the status
+// check aside and mints one, and asking to pay now finds
+// the order and mints what was never sent.
+func TestLinkFailedOrderCanStillBePaid(t *testing.T) {
+	_, c := setupTwitterShops(t)
+	fake := &fakeSeev{}
+	startFakeSeev(t, fake)
+	stubStageModel(t)
+	seedFailed := func(ref, buyer string) {
+		orders.Default.RecordOrder(ref, orders.Order{
+			Reference: ref, Status: "link_failed", From: buyer,
+			ProductName: "Handmade Beaded Bag", Price: 850, Total: 875,
+			MerchantID: "efua", LinkAttempts: 1,
+		})
+	}
+
+	buyer := "233550009131"
+	seedFailed("EFUA-0001", buyer)
+	c.say(t, buyer, "SHOP-EFUA")
+	c.replies(t, buyer)
+	c.say(t, buyer, "New payment link for order EFUA-0001")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "Pay here to complete your order: https://pay.seevplus.com/PAY-test") {
+		t.Fatalf("a new-link ask on a link_failed order should mint the link, got %q", got)
+	}
+	if strings.Contains(got, "It is not paid yet") {
+		t.Fatalf("the status readback must not answer a link ask, got %q", got)
+	}
+	if o := orders.Default.GetOrder("EFUA-0001"); o == nil || o.Status != "pending" || o.ProviderRef == nil || *o.ProviderRef != "PAY-EFUA-0001-2" {
+		t.Fatalf("the order should stand pending on the minted session: %+v", o)
+	}
+
+	buyer2 := "233550009132"
+	seedFailed("EFUA-0002", buyer2)
+	c.say(t, buyer2, "SHOP-EFUA")
+	c.replies(t, buyer2)
+	c.say(t, buyer2, "I want to pay now")
+	got = strings.Join(c.replies(t, buyer2), "\n")
+	if !strings.Contains(got, "Pay here to complete your order: https://pay.seevplus.com/PAY-test") {
+		t.Fatalf("asking to pay on a link_failed order should mint the link it never had, got %q", got)
 	}
 }

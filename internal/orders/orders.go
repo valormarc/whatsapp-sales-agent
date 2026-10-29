@@ -58,6 +58,17 @@ import (
 // she sent (the order total when she named nothing); ClaimMismatch
 // flags that it differs from the total she owed. ScreenshotRef is
 // the inbound media reference of her screenshot, when one came.
+// Unpaid reports whether the order is still open and
+// owing: a live checkout is waiting on her (pending), or
+// its link never came up (link_failed) and she still has
+// no way to pay it. Both are the same fact to the buyer —
+// the money has not moved and the order is hers to pay —
+// and every path that serves her about paying keys on
+// this, never on one status word alone.
+func (o *Order) Unpaid() bool {
+	return o.Status == "pending" || o.Status == "link_failed"
+}
+
 type Order struct {
 	Reference   string  `json:"reference"`
 	Status      string  `json:"status"`
@@ -309,7 +320,7 @@ func (b *Book) NewestFor(merchantID, buyer string) *Order {
 func (b *Book) NewestUnpaidFor(merchantID, buyer string) *Order {
 	var best *Order
 	for _, o := range b.loadAll() {
-		if o.MerchantID != merchantID || o.From != buyer || o.Status != "pending" {
+		if o.MerchantID != merchantID || o.From != buyer || !o.Unpaid() {
 			continue
 		}
 		oo := o

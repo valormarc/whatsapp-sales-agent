@@ -306,7 +306,7 @@ func focusOrder(shopID string) *orders.Order {
 		if newestAny == nil || oo.Reference > newestAny.Reference {
 			newestAny = &oo
 		}
-		if oo.Status == "pending" && (newestOpen == nil || oo.Reference > newestOpen.Reference) {
+		if oo.Unpaid() && (newestOpen == nil || oo.Reference > newestOpen.Reference) {
 			newestOpen = &oo
 		}
 	}
@@ -554,6 +554,11 @@ func reissueLink(from string, s *Session, merchant *catalogue.Merchant, order *o
 	orders.Default.Update(order.Reference, func(o *orders.Order) {
 		o.ProviderRef = newRef
 		o.LinkAttempts = attempts + 1
+		// A live session exists again: an order whose link
+		// never came up goes back to plain pending, the
+		// state every reader expects of an order with a
+		// working link.
+		o.Status = "pending"
 	})
 	if s != nil {
 		s.PaymentURL = *link.URL
