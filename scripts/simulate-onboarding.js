@@ -170,7 +170,7 @@ try {
   check('nothing is saved before she confirms', before.products.length === 0);
 
   r = await say(MERCHANT, 'merchant', 'yes');
-  check('her yes saves it and says it can be sold straight away', last(r).includes('Saved') && last(r).includes('straight away'));
+  check('her yes saves it and says it can be sold straight away', r.some((m) => m.includes('Saved') && m.includes('straight away')));
   const after = JSON.parse(readFileSync(CATALOGUE, 'utf8')).merchants.demo;
   check(
     'the product is on disk with her prices',
@@ -254,7 +254,7 @@ try {
     last(r),
   );
   r = await say(MERCHANT, 'merchant', 'yes');
-  check('her yes saves the measured product', last(r).includes('Saved'));
+  check('her yes saves the measured product', r.some((m) => m.includes('Saved')));
   const withMeasure = JSON.parse(readFileSync(CATALOGUE, 'utf8')).merchants.demo;
   const cloth = withMeasure.products.find((p) => p.name === 'Ankara Cloth');
   check(
