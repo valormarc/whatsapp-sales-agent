@@ -10,6 +10,9 @@
 //   - leg 2: the open listing saves on her answers, and the
 //     batch is presented in the same turn — both items,
 //     at GH₵80, with their sizes;
+//   - leg 2b: a sentence that merely contains a number
+//     ("I have 2 pairs in stock") saves nothing and leaves
+//     the batch waiting;
 //   - leg 3: one reply, "all 75", prices and saves the
 //     batch;
 //   - audit: the safety invariants — every sent photo is
@@ -128,35 +131,58 @@ async function main() {
     check("the other two are kept for the batch, acknowledged once", keptLines.length >= 1 && keptLines.length <= 2, keptText.slice(0, 200));
     check("nothing was merged onto the open listing or saved yet", !/Saved|Added/.test(keptText), keptText.slice(0, 120));
 
-    console.log("== leg 2: the open listing saves; the batch is presented whole ==");
+    console.log("== leg 2: every kept item completes, through whichever door it took ==");
+    // Kept items complete through different doors depending
+    // on their reads: a fully read item waits in the batch
+    // for its presentation, an incompletely read one is
+    // held and opens as its own listing, asking its own
+    // last price. Drive whichever door is open: answer a
+    // listing's own last-price question with 75; when the
+    // batch presentation is the open question, probe it
+    // with a numbered sentence (leg 2b) and then price it
+    // with one reply (leg 3).
+    const onDisk = () => JSON.parse(fs.readFileSync(path.join(dir, "catalogue.json"), "utf8")).merchants.burst.products || [];
+    let probed = false;
     await say("75");
-    let dialogue = "";
-    for (let i = 0; i < 5; i++) {
-      const got = await fresh(90000);
-      dialogue += got.map((r) => r.body || "").join("\n") + "\n";
-      if (/kept 2 more items/i.test(dialogue)) break;
-      if (/by measure/i.test(dialogue) && !/Saved ✅/.test(dialogue)) { await say("whole"); }
+    for (let round = 0; round < 14 && onDisk().length < 3; round++) {
+      const got = await fresh(45000);
+      const text = got.map((r) => r.body || "").join("\n");
+      if (/kept [0-9]+ more item/i.test(text)) {
+        check("the batch is presented with its kept items", true);
+        check("the presented items carry the captioned price", (text.match(/GH₵80/g) || []).length >= 1, text.slice(0, 300));
+        check("the presented items carry their sizes", /37/.test(text) && /41/.test(text), text.slice(0, 300));
+        if (!probed) {
+          probed = true;
+          console.log("== leg 2b: a numbered sentence is not the batch's price answer ==");
+          const before = onDisk().length;
+          await say("I have 2 pairs in stock");
+          let strayText = "";
+          for (let i = 0; i < 3; i++) {
+            const stray = await fresh(15000);
+            strayText += stray.map((r) => r.body || "").join("\n") + "\n";
+            if (/Added ✅/.test(strayText)) break;
+          }
+          check("the numbered sentence saved nothing at the batch door", !/Added ✅/.test(strayText) && onDisk().length === before, strayText.slice(0, 200));
+          console.log("== leg 3: one reply prices and saves the whole batch ==");
+          await say("all 75");
+          const saved = await waitFor((t) => (t.match(/Added ✅/g) || []).length >= 1);
+          const savedText = saved.map((r) => r.body || "").join("\n");
+          check("the batched items were added on the one reply", (savedText.match(/Added ✅/g) || []).length >= 1, savedText.slice(0, 200));
+        }
+        continue;
+      }
+      if (/What is your last price/i.test(text)) { await say("75"); continue; }
+      if (/by measure/i.test(text)) { await say("whole"); continue; }
     }
-    check("the open listing saved", /Saved ✅/.test(dialogue), dialogue.slice(0, 200));
-    check("the batch is presented with both items", /kept 2 more items/i.test(dialogue), dialogue.slice(0, 200));
-    check("the presented items carry the captioned price", (dialogue.match(/GH₵80/g) || []).length >= 2, dialogue.slice(0, 300));
-    check("the presented items carry their sizes", /37/.test(dialogue) && /41/.test(dialogue), dialogue.slice(0, 300));
-
-    console.log("== leg 3: one reply prices and saves the whole batch ==");
-    await say("all 75");
-    // How many items the batch held depends on the model's
-    // identity judgements in leg 1 (a photo it reads as the
-    // open listing's own product joins that listing instead);
-    // what must hold is that whatever was batched is saved by
-    // this one reply.
-    const saved = await waitFor((t) => (t.match(/Added ✅/g) || []).length >= 1);
-    const savedText = saved.map((r) => r.body || "").join("\n");
-    check("the batched items were added on the one reply", (savedText.match(/Added ✅/g) || []).length >= 1, savedText.slice(0, 200));
+    if (!probed) {
+      console.log("  NOTE the batch door was not exercised this run: every kept item took the held door.");
+    }
+    check("all three products completed", onDisk().length >= 3, JSON.stringify(onDisk().map((p) => p.name)));
 
     console.log("== audit: the catalogue ==");
     await sleep(2000);
-    const onDisk = JSON.parse(fs.readFileSync(path.join(dir, "catalogue.json"), "utf8"));
-    const products = onDisk.merchants.burst.products;
+    const finalCat = JSON.parse(fs.readFileSync(path.join(dir, "catalogue.json"), "utf8"));
+    const products = finalCat.merchants.burst.products;
     console.log("  products landed:", JSON.stringify(products.map((p) => p.name)));
     // The safety invariants: no photo lost, none held by two
     // products, and no price or size carried across items.

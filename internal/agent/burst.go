@@ -1,8 +1,10 @@
 package agent
 
 import (
+	"regexp"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/money"
@@ -51,7 +53,17 @@ type burstItem struct {
 // it exactly as an angle joins an open listing.
 func addToBurst(s *Session, draft throwDraft, imageID, caption, colour string) {
 	for i := range s.BurstBatch {
-		if sameProductName(s.BurstBatch[i].Name, draft.Name) {
+		// A photo folds into a kept item only when the name
+		// matches AND the priced facts are compatible: two
+		// products can share a name ("Metal Rack") at
+		// different prices, and folding those together would
+		// silently keep the first price and lose the second
+		// product. A conflicting price makes it a separate
+		// item of the batch, even under an alike name — the
+		// same compatibility rule the held-photo path uses.
+		priceCompatible := draft.ListPrice <= 0 || s.BurstBatch[i].ListPrice <= 0 ||
+			draft.ListPrice == s.BurstBatch[i].ListPrice
+		if sameProductName(s.BurstBatch[i].Name, draft.Name) && priceCompatible {
 			refs := append([]string{}, s.BurstBatch[i].PhotoRefs...)
 			probe := &OnboardingFlow{PhotoRefs: refs}
 			if collectFlowPhoto(probe, imageID) {
@@ -336,6 +348,32 @@ func allFigures(text string) []float64 {
 // message was the batch's answer at all: a message with no
 // figures in it is hers to spend elsewhere, and the batch
 // simply keeps waiting.
+
+// burstFigureScrub matches a figure as allFigures reads
+// one, so the shape test below sees the same numbers the
+// answer parser would claim.
+var burstFigureScrub = regexp.MustCompile(`[0-9][0-9,]*(\.[0-9]+)?`)
+
+// burstAnswerShape reports whether a message is shaped
+// like a price answer: once its figures are removed, only
+// list punctuation, currency words ("gh", "ghc", "cedis")
+// and the scope words the batch question offers ("all",
+// "each", "fixed") may remain. Any other word makes the
+// message a sentence, not an answer.
+func burstAnswerShape(text string) bool {
+	residue := burstFigureScrub.ReplaceAllString(strings.ToLower(text), " ")
+	for _, w := range strings.FieldsFunc(residue, func(r rune) bool {
+		return !unicode.IsLetter(r)
+	}) {
+		switch w {
+		case "gh", "ghc", "cedis", "all", "each", "fixed":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 func handleBurstAnswer(from string, s *Session, text, lower string) bool {
 	if controlWord(lower) == "cancel" {
 		s.BurstBatch = nil
@@ -346,6 +384,20 @@ func handleBurstAnswer(from string, s *Session, text, lower string) bool {
 	figures := allFigures(text)
 	fixedAll := len(figures) == 0 && burstFixedPhrase(lower)
 	if len(figures) == 0 && !fixedAll {
+		return false
+	}
+	// A batch answer must have the shape of one: figures and
+	// nothing beyond list punctuation, currency words and
+	// the scope words the question itself offers ("all",
+	// "each"). A sentence that merely contains a number —
+	// "I have 2 racks in stock" — is not a price answer, and
+	// reading its number as a last price would save a
+	// product at a stray figure. Such a message is not
+	// claimed here at all: it falls through to the ordinary
+	// merchant read, and the batch stays waiting. A falsely
+	// refused answer costs her one more message; a falsely
+	// accepted one costs a wrongly priced product.
+	if len(figures) > 0 && !burstAnswerShape(text) {
 		return false
 	}
 	type assignment struct {

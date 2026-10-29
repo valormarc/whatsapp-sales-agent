@@ -232,6 +232,16 @@ type ListingDraft struct {
 	// earns a question.
 	Unit        string
 	UnitCertain bool
+	// SameAsOpen is the model's identity judgement when the
+	// photo was read against a listing the seller already
+	// has open: "same" when this photo shows that very
+	// product, "different" when it shows another product,
+	// "unsure" when it cannot tell, and empty when no
+	// listing was open or no judgement was made. Whether
+	// two photos show the same goods is a judgement of
+	// meaning and belongs to the model; code only routes
+	// on the verdict, never re-judges it from word overlap.
+	SameAsOpen string
 	// Colour is the main colour of the goods in THIS photo,
 	// as a buyer would name it ("white", "rose gold"), or
 	// empty when no single colour dominates. It is the
@@ -390,6 +400,16 @@ func ChatVision(system, text, imageDataURI string) *string {
 // nil and the caller works from her words alone. Prices are never
 // asked for and never read from the reply.
 func DraftListing(imageDataURI, caption string) *ListingDraft {
+	return DraftListingAgainst(imageDataURI, caption, "", "")
+}
+
+// DraftListingAgainst is DraftListing with the seller's
+// already-open listing in view, when there is one: the
+// model drafts this photo's listing and judges whether the
+// photo shows that same product. The judgement rides in
+// the same single call, so a photo turn still costs one
+// model call.
+func DraftListingAgainst(imageDataURI, caption, openName, openDescription string) *ListingDraft {
 	system := "You help a market seller turn a photo of her goods into a shop listing. " +
 		"Reply with exactly one JSON object, no other text: {\"name\": \"...\", \"description\": \"...\", \"unit\": \"...\", \"unit_certain\": true, \"sizes\": [\"...\"], \"colour\": \"...\"}. " +
 		"\"colour\" is the main colour of the goods in this one photo, as a buyer would name it (white, black, rose gold); give an empty string when no single colour dominates, as with a multicoloured print. " +
@@ -399,6 +419,15 @@ func DraftListing(imageDataURI, caption string) *ListingDraft {
 		"The unit is the word the seller herself would use for how one sale is measured: piece for clothes, shoes and bags, yard for fabric, bottle for creams and oils, and so on, judged from the goods in front of you. " +
 		"unit_certain is false only when how the goods are sold genuinely cannot be told from the photo, as with some loose foodstuffs. " +
 		"Never mention a price. Never invent a detail you cannot see."
+	if openName != "" {
+		system += " The seller already has a listing open for \"" + openName + "\""
+		if strings.TrimSpace(openDescription) != "" {
+			system += " (" + strings.TrimSpace(openDescription) + ")"
+		}
+		system += ". Add \"same_as_open\" to the JSON: \"same\" when this photo shows that very same product — the same goods a buyer would receive, including the same design in another colour — " +
+			"\"different\" when it shows another product, and \"unsure\" when you cannot tell. Judge by construction, not by kind: compare how the goods are made — the shape, the arrangement of straps or parts, closures and hardware, pattern and material. " +
+			"\"same\" only when this photo could be another angle, or another colour, of the very item in the open listing. If any visible part of the construction differs — a thong post where the other has a T-bar, studs where the other is plain, a different print — it is \"different\", even when the kind, the price and most of the look agree."
+	}
 	text := "Draft the listing for the product in this photo."
 	if strings.TrimSpace(caption) != "" {
 		text = "The seller sent this photo with her own words: \"" + strings.TrimSpace(caption) + "\". " +
@@ -421,6 +450,7 @@ func DraftListing(imageDataURI, caption string) *ListingDraft {
 		UnitCertain *bool    `json:"unit_certain"`
 		Sizes       []string `json:"sizes"`
 		Colour      string   `json:"colour"`
+		SameAsOpen  string   `json:"same_as_open"`
 	}
 	if err := json.Unmarshal([]byte(s[open:closeIdx+1]), &raw); err != nil {
 		return nil
@@ -431,6 +461,10 @@ func DraftListing(imageDataURI, caption string) *ListingDraft {
 		Unit:        strings.ToLower(strings.TrimSpace(raw.Unit)),
 		Sizes:       cleanSizes(raw.Sizes),
 		Colour:      strings.ToLower(strings.TrimSpace(raw.Colour)),
+	}
+	switch strings.ToLower(strings.TrimSpace(raw.SameAsOpen)) {
+	case "same", "different", "unsure":
+		d.SameAsOpen = strings.ToLower(strings.TrimSpace(raw.SameAsOpen))
 	}
 	if raw.UnitCertain != nil {
 		d.UnitCertain = *raw.UnitCertain

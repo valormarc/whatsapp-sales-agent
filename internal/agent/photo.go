@@ -40,6 +40,7 @@ package agent
 // confirms the summary with a clear yes.
 
 import (
+	"encoding/base64"
 	"regexp"
 	"strconv"
 	"strings"
@@ -325,6 +326,14 @@ func throwReadBack(flow *OnboardingFlow) string {
 // flow exactly as in merchant mode. Fields the throw-in already
 // answered are merged over anything an earlier in-progress flow
 // had collected, so sending a photo mid-walk loses nothing.
+// draftListingFn is the photo read: one model call that
+// drafts a listing from a photo and, when a listing is
+// already open, judges whether this photo shows that same
+// product (see model.DraftListingAgainst). A package
+// variable so tests can stand the model in, in the same
+// pattern as the media seams.
+var draftListingFn = model.DraftListingAgainst
+
 func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, caption string) {
 	// A buyer is waiting on a picture from this shop: the
 	// owner's next photo is that picture, not a new listing.
@@ -379,6 +388,13 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	// needs the picture, so it happens only in live mode; her
 	// words never wait on it.
 	var visionDesc string
+	// The model's identity verdict for this photo against
+	// the open listing, when a listing was open to judge
+	// against and the model judged: "same", "different" or
+	// "unsure"; empty when there was nothing to judge
+	// against or no model read. Routing below takes the
+	// verdict over word overlap wherever the two disagree.
+	var identityVerdict string
 	// This photo's own main colour, as read. It is recorded
 	// on whatever the photo turns out to belong to — the open
 	// listing when the photo joins it, the burst item when it
@@ -386,10 +402,16 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	// colour on the open listing would corrupt its colour
 	// rule at save.
 	var photoColour string
-	if dataURI, ok := whatsapp.DownloadMedia(imageID); ok {
-		if md := model.DraftListing(dataURI, caption); md != nil {
+	if data, mime, ok := downloadMediaBytesFn(imageID); ok {
+		dataURI := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+		openName, openDesc := "", ""
+		if s.Onboarding != nil && flow.PhotoOpened && flow.Name != "" {
+			openName, openDesc = flow.Name, flow.Description
+		}
+		if md := draftListingFn(dataURI, caption, openName, openDesc); md != nil {
 			visionDesc = md.Description
 			photoColour = md.Colour
+			identityVerdict = md.SameAsOpen
 			if draft.Name == "" {
 				draft.Name = md.Name
 			}
@@ -447,7 +469,8 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	// (no name, or no price) cannot be batched and still
 	// falls to the gate below.
 	if s.Onboarding != nil && flow.Photo && flow.Name != "" && draft.Name != "" &&
-		draft.ListPrice > 0 && !sameProductName(flow.Name, draft.Name) {
+		draft.ListPrice > 0 &&
+		(identityVerdict == "different" || (identityVerdict == "" && !sameProductName(flow.Name, draft.Name))) {
 		addToBurst(s, draft, imageID, caption, photoColour)
 		if photoAckCovered(flow.HeldAckAt) {
 			return
@@ -517,6 +540,16 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	// listing's own, still unsettled, and the fill below is
 	// what adopts it.
 	sameName := draft.Name == "" || (flow.Name != "" && sameProductName(draft.Name, flow.Name))
+	// The model's identity verdict, when it made one,
+	// outranks word overlap in both directions: a photo it
+	// judged a different product never collects on a name
+	// resemblance, and one it judged the same product is
+	// not kept apart by a longer or shorter name.
+	if identityVerdict == "different" {
+		sameName = false
+	} else if identityVerdict == "same" {
+		sameName = true
+	}
 	if s.Onboarding != nil && flow.Photo && sameName &&
 		(draft.Description == "" || draft.Description == flow.Description) &&
 		(draft.ListPrice <= 0 || draft.ListPrice == flow.ListPrice) &&
@@ -555,7 +588,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			flow.HeldAckAt = time.Now()
 			whatsapp.SendText(from, "Got it ✅ I have kept "+draft.Name+" to add with the others. "+photoStepReminder(flow))
 			return
-		case flow.Name == "" || !photoPositivelyMatches(flow, draft):
+		case flow.Name == "" || !photoPositivelyMatches(flow, draft, identityVerdict):
 			parkPendingPhoto(s, draft, imageID, caption, photoColour)
 			if photoAckCovered(flow.HeldAckAt) {
 				return
@@ -704,16 +737,24 @@ func sameProductName(a, b string) bool {
 
 // photoPositivelyMatches judges whether a new photo's read
 // positively identifies it as the open photo listing's own
-// goods: a real name match (see sameProductName), and no
-// conflict in the priced or measured facts. Absence of a
-// contradiction is not a match: a photo that cannot be
-// positively identified is never collected onto a listing
-// it may not belong to.
-func photoPositivelyMatches(flow *OnboardingFlow, draft throwDraft) bool {
-	if flow == nil || flow.Name == "" || draft.Name == "" {
+// goods, and no conflict in the priced or measured facts.
+// Absence of a contradiction is not a match: a photo that
+// cannot be positively identified is never collected onto a
+// listing it may not belong to. The model's identity
+// verdict, when it made one, is the identification: a
+// "different" verdict never matches, and a "same" verdict
+// matches on the model's reading of the two products,
+// without asking word overlap to re-judge it. With no
+// verdict, the name itself must match (see
+// sameProductName).
+func photoPositivelyMatches(flow *OnboardingFlow, draft throwDraft, verdict string) bool {
+	if flow == nil || flow.Name == "" {
 		return false
 	}
-	if !sameProductName(flow.Name, draft.Name) {
+	if verdict == "different" {
+		return false
+	}
+	if verdict != "same" && (draft.Name == "" || !sameProductName(flow.Name, draft.Name)) {
 		return false
 	}
 	if draft.ListPrice > 0 && flow.ListPrice > 0 && draft.ListPrice != flow.ListPrice {

@@ -160,3 +160,78 @@ func TestBurstBatchPartialAndOverListAnswers(t *testing.T) {
 		t.Fatalf("the burst should be finished, got batch=%v held=%v awaiting=%v", s.BurstBatch, s.BurstHeld, s.BurstAwaiting)
 	}
 }
+
+// Two products can share a name at different prices. A
+// later photo folds into a kept batch item only when its
+// price is compatible with that item's; a conflicting price
+// keeps it as a separate item with its own price and photo,
+// while a same-price angle of the first still folds in.
+func TestBurstAlikeNamesWithDifferentPricesStaySeparate(t *testing.T) {
+	stubPhotoMedia(t)
+	owner := "233550002801"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+
+	c.photo(t, owner, "Corner Rack\nSteel frame with 4 tiers\nGH₵270")
+	c.photo(t, owner, "Metal Rack\nWall mounted steel rack\nGH₵150")
+	c.photo(t, owner, "Metal Rack\nHeavy duty floor rack\nGH₵200")
+	s := sessions[sessionKey(MerchantID, owner)]
+	if s == nil || len(s.BurstBatch) != 2 {
+		t.Fatalf("the two differently priced racks should be separate batch items, got %+v", s)
+	}
+	if s.BurstBatch[0].ListPrice != 150 || s.BurstBatch[1].ListPrice != 200 {
+		t.Fatalf("each item should keep its own price, got %+v", s.BurstBatch)
+	}
+	if len(s.BurstBatch[0].PhotoRefs) != 1 || len(s.BurstBatch[1].PhotoRefs) != 1 {
+		t.Fatalf("each item should hold only its own photo, got %+v", s.BurstBatch)
+	}
+
+	c.photo(t, owner, "Metal Rack\nWall mounted steel rack\nGH₵150")
+	s = sessions[sessionKey(MerchantID, owner)]
+	if len(s.BurstBatch) != 2 || len(s.BurstBatch[0].PhotoRefs) != 2 {
+		t.Fatalf("a same-price angle should fold into its own item only, got %+v", s.BurstBatch)
+	}
+}
+
+// While a batch waits for its last prices, a sentence that
+// merely contains a number is not its answer: "I have 2
+// dinner sets in stock" must not price or save anything.
+// The batch keeps waiting, and a clean figure still prices
+// it afterwards.
+func TestBurstNumberedSentenceIsNotAPriceAnswer(t *testing.T) {
+	stubPhotoMedia(t)
+	owner := "233550002802"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+
+	c.photo(t, owner, "Corner Rack\nSteel frame with 4 tiers\nGH₵270")
+	c.photo(t, owner, "Dinner Set\n16 pieces for the family\nGH₵180")
+	c.replies(t, owner)
+	c.say(t, owner, "250")
+	c.replies(t, owner)
+	c.say(t, owner, "whole")
+	joined := strings.Join(c.replies(t, owner), "\n")
+	if !strings.Contains(joined, "last price for each") {
+		t.Fatalf("the batch should be presented, got %q", joined)
+	}
+
+	c.say(t, owner, "I have 2 dinner sets in stock")
+	c.replies(t, owner)
+	if catalogue.FindByName(MerchantID, "Dinner Set") != nil {
+		t.Fatal("the numbered sentence must not save the batch item")
+	}
+	s := sessions[sessionKey(MerchantID, owner)]
+	if s == nil || !s.BurstAwaiting || len(s.BurstBatch) != 1 {
+		t.Fatalf("the batch should still be waiting, got %+v", s)
+	}
+
+	c.say(t, owner, "170")
+	joined = strings.Join(c.replies(t, owner), "\n")
+	p := catalogue.FindByName(MerchantID, "Dinner Set")
+	if p == nil || p.ListPrice != 180 || p.FloorPrice != 170 {
+		t.Fatalf("the clean answer should save the item at 180/170, got %+v", p)
+	}
+	if !strings.Contains(joined, "Added") {
+		t.Fatalf("the save should be announced, got %q", joined)
+	}
+}

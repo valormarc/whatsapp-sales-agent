@@ -234,10 +234,12 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 		return
 	}
 
-	// A presented burst batch is waiting on its prices: her
-	// figures belong to it before anything else reads them
-	// (see burst.go). A message with no figures in it is not
-	// its answer and falls through untouched.
+	// A presented burst batch is waiting on its prices: a
+	// reply shaped like its answer belongs to it before
+	// anything else reads it (see burst.go). Any other
+	// message — no figures, or a sentence that merely
+	// contains one — is not its answer and falls through
+	// untouched, with the batch still waiting.
 	if s.BurstAwaiting && handleBurstAnswer(from, s, text, lower) {
 		return
 	}
