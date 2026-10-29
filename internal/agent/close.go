@@ -133,6 +133,17 @@ func answerDeliveryOrTotal(from string, s *Session, merchant *catalogue.Merchant
 		default:
 			whatsapp.SendText(from, "The "+p.Name+" is "+money.GHS(price)+". Delivery is arranged with the seller, so there is no fixed delivery fee on top.")
 		}
+		if parked := basketGoods(s); parked > 0 && s.Product != nil && p.ID == s.Product.ID {
+			// She is pricing this item while others already sit
+			// agreed in the same order: the whole picture is
+			// owed too, or the total she hears is a part dressed
+			// as the whole.
+			line := "With the " + basketNames(s) + " already in your order, your items come to " + money.GHS(parked+price)
+			if fee > 0 && !carrier {
+				line += ", " + money.GHS(parked+price+fee) + " with delivery"
+			}
+			whatsapp.SendText(from, line+".")
+		}
 		return true
 	}
 	if fee > 0 {

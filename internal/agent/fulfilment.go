@@ -97,6 +97,9 @@ func beginFulfilment(from string, s *Session, price float64) {
 	s.Ask = price
 	sessions[key] = s
 	deal := "Deal. " + s.itemLabel() + " is yours for " + money.GHS(price) + "."
+	if len(s.Basket) > 0 {
+		deal += " That makes your order " + money.GHS(basketGoods(s)+price) + " in all."
+	}
 
 	if !shopHasDeliveryTerms(merchant) {
 		// No terms of its own: one question, where she is based,
@@ -214,7 +217,7 @@ func fulfilPrompt(s *Session) string {
 	case "pickupkind":
 		return "Who will come for it: yourself, or somebody you send?"
 	case "size":
-		return "What size do you take? They come in " + sizesLine(s.Product) + "."
+		return sizeQuestionText(s)
 	case "pkgname":
 		return "What name should go on the package?"
 	case "pkgmessage":
@@ -250,6 +253,14 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 	key := sessionKey(shopID, from)
 	p := s.Product
 	fee := deliveryFeeOf(merchant)
+
+	// An add she has been asked to confirm outranks the open
+	// question: her yes or no belongs to the add until she
+	// gives it.
+	if s.PendingAdd != nil {
+		servePendingAdd(from, s, merchant, msg, lower)
+		return
+	}
 
 	// The intent layer runs before any step reads her words:
 	// the thinking reads what she means against the open
@@ -296,12 +307,43 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		}
 	}
 
+	// An add wish is served before the open question reads
+	// her words, but after the gate: the thinking names it
+	// (verified against the shelf), or, with no model to
+	// read, the product's own full name in her message does.
+	// In the details the words belong to the details, so the
+	// add is only read at the fulfilment choices themselves.
+	detailsStep := s.FulfilStep == "size" || s.FulfilStep == "pkgname" || s.FulfilStep == "pkgmessage" || s.FulfilStep == "confirm"
+	if !detailsStep {
+		if stageIntent == stageIntentAdd && reading.Item != "" {
+			if offerAdd(from, s, merchant, catalogue.FindProduct(shopID, strings.ToLower(reading.Item))) {
+				return
+			}
+		} else if candidate := namedBasketCandidate(s, msg); candidate != nil &&
+			(stageIntent == "" || strings.Contains(lower, "add") || strings.Contains(lower, "plus") || strings.Contains(lower, "also")) {
+			// No thinking to read her, or the thinking called
+			// it an answer while her words carry an add and a
+			// full product name: the confirming question is
+			// what makes the structural read safe.
+			if offerAdd(from, s, merchant, candidate) {
+				return
+			}
+		}
+		if stageIntent == stageIntentAdd {
+			// The wish was read but no shelf product could be
+			// verified behind it: hold the open question up
+			// rather than let the step machine eat her words.
+			reaskFulfilStep(from, s)
+			return
+		}
+	}
+
 	// The package details are collected in words, never buttons,
 	// and they are read before anything else in this stage: a
 	// name or a note can carry any words at all ("meet me at the
 	// gate" is a note, not a new choice), so the choice readings
 	// below must never see them.
-	if s.FulfilStep == "size" || s.FulfilStep == "pkgname" || s.FulfilStep == "pkgmessage" || s.FulfilStep == "confirm" {
+	if detailsStep {
 		handlePackageDetails(from, s, msg, lower, stageIntent)
 		return
 	}
@@ -468,22 +510,67 @@ func beginPackageDetails(from string, s *Session, f fulfilment) {
 	key := sessionKey(s.MerchantID, from)
 	s.PendingFulfil = f
 	// A product that comes in sizes is not sold sizeless:
-	// the choice belongs to the details, before the name,
-	// unless she already labelled her size in her own words
-	// somewhere in this chat, in which case it is held and
-	// read back to her in the recap instead of asked again.
+	// every sized line in the order owes its size here,
+	// before the name. A size she already labelled in her
+	// own words somewhere in this chat is held and read
+	// back in the recap instead of asked again; the rest
+	// are asked for one at a time, in basket order, the
+	// pending product last.
+	s.SizeQueue = nil
+	spoken := recentSpeakerWords(s, 12)
+	for i := range s.Basket {
+		it := &s.Basket[i]
+		if len(it.Product.Sizes) == 0 || it.Size != "" {
+			continue
+		}
+		if stated := statedSize(it.Product, spoken); stated != "" {
+			it.Size = stated
+		} else {
+			s.SizeQueue = append(s.SizeQueue, i)
+		}
+	}
 	if f.Size == "" && s.Product != nil && len(s.Product.Sizes) > 0 {
-		if stated := statedSize(s.Product, recentSpeakerWords(s, 12)); stated != "" {
+		if stated := statedSize(s.Product, spoken); stated != "" {
 			f.Size = stated
 			s.PendingFulfil = f
 		} else {
-			s.FulfilStep = "size"
-			sessions[key] = s
-			whatsapp.SendText(from, "What size do you take? They come in "+sizesLine(s.Product)+".")
-			return
+			s.SizeQueue = append(s.SizeQueue, -1)
 		}
 	}
+	if len(s.SizeQueue) > 0 {
+		s.FulfilStep = "size"
+		sessions[key] = s
+		whatsapp.SendText(from, sizeQuestionText(s))
+		return
+	}
 	beginPackageName(from, s, f)
+}
+
+// sizeTargetProduct is the product whose size the details
+// are asking for now: the head of the size queue.
+func sizeTargetProduct(s *Session) *catalogue.Product {
+	if len(s.SizeQueue) == 0 {
+		return s.Product
+	}
+	if idx := s.SizeQueue[0]; idx >= 0 && idx < len(s.Basket) {
+		return s.Basket[idx].Product
+	}
+	return s.Product
+}
+
+// sizeQuestionText asks for the size at the head of the
+// queue. A lone sized product keeps the plain question it
+// has always had; in a basket each item is asked for by
+// name, so she always knows which one she is sizing.
+func sizeQuestionText(s *Session) string {
+	target := sizeTargetProduct(s)
+	if target == nil {
+		return ""
+	}
+	if len(s.SizeQueue) == 1 && len(s.Basket) == 0 {
+		return "What size do you take? They come in " + sizesLine(target) + "."
+	}
+	return "What size for the " + target.Name + "? They come in " + sizesLine(target) + "."
 }
 
 // beginPackageName opens the name question of the details:
@@ -546,18 +633,31 @@ func handlePackageDetails(from string, s *Session, msg, lower, stageIntent strin
 	f := s.PendingFulfil
 	switch s.FulfilStep {
 	case "size":
-		// Her answer must be one of the listing's own sizes;
-		// anything else is asked again with the list, and the
-		// sale waits, the way a name that is not name-shaped
-		// waits.
-		size := matchListedSize(s.Product, msg)
+		// Her answer must be one of the sizes of the product
+		// she is being asked about; anything else is asked
+		// again with that list, and the sale waits.
+		target := sizeTargetProduct(s)
+		size := matchListedSize(target, msg)
 		if size == "" {
-			whatsapp.SendText(from, "Which size? They come in "+sizesLine(s.Product)+".")
+			what := "Which size? They come in "
+			if len(s.SizeQueue) > 1 || len(s.Basket) > 0 {
+				what = "Which size for the " + target.Name + "? They come in "
+			}
+			whatsapp.SendText(from, what+sizesLine(target)+".")
 			return
 		}
-		f.Size = size
-		s.PendingFulfil = f
+		if len(s.SizeQueue) > 0 && s.SizeQueue[0] >= 0 {
+			s.Basket[s.SizeQueue[0]].Size = size
+		} else {
+			f.Size = size
+			s.PendingFulfil = f
+		}
+		s.SizeQueue = s.SizeQueue[1:]
 		sessions[key] = s
+		if len(s.SizeQueue) > 0 {
+			whatsapp.SendText(from, sizeQuestionText(s))
+			return
+		}
 		beginPackageName(from, s, f)
 	case "pkgname":
 		remembered := packageNames[key]
@@ -607,22 +707,55 @@ func handlePackageDetails(from string, s *Session, msg, lower, stageIntent strin
 			beginFulfilment(from, s, s.AgreedPrice)
 			return
 		}
-		if s.Product != nil && len(s.Product.Sizes) > 0 && strings.Contains(lower, "size") {
-			if size := matchListedSize(s.Product, msg); size != "" && size != f.Size {
-				f.Size = size
+		if strings.Contains(lower, "size") && anySizedLine(s) {
+			// A size correction lands where the size belongs:
+			// when it fits exactly one sized line in the
+			// order, that line takes it and the recap is read
+			// again. Otherwise the pending product's size is
+			// asked for afresh, as before.
+			matched, matchedSize := -2, ""
+			for i := range s.Basket {
+				if size := matchListedSize(s.Basket[i].Product, msg); size != "" {
+					if matched != -2 {
+						matched = -3 // fits more than one line
+					} else {
+						matched, matchedSize = i, size
+					}
+				}
+			}
+			if s.Product != nil {
+				if size := matchListedSize(s.Product, msg); size != "" {
+					if matched != -2 {
+						matched = -3
+					} else {
+						matched, matchedSize = -1, size
+					}
+				}
+			}
+			switch {
+			case matched >= 0:
+				s.Basket[matched].Size = matchedSize
+				sessions[key] = s
+				sendOrderRecap(from, s, f)
+				return
+			case matched == -1 && matchedSize != f.Size:
+				f.Size = matchedSize
 				s.PendingFulfil = f
 				sessions[key] = s
 				sendOrderRecap(from, s, f)
 				return
 			}
-			s.FulfilStep = "size"
-			s.PendingFulfil = f
-			sessions[key] = s
-			whatsapp.SendText(from, "What size do you take? They come in "+sizesLine(s.Product)+".")
-			return
+			if s.Product != nil && len(s.Product.Sizes) > 0 {
+				s.SizeQueue = []int{-1}
+				s.FulfilStep = "size"
+				s.PendingFulfil = f
+				sessions[key] = s
+				whatsapp.SendText(from, "What size do you take? They come in "+sizesLine(s.Product)+".")
+				return
+			}
 		}
 		changeLine := "Tell me what to change: the name on the package, or how and where the goods reach you. Or say yes and I will send your payment link."
-		if s.Product != nil && len(s.Product.Sizes) > 0 {
+		if anySizedLine(s) {
 			changeLine = "Tell me what to change: the size, the name on the package, or how and where the goods reach you. Or say yes and I will send your payment link."
 		}
 		whatsapp.SendText(from, changeLine)
@@ -658,10 +791,21 @@ func sendOrderRecap(from string, s *Session, f fulfilment) {
 
 func composeOrderRecap(s *Session, f fulfilment) string {
 	price := money.GHS(s.AgreedPrice)
+	multi := len(s.Basket) > 0
 	if model.Enabled() {
 		var b strings.Builder
+		for _, it := range s.Basket {
+			b.WriteString("Also in this order: " + it.Product.Name + "\n")
+			b.WriteString("Its agreed price: " + money.GHS(it.AgreedPrice) + "\n")
+			if it.Size != "" {
+				b.WriteString("Its size: " + it.Size + "\n")
+			}
+		}
 		b.WriteString("Item: " + s.Product.Name + "\n")
 		b.WriteString("Agreed price: " + price + "\n")
+		if multi {
+			b.WriteString("The items come to " + money.GHS(basketGoods(s)+s.AgreedPrice) + " in all.\n")
+		}
 		if f.Size != "" {
 			b.WriteString("Size: " + f.Size + "\n")
 		} else if m := sizePhraseRe.FindStringSubmatch(s.Product.Description); m != nil {
@@ -690,17 +834,36 @@ func composeOrderRecap(s *Session, f fulfilment) string {
 		if f.Note != "" {
 			b.WriteString("Her message for the seller is on the order.\n")
 		}
+		needFigure := price
+		if multi {
+			// The figure the draft must carry is the order's
+			// whole, not one line of it.
+			needFigure = money.GHS(basketGoods(s) + s.AgreedPrice)
+		}
 		if draft := draftWithBudget(recapCharter, "The settled facts of the order:\n"+b.String()+"\nWrite the read-back now, following the format, in your own words."); draft != "" &&
-			strings.Contains(draft, s.Product.Name) && strings.Contains(draft, price) && voiceClean(draft) {
+			strings.Contains(draft, s.Product.Name) && strings.Contains(draft, needFigure) && voiceClean(draft) {
 			return draft
 		}
 	}
 	// The bare factual read-back.
-	lines := []string{"Please confirm your order:", s.Product.Name + " for " + price + "."}
-	if f.Size != "" {
-		lines = append(lines, "Size: "+f.Size+".")
-	} else if m := sizePhraseRe.FindStringSubmatch(s.Product.Description); m != nil {
-		lines = append(lines, "Size: "+strings.ToUpper(m[1])+".")
+	lines := []string{"Please confirm your order:"}
+	if multi {
+		items := orderItemsOf(s, f, s.AgreedPrice)
+		for _, it := range items {
+			line := it.Name + " for " + money.GHS(it.Price)
+			if it.Size != "" {
+				line += ", size " + it.Size
+			}
+			lines = append(lines, line+".")
+		}
+		lines = append(lines, "Your items come to "+money.GHS(basketGoods(s)+s.AgreedPrice)+" in all.")
+	} else {
+		lines = append(lines, s.Product.Name+" for "+price+".")
+		if f.Size != "" {
+			lines = append(lines, "Size: "+f.Size+".")
+		} else if m := sizePhraseRe.FindStringSubmatch(s.Product.Description); m != nil {
+			lines = append(lines, "Size: "+strings.ToUpper(m[1])+".")
+		}
 	}
 	if f.PackageName != "" {
 		lines = append(lines, "The package will carry the name "+f.PackageName+".")

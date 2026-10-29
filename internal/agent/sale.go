@@ -67,7 +67,13 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 			chargedFee = 0
 		}
 	}
-	total := price + chargedFee
+	// The order's goods are the pending item plus everything
+	// parked in the basket, each settled on its own terms;
+	// the delivery fee rides once, on the whole order.
+	items := orderItemsOf(s, f, price)
+	goods := basketGoods(s) + price
+	multi := len(items) > 1
+	total := goods + chargedFee
 	link := checkout.CreatePaymentLink(checkout.LinkRequest{Amount: total, Reference: reference, Subaccount: merchant.SubaccountCode})
 	linkAttempts := 1
 	if link.URL == nil && checkout.Enabled() {
@@ -96,11 +102,18 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	if merchant != nil {
 		payout = merchant.PayoutPhone
 	}
+	orderName := p.Name
+	var orderLines []orders.OrderItem
+	if multi {
+		orderName = itemsLabel(items)
+		orderLines = items
+	}
 	orders.Default.RecordOrder(reference, orders.Order{
 		From:           from,
 		CreatedAt:      time.Now().UTC().Format(time.RFC3339),
-		ProductName:    p.Name,
-		Price:          price,
+		ProductName:    orderName,
+		Items:          orderLines,
+		Price:          goods,
 		DeliveryFee:    deliveryFee,
 		Total:          total,
 		ProviderRef:    link.ProviderRef,
@@ -125,17 +138,28 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	// for.
 	if link.URL == nil {
 		sessions[sessionKey(shopID, from)] = &Session{Stage: "browsing", MerchantID: shopID, Location: s.Location}
-		whatsapp.SendText(from, "We have a deal at "+money.GHS(price)+" for the "+p.Name+", but the payment link is not coming up right now. The shop has been told and will reach out here to complete your order.")
+		whatsapp.SendText(from, "We have a deal at "+money.GHS(goods)+" for the "+orderName+", but the payment link is not coming up right now. The shop has been told and will reach out here to complete your order.")
 		if merchantPhone != "" {
-			whatsapp.SendText(merchantPhone, "Payment link failed for an agreed deal: "+p.Name+" at "+money.GHS(price)+", buyer "+from+". Ref: "+reference+". Please reach out to the buyer to complete it.")
+			whatsapp.SendText(merchantPhone, "Payment link failed for an agreed deal: "+orderName+" at "+money.GHS(goods)+", buyer "+from+". Ref: "+reference+". Please reach out to the buyer to complete it.")
 		}
 		return
 	}
 	url := *link.URL
-	// The day book books the item price alone (see the delivery note
-	// above): a sale at the item price, giveaway measured against the
-	// list price, delivery money nowhere in the day's figures.
-	day := daybook.Default.RecordSale(shopID, daybook.Sale{
+	// The day book books the item prices alone (see the delivery
+	// note above): each line at its own agreed price, giveaway
+	// measured against its own list, delivery money nowhere in
+	// the day's figures.
+	var day daybook.State
+	if multi {
+		for _, it := range s.Basket {
+			day = daybook.Default.RecordSale(shopID, daybook.Sale{
+				ListPrice:   it.Product.ListPrice,
+				AgreedPrice: it.AgreedPrice,
+				Allowance:   merchant.DailyGiveawayAllowance,
+			})
+		}
+	}
+	day = daybook.Default.RecordSale(shopID, daybook.Sale{
 		ListPrice:   p.ListPrice,
 		AgreedPrice: price,
 		Allowance:   merchant.DailyGiveawayAllowance,
@@ -151,7 +175,11 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	case f.Mode == "delivery" && chargedFee > 0:
 		// The merchant takes the delivery money herself: one
 		// total, worked out for the buyer, fee inside it.
-		line := "Item " + money.GHS(price) + " + delivery " + money.GHS(deliveryFee) + " = " + money.GHS(total) + " total"
+		goodsWord := "Item "
+		if multi {
+			goodsWord = "Items "
+		}
+		line := goodsWord + money.GHS(goods) + " + delivery " + money.GHS(deliveryFee) + " = " + money.GHS(total) + " total"
 		if f.Location != "" {
 			line += ", to " + f.Location
 		}
@@ -169,7 +197,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 			feeLine += " It is going to " + f.Location + "."
 		}
 		pieces = []string{
-			"Your total with me is " + money.GHS(price) + ".",
+			"Your total with me is " + money.GHS(goods) + ".",
 			feeLine,
 		}
 	case f.Mode == "delivery":
@@ -201,10 +229,16 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 			"Your total is " + money.GHS(total) + ".",
 		}
 	}
+	if multi {
+		// Her items are read back first, each with its price,
+		// before the totals: the switch above builds its lines
+		// fresh, so the breakdown joins here, ahead of them.
+		pieces = append([]string{"Your items: " + basketBreakdown(items) + "."}, pieces...)
+	}
 	// The package details she gave ride with the order, and she
 	// hears the name read back so a wrong name is caught here,
 	// not at the rider's door.
-	if f.Size != "" {
+	if f.Size != "" && !multi {
 		pieces = append(pieces, "Size: "+f.Size+".")
 	}
 	if f.PackageName != "" {
@@ -246,21 +280,43 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		// included.
 		var lines []string
 		lines = append(lines, "New order", "")
-		if s.Qty > 0 {
-			lines = append(lines, "*"+qtyLabel(p, s.Qty)+"*")
+		if multi {
+			for _, it := range items {
+				lines = append(lines, "*"+it.Name+"*")
+			}
+			listSum := p.ListPrice
+			for _, it := range s.Basket {
+				listSum += it.Product.ListPrice
+			}
+			margin := haggle.MarginGivenAway(listSum, goods)
+			sold := "Sold for " + money.GHS(goods) + " in all (list " + money.GHS(listSum) + ", "
+			if margin > 0 {
+				sold += money.GHS(margin) + " given away)"
+			} else {
+				sold += "nothing given away)"
+			}
+			lines = append(lines, sold)
 		} else {
-			lines = append(lines, "*"+p.Name+"*")
+			if s.Qty > 0 {
+				lines = append(lines, "*"+qtyLabel(p, s.Qty)+"*")
+			} else {
+				lines = append(lines, "*"+p.Name+"*")
+			}
+			margin := haggle.MarginGivenAway(p.ListPrice, price)
+			sold := "Sold for " + money.GHS(price) + " (list " + money.GHS(p.ListPrice) + ", "
+			if margin > 0 {
+				sold += money.GHS(margin) + " given away)"
+			} else {
+				sold += "nothing given away)"
+			}
+			lines = append(lines, sold)
 		}
-		margin := haggle.MarginGivenAway(p.ListPrice, price)
-		sold := "Sold for " + money.GHS(price) + " (list " + money.GHS(p.ListPrice) + ", "
-		if margin > 0 {
-			sold += money.GHS(margin) + " given away)"
-		} else {
-			sold += "nothing given away)"
-		}
-		lines = append(lines, sold)
 		if chargedFee > 0 {
-			lines = append(lines, "The buyer pays "+money.GHS(total)+" in all: item "+money.GHS(price)+" + delivery "+money.GHS(deliveryFee)+".")
+			goodsWord := "item "
+			if multi {
+				goodsWord = "items "
+			}
+			lines = append(lines, "The buyer pays "+money.GHS(total)+" in all: "+goodsWord+money.GHS(goods)+" + delivery "+money.GHS(deliveryFee)+".")
 		}
 		lines = append(lines, "", "Ref: "+reference, "Buyer: "+from)
 		switch f.Mode {
@@ -288,7 +344,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 				// buyer's to hand to the carrier on arrival,
 				// and the notice says so in as many words, so
 				// she never counts it as hers.
-				line += ". The " + money.GHS(deliveryFee) + " delivery is hers to pay " + carrierTarget(rawNote) + " on arrival; your money is the " + money.GHS(price) + "."
+				line += ". The " + money.GHS(deliveryFee) + " delivery is hers to pay " + carrierTarget(rawNote) + " on arrival; your money is the " + money.GHS(goods) + "."
 			case chargedFee > 0:
 				line += ", fee " + money.GHS(deliveryFee) + " included in the total."
 			default:
@@ -310,7 +366,13 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 				lines = append(lines, "Delivery: to be arranged with the buyer. No location given.")
 			}
 		}
-		if f.Size != "" {
+		if multi {
+			for _, it := range items {
+				if it.Size != "" {
+					lines = append(lines, "Size for "+it.Name+": "+it.Size+".")
+				}
+			}
+		} else if f.Size != "" {
 			lines = append(lines, "Size: "+f.Size+".")
 		}
 		if f.PackageName != "" {

@@ -45,6 +45,7 @@ const (
 	stageIntentConfirm = "confirm"
 	stageIntentAsk     = "question"
 	stageIntentChange  = "change"
+	stageIntentAdd     = "add"
 	stageIntentOther   = "other"
 )
 
@@ -62,7 +63,7 @@ Think from the whole context, never from isolated words. The same phrase can be 
 
 Reason in this order: first, what the open question is asking for; second, what she is referring to (including anything she said earlier in this chat); third, whether her message answers that question, replaces it with another need, or ends the sale. Then give the intent.
 
-Answer with strict JSON only: {"intent": "...", "reply": "..."} — "reply" is used only for the question intent and stays empty otherwise.
+Answer with strict JSON only: {"intent": "...", "item": "...", "reply": "..."} — "reply" is used only for the question intent and stays empty otherwise; "item" is used only for the add intent.
 
 The intents:
 - "picture": she wants to SEE the product before she goes on: asking for a photo in any words, saying she will not buy or pay until she has seen it, asking what it looks like. This overrides the open question completely: she is not answering it.
@@ -71,14 +72,17 @@ The intents:
 - "answer": she is answering the open question, in whatever shape the answer naturally takes (a place, a name, a choice, a note, a plain no to an optional thing).
 - "question": she is asking something about the sale (the total, delivery, the product) and expects an answer before she goes on. Draft the answer in "reply", from the facts only, short and plain; the platform verifies every figure in it before sending.
 - "change": only at the final confirm question: she wants something in the order corrected.
+- "add": she wants to ADD another product from this shop to this same order: "add the bag", "I will take the heels too", "and the red dress". Give the product's exact name, as it appears in the facts, in "item". An add is not an answer to the open question and not a change to what is already agreed; the agent confirms it with her before anything joins the order.
 - "other": none of these fits.`
 
 // stageReading is what the thinking made of one reply
 // inside a pending sale: the intent, and, for a question,
-// the answer it drafted from the facts.
+// the answer it drafted from the facts; for an add, the
+// product she named.
 type stageReading struct {
 	Intent string
 	Reply  string
+	Item   string
 }
 
 // thinkStageIntent asks the thinking what a buyer's reply
@@ -116,6 +120,16 @@ func thinkStageIntentQ(from string, s *Session, merchant *catalogue.Merchant, ms
 	if w := recentSpeakerWords(s, 4); w != "" {
 		b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
 	}
+	if shelf, _ := shelfFacts(merchant.ID); shelf != "" {
+		b.WriteString("Also on this shop's shelf: " + shelf + ".\n")
+	}
+	if len(s.Basket) > 0 {
+		var names []string
+		for _, it := range s.Basket {
+			names = append(names, it.Product.Name)
+		}
+		b.WriteString("She already has these agreed in this same order: " + strings.Join(names, ", ") + ".\n")
+	}
 	b.WriteString("The open question she was just asked: \"" + question + "\"\n")
 	if extra != "" {
 		b.WriteString(extra + "\n")
@@ -136,13 +150,14 @@ func thinkStageIntentQ(from string, s *Session, merchant *catalogue.Merchant, ms
 	var raw struct {
 		Intent string `json:"intent"`
 		Reply  string `json:"reply"`
+		Item   string `json:"item"`
 	}
 	if err := json.Unmarshal([]byte(text[open:closeIdx+1]), &raw); err != nil {
 		return stageReading{}
 	}
 	switch raw.Intent {
-	case stageIntentAnswer, stageIntentPicture, stageIntentCancel, stageIntentConfirm, stageIntentAsk, stageIntentChange, stageIntentOther:
-		return stageReading{Intent: raw.Intent, Reply: strings.TrimSpace(raw.Reply)}
+	case stageIntentAnswer, stageIntentPicture, stageIntentCancel, stageIntentConfirm, stageIntentAsk, stageIntentChange, stageIntentAdd, stageIntentOther:
+		return stageReading{Intent: raw.Intent, Reply: strings.TrimSpace(raw.Reply), Item: strings.TrimSpace(raw.Item)}
 	}
 	return stageReading{}
 }

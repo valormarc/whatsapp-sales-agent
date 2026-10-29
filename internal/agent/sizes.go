@@ -19,6 +19,20 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 )
 
+// anySizedLine reports whether any line of the pending
+// order, parked or in hand, comes in sizes.
+func anySizedLine(s *Session) bool {
+	if s.Product != nil && len(s.Product.Sizes) > 0 {
+		return true
+	}
+	for _, it := range s.Basket {
+		if len(it.Product.Sizes) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // sizesLine renders a product's size list the way a person
 // lists them: "37, 38, 39, 40, 41 and 42".
 func sizesLine(p *catalogue.Product) string {

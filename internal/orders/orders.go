@@ -69,6 +69,17 @@ func (o *Order) Unpaid() bool {
 	return o.Status == "pending" || o.Status == "link_failed"
 }
 
+// OrderItem is one line of a multi-item order: what it is,
+// the price agreed for it, its measure when it was sold by
+// one, and its size when the buyer chose one.
+type OrderItem struct {
+	Name     string  `json:"name"`
+	Price    float64 `json:"price"`
+	Quantity float64 `json:"quantity,omitempty"`
+	Unit     string  `json:"unit,omitempty"`
+	Size     string  `json:"size,omitempty"`
+}
+
 type Order struct {
 	Reference   string  `json:"reference"`
 	Status      string  `json:"status"`
@@ -98,6 +109,13 @@ type Order struct {
 	// her notice so the parcel that ships is the size asked
 	// for.
 	Size string `json:"size,omitempty"`
+
+	// Items is the basket: every line the order carries when
+	// the buyer bought more than one thing in it. Price is
+	// then the items' total and ProductName their joined
+	// label; the single-item order leaves Items empty and
+	// reads exactly as it always did.
+	Items []OrderItem `json:"items,omitempty"`
 
 	// Quantity and Unit record a sale by measure: how much of the
 	// product's measure the buyer took (3 of "yard"), against a

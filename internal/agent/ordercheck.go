@@ -71,7 +71,12 @@ func orderReadback(merchant *catalogue.Merchant, o *orders.Order) []string {
 	if o.Quantity > 0 && o.Unit != "" {
 		item = formatQty(o.Quantity) + " " + unitWord(o.Unit, o.Quantity) + " of " + o.ProductName
 	}
-	pieces := []string{"Order " + o.Reference + ": " + item + " at " + money.GHS(o.Price) + "."}
+	var pieces []string
+	if len(o.Items) > 1 {
+		pieces = append(pieces, "Order "+o.Reference+": "+basketBreakdown(o.Items)+". That is "+money.GHS(o.Price)+" in all.")
+	} else {
+		pieces = append(pieces, "Order "+o.Reference+": "+item+" at "+money.GHS(o.Price)+".")
+	}
 
 	switch {
 	case o.Status == "paid":

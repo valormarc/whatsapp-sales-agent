@@ -51,6 +51,19 @@ const MaxCounters = 5
 // Session is one sender's conversation state inside one shop.
 // MerchantID is that shop: a session never spans shops, so a haggle
 // opened in one shop cannot be read, priced or closed in another.
+// BasketItem is one agreed line of a multi-item order in
+// the making: the product as it stood when its price was
+// settled (the scaled copy, for a sale by measure), the
+// agreed price, its measure, and the size the buyer chose
+// for it in the details.
+type BasketItem struct {
+	Product     *catalogue.Product
+	AgreedPrice float64
+	Qty         float64
+	Unit        string
+	Size        string
+}
+
 type Session struct {
 	MerchantID  string
 	Stage       string
@@ -118,6 +131,18 @@ type Session struct {
 	FulfilStep    string
 	Location      string
 	PendingFulfil fulfilment
+
+	// Basket holds the items already agreed in this same
+	// order while the buyer haggles over one more: each was
+	// settled on its own (its own haggle, its own draw on
+	// the day's allowance) and they complete together, one
+	// fulfilment, one payment. PendingAdd is a product she
+	// has been asked to confirm adding, awaiting her yes or
+	// no. SizeQueue lists whose size the details still owe:
+	// basket indices, with -1 for the pending product.
+	Basket     []BasketItem
+	PendingAdd *catalogue.Product
+	SizeQueue  []int
 
 	// Relay state: the merchant has asked this buyer a question
 	// through the agent (see merchant_think.go), and her next

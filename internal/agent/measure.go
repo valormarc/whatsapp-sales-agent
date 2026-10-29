@@ -352,6 +352,7 @@ func handleQuantity(from string, s *Session, merchant *catalogue.Merchant, msg, 
 		ns := openHaggleQty(shopID, merchant, base, q.Qty)
 		ns.Location = s.Location
 		ns.History = s.History
+		ns.Basket = s.Basket
 		sessions[sessionKey(shopID, from)] = ns
 		ack := "For " + formatQty(q.Qty) + " " + unitWord(p.Unit, q.Qty) + " then."
 		if offer != nil {
@@ -376,6 +377,7 @@ func handleQuantity(from string, s *Session, merchant *catalogue.Merchant, msg, 
 		loc := s.Location
 		ns := openHaggleQty(shopID, merchant, p, q.Qty)
 		ns.Location = loc
+		ns.Basket = s.Basket
 		sessions[sessionKey(shopID, from)] = ns
 		processOffer(from, ns, merchant, *offer, msg)
 		return true

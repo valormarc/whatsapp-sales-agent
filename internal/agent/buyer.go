@@ -211,6 +211,21 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				p := s.Product
 				lastPrice := s.Ask
 				daybook.Default.RecordWalkAway(shopID, daybook.Options{Allowance: merchant.DailyGiveawayAllowance})
+				if len(s.Basket) > 0 {
+					// She let this one go, but the order she has
+					// already built is still hers: the first
+					// parked item becomes the pending sale
+					// again and its fulfilment reopens, so a
+					// walk-away from one item never throws the
+					// agreed ones away with it.
+					first := s.Basket[0]
+					rescued := &Session{Stage: "browsing", MerchantID: shopID, Location: s.Location, History: s.History,
+						Basket: s.Basket[1:], Product: first.Product, AgreedPrice: first.AgreedPrice, Qty: first.Qty, Unit: first.Unit}
+					sessions[key] = rescued
+					whatsapp.SendText(from, "No problem at all. "+money.GHS(*offer)+" would leave me at a loss on the "+p.Name+", so I will let that one go with thanks.")
+					beginFulfilment(from, rescued, first.AgreedPrice)
+					return
+				}
 				sessions[key] = &Session{Stage: "browsing", MerchantID: shopID}
 				// The let-go carries the next step: the total with
 				// delivery, and the link ready the moment she says
@@ -396,6 +411,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			if target != nil {
 				loc := s.Location
 				hist := s.History
+				basket := s.Basket
 				// An offer right after a measured quote lands on
 				// the quantity she was quoted, for that same
 				// item: the haggle opens on the scaled figures.
@@ -406,6 +422,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				}
 				s.Location = loc // a fresh haggle never forgets where she is
 				s.History = hist // nor what she has said so far
+				s.Basket = basket // nor what she has already agreed in this order
 				sessions[key] = s
 				processOffer(from, s, merchant, *offer, msg)
 				return
@@ -457,9 +474,11 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	if product != nil && intentRe.MatchString(lower) {
 		loc := s.Location
 		hist := s.History
+		basket := s.Basket
 		s = openHaggle(shopID, merchant, product)
 		s.Location = loc // a fresh haggle never forgets where she is
 		s.History = hist // nor what she has said so far
+		s.Basket = basket // nor what she has already agreed in this order
 		sessions[key] = s
 		whatsapp.SendText(from, product.Name+": "+product.Description+" The price is "+money.GHS(product.ListPrice)+"."+offerInvite(product, " Make me an offer and let us see."))
 		return
