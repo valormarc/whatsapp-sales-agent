@@ -348,7 +348,7 @@ func answerMerchantDayQuestion(from, text, merchantID string) {
 	answered := false
 	if model.Enabled() {
 		sys := persona.BuildMerchantPrompt(*merchant, day)
-		reply := model.Chat([]model.Message{{Role: "user", Content: text}}, model.Options{System: &sys})
+		reply := model.Chat([]model.Message{{Role: "user", Content: text}}, model.Options{System: &sys, Kind: model.KindDraft})
 		if reply != nil {
 			whatsapp.SendText(from, *reply)
 			answered = true
@@ -461,6 +461,11 @@ func lastN(msgs []model.Message, n int) []model.Message {
 func HandleInbound(in Inbound) {
 	sessionsMu.Lock()
 	defer sessionsMu.Unlock()
+
+	// Every inbound message is one turn, and the turn's
+	// model budget opens with it: one call to understand,
+	// drafting on its own small budget (see model.BeginTurn).
+	model.BeginTurn()
 
 	from := in.From
 

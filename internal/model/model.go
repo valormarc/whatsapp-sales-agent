@@ -18,9 +18,11 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/haggle"
@@ -62,11 +64,66 @@ func chosenModel() string {
 // Options carries the optional inputs to Chat. Context, when set, has
 // the sales persona built and prepended as the system prompt; System
 // supplies a system prompt directly. TimeoutMs overrides the default
-// 20 second timeout when set.
+// 20 second timeout when set. Kind is the call's budget class (see
+// the turn budget below); the zero value is KindUnderstand, the
+// scarcer class, so a call site must opt into drafting explicitly.
 type Options struct {
 	Context   *persona.Context
 	System    *string
 	TimeoutMs *int
+	Kind      int
+}
+
+// The per-turn budget, the platform's standing rule made
+// mechanical: one model call may UNDERSTAND a turn (read an
+// intent, judge a negotiation, search the directory), and
+// drafting (a recap, a settlement line, a listing's
+// composition) is a separate, separately verified job with
+// its own small budget of two. The agent opens every turn
+// with BeginTurn; a call past its class budget is refused
+// before it is spent, and the caller falls back exactly as
+// it does for a failed call, so an over-budget path degrades
+// to the rule nets instead of silently doubling the turn's
+// cost and latency. Until BeginTurn is called (unit tests,
+// one-off tools), calls are uncounted.
+const (
+	KindUnderstand = iota
+	KindDraft
+)
+
+const draftTurnCap = 2
+
+var (
+	turnArmed      atomic.Bool
+	turnUnderstand atomic.Int64
+	turnDraft      atomic.Int64
+)
+
+// BeginTurn opens a fresh per-turn budget.
+func BeginTurn() {
+	turnUnderstand.Store(0)
+	turnDraft.Store(0)
+	turnArmed.Store(true)
+}
+
+// spend charges one call of the kind against the turn's
+// budget and reports whether it may go ahead.
+func spend(kind int) bool {
+	if !turnArmed.Load() {
+		return true
+	}
+	if kind == KindDraft {
+		if turnDraft.Add(1) <= draftTurnCap {
+			return true
+		}
+		log.Printf("model: turn budget refused a drafting call (cap %d)", draftTurnCap)
+		return false
+	}
+	if turnUnderstand.Add(1) <= 1 {
+		return true
+	}
+	log.Printf("model: turn budget refused an understanding call (cap 1)")
+	return false
 }
 
 type chatRequest struct {
@@ -106,6 +163,9 @@ var modelHTTPClient = &http.Client{Timeout: 25 * time.Second}
 
 func Chat(messages []Message, opts Options) *string {
 	if !Enabled() {
+		return nil
+	}
+	if !spend(opts.Kind) {
 		return nil
 	}
 	var system *string
@@ -179,42 +239,50 @@ type ListingDraft struct {
 	Sizes []string
 }
 
-// JudgeUnit asks the model how a named, described product is
-// sold, for listings that arrive as words alone with no
-// photo to read. It returns the unit word and whether the
-// call is certain; an unavailable model or an unparsable
-// reply returns certain=false, and the seller is asked, as
-// before.
-func JudgeUnit(name, description string) (unit string, certain bool) {
-	system := "You help a market seller list her goods. Judge how the product below is sold, the way the seller herself would say it. " +
-		"Reply with exactly one JSON object, no other text: {\"unit\": \"...\", \"certain\": true}. " +
+// JudgeShape asks the model, in ONE call, how a named,
+// described product is sold and which sizes it comes in,
+// for listings that arrive as words alone with no photo to
+// read. It is listing composition, a drafting-class call.
+// It returns the unit word, whether the unit call is
+// certain, and the judged sizes; an unavailable model or
+// an unparsable reply returns certain=false and no sizes,
+// and the seller is asked, as before. Only sizes the words
+// themselves state count: a range like "sizes 37 to 42"
+// becomes each size in it; words carrying no sizes return
+// an empty list.
+func JudgeShape(name, description string) (unit string, certain bool, sizes []string) {
+	system := "You help a market seller list her goods. Read the product below and judge how it is sold, the way the seller herself would say it, and which sizes it comes in. " +
+		"Reply with exactly one JSON object, no other text: {\"unit\": \"...\", \"certain\": true, \"sizes\": [\"...\"]}. " +
 		"The unit is one word or two: piece for clothes, shoes and bags, yard for fabric, bottle for creams and oils, kilo or bag for foodstuffs, and so on. " +
-		"certain is false only when how it is sold genuinely cannot be told from the name and description."
-	reply := Chat([]Message{{Role: "user", Content: "Product: " + name + "\nDescription: " + description}}, Options{System: &system})
+		"certain is false only when how it is sold genuinely cannot be told from the name and description. " +
+		"sizes lists only sizes the words themselves state, in the seller's own terms (shoe numbers, UK sizes, S M L, waist numbers): a stated range like 37 to 42 becomes each size in it. When the words state no sizes, or the goods do not come in sizes, give an empty list. Never guess sizes such goods usually come in."
+	reply := Chat([]Message{{Role: "user", Content: "Product: " + name + "\nDescription: " + description}}, Options{System: &system, Kind: KindDraft})
 	if reply == nil {
-		return "", false
+		return "", false, nil
 	}
 	s := *reply
 	open := strings.Index(s, "{")
 	closeIdx := strings.LastIndex(s, "}")
 	if open == -1 || closeIdx <= open {
-		return "", false
+		return "", false, nil
 	}
 	var raw struct {
-		Unit    string `json:"unit"`
-		Certain *bool  `json:"certain"`
+		Unit    string   `json:"unit"`
+		Certain *bool    `json:"certain"`
+		Sizes   []string `json:"sizes"`
 	}
 	if err := json.Unmarshal([]byte(s[open:closeIdx+1]), &raw); err != nil {
-		return "", false
+		return "", false, nil
 	}
+	sizes = cleanSizes(raw.Sizes)
 	unit = strings.ToLower(strings.TrimSpace(raw.Unit))
 	if unit == "" {
-		return "", false
+		return "", false, sizes
 	}
 	if raw.Certain != nil {
-		return unit, *raw.Certain
+		return unit, *raw.Certain, sizes
 	}
-	return unit, true
+	return unit, true, sizes
 }
 
 // cleanSizes keeps a judged size list honest: trimmed,
@@ -235,36 +303,6 @@ func cleanSizes(in []string) []string {
 		}
 	}
 	return out
-}
-
-// JudgeSizes asks the model which sizes a named, described
-// product comes in, for listings that arrive as words alone.
-// Only sizes the words themselves state count: a range like
-// "sizes 37 to 42" becomes each size in it; words carrying
-// no sizes return an empty list, and an unavailable model
-// returns nil, which simply leaves the product unsized.
-func JudgeSizes(name, description string) []string {
-	system := "You help a market seller list her goods. Read the product below and list the sizes it comes in. " +
-		"Reply with exactly one JSON object, no other text: {\"sizes\": [\"...\"]}. " +
-		"Only sizes the words themselves state, in the seller's own terms (shoe numbers, UK sizes, S M L, waist numbers): a stated range like 37 to 42 becomes each size in it. " +
-		"When the words state no sizes, or the goods do not come in sizes, give an empty list. Never guess sizes such goods usually come in."
-	reply := Chat([]Message{{Role: "user", Content: "Product: " + name + "\nDescription: " + description}}, Options{System: &system})
-	if reply == nil {
-		return nil
-	}
-	s := *reply
-	open := strings.Index(s, "{")
-	closeIdx := strings.LastIndex(s, "}")
-	if open == -1 || closeIdx <= open {
-		return nil
-	}
-	var raw struct {
-		Sizes []string `json:"sizes"`
-	}
-	if err := json.Unmarshal([]byte(s[open:closeIdx+1]), &raw); err != nil {
-		return nil
-	}
-	return cleanSizes(raw.Sizes)
 }
 
 type visionPart struct {
@@ -290,6 +328,11 @@ type visionRequest struct {
 // any failure, under the same fail-soft contract as Chat.
 func ChatVision(system, text, imageDataURI string) *string {
 	if !Enabled() || imageDataURI == "" {
+		return nil
+	}
+	// Vision serves listing composition (DraftListing), a
+	// drafting-class call under the turn budget.
+	if !spend(KindDraft) {
 		return nil
 	}
 	img := struct {

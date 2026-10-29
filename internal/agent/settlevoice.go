@@ -206,7 +206,7 @@ func composeBuyerSettle(o *orders.Order, direct bool) string {
 func draftWithBudget(system, facts string) string {
 	ch := make(chan string, 1)
 	go func() {
-		r := model.Chat([]model.Message{{Role: "user", Content: facts}}, model.Options{System: &system})
+		r := model.Chat([]model.Message{{Role: "user", Content: facts}}, model.Options{System: &system, Kind: model.KindDraft})
 		if r == nil {
 			ch <- ""
 		} else {

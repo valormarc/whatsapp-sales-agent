@@ -20,6 +20,7 @@ import (
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/checkout"
+	"github.com/valormarc/hackathon-agent/internal/model"
 	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/seevwebhook"
@@ -52,6 +53,9 @@ func StartUnpaidWatch() {
 // CheckUnpaidOrders runs one pass of the watch over the whole
 // order book at the given moment.
 func CheckUnpaidOrders(now time.Time) {
+	// The watch is not a conversation, but a settlement it
+	// triggers may draft; each sweep opens a fresh budget.
+	model.BeginTurn()
 	for _, o := range orders.Default.All() {
 		if o.Status != "pending" || o.ProviderRef == nil || *o.ProviderRef == "" || o.UnpaidAlerted {
 			continue

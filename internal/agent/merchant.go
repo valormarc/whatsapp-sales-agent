@@ -715,7 +715,14 @@ func gotoNextOnboardingStep(from string, flow *OnboardingFlow) {
 		// the measure question, the one case that earns it.
 		if flow.Unit == "" && !flow.UnitJudged {
 			flow.UnitJudged = true
-			if unit, certain := model.JudgeUnit(flow.Name, flow.Description); certain {
+			// One composition call settles the unit and the
+			// sizes together (see model.JudgeShape); the
+			// sizes ride along so the save never judges twice.
+			unit, certain, sizes := model.JudgeShape(flow.Name, strings.TrimSpace(flow.Description+" "+flow.SizeNote))
+			if len(flow.Sizes) == 0 {
+				flow.Sizes = sizes
+			}
+			if certain {
 				flow.Unit = unit
 				gotoNextOnboardingStep(from, flow)
 				return
@@ -1095,7 +1102,8 @@ func flowSizes(flow *OnboardingFlow) []string {
 	if len(flow.Sizes) > 0 {
 		return flow.Sizes
 	}
-	return model.JudgeSizes(flow.Name, strings.TrimSpace(flow.Description+" "+flow.SizeNote))
+	_, _, sizes := model.JudgeShape(flow.Name, strings.TrimSpace(flow.Description+" "+flow.SizeNote))
+	return sizes
 }
 
 func openWalkFromAdvert(from string, s *Session, flow *OnboardingFlow, text string) bool {
