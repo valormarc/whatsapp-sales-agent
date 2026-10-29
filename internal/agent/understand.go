@@ -72,6 +72,7 @@ const (
 	intentTooExpensive   = "too_expensive"   // the buyer balks at a price without naming a figure: a cheaper suitable thing goes in front of her
 	intentOrderPayment   = "order_payment"   // the owner asks about the payment on an order
 	intentAskBuyer       = "ask_buyer"       // the owner tells the agent to ask her buyer
+	intentAttention      = "attention"       // the owner asks what needs her attention: her outstanding work, answered from the books
 	intentNewListing     = "new_listing"     // the owner is giving the agent a product to list
 	intentShelf          = "shelf"           // she wants to see what the shop has
 	intentCourtesy       = "courtesy"        // thanks, gratitude, a goodbye: the conversation closing warmly
@@ -184,6 +185,7 @@ The acts you can name:
 - "too_expensive": she is balking at the price of the thing she is looking at: it is too much for her, still expensive, more than she can do, WITHOUT naming a figure she would pay (a figure she names is an offer, handled by the haggle, not this act). The platform will put a cheaper suitable thing in front of her; do not draft it yourself.
 - "order_payment": the shop owner is asking about the payment on an order: whether it has been paid, what is happening with it. When an open order is in the facts and she asks about "the payment" or "this order" without naming another, that is the order she means.
 - "ask_buyer": the shop owner is telling you to ask her buyer something, or to find something out from the buyer: "ask the buyer", "ask her", "find out from her". You carry the question to the buyer yourself; never ask the owner what to ask when the facts show the open matter.
+- "attention": the shop owner is asking what needs her, what is outstanding, what she should deal with today: "what needs my attention", "what is pending", "what should I do today", "anything for me to handle". The platform answers from her books — disputes, paid orders waiting to be sent, her unfinished work, orders waiting on buyers — so do not draft the list yourself.
 - "new_listing": the shop owner is giving you a product to sell: describing goods she stocks, pasting an advert for a product, naming a product with its price or description so it can be listed. Goods copy meant for the shelf is this act, never a question; a statement about her shop, her orders or her day is not.
 - "shelf": she wants to see what the shop has, or start again from the shelf.
 - "courtesy": she is thanking the shop, expressing gratitude, or saying goodbye, most often right after a completed purchase. This is part of the shop's conversation, never off-topic. Draft the reply in "reply": short, warm, correct English. When the facts show her completed order, acknowledge it briefly by its reference or product. Never pitch the shelf, never list goods, never name a price in a courtesy reply.
@@ -300,8 +302,8 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	if key := sessionKey(shopID, from); sessions[key] != nil && sessions[key].LastMerchantNote != "" {
 		b.WriteString("The last thing the agent told her, which an \"explain this\" from her most likely points at: \"" + sessions[key].LastMerchantNote + "\" If she asks to explain, explain THAT, in plain words, from the facts.\n")
 	}
-	b.WriteString("Things she can ask the agent to do: show her catalogue, change a price or a last price, set her daily giveaway allowance, remove a product, add a product by describing it or sending a photo, tell her how today is going, report on the payment of an order, and ask a buyer a question on her behalf.\n")
-	b.WriteString("Use \"order_payment\" when she is asking about the payment on an order, and \"ask_buyer\" when she is telling the agent to ask her buyer something. Use \"ask\" for any other question her shelf, her day, her allowance or those abilities can answer, drafting the reply from the facts only.\n")
+	b.WriteString("Things she can ask the agent to do: show her catalogue, change a price or a last price, set her daily giveaway allowance, remove a product, add a product by describing it or sending a photo, tell her how today is going, report on the payment of an order, ask a buyer a question on her behalf, and tell her what needs her attention.\n")
+	b.WriteString("Use \"order_payment\" when she is asking about the payment on an order, \"ask_buyer\" when she is telling the agent to ask her buyer something, and \"attention\" when she is asking what needs her or what is outstanding. Use \"ask\" for any other question her shelf, her day, her allowance or those abilities can answer, drafting the reply from the facts only.\n")
 	b.WriteString("\nThe owner's message: " + msg)
 	sys := thinkSystem
 	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys})
@@ -347,7 +349,7 @@ func parseUnderstood(out *string) *understood {
 	}
 	switch u.Intent {
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
-		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentRecommend, intentTooExpensive, intentOrderPayment, intentAskBuyer, intentNewListing, intentShelf, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
+		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentRecommend, intentTooExpensive, intentOrderPayment, intentAskBuyer, intentAttention, intentNewListing, intentShelf, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
 		return &u
 	}
 	return nil
@@ -623,6 +625,9 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 		return merchantOrderPayment(from, merchant, shopID, msg)
 	case intentAskBuyer:
 		return merchantAskBuyer(from, merchant, shopID, u)
+	case intentAttention:
+		whatsapp.SendText(from, merchantAttentionText(merchant, sessions[sessionKey(shopID, from)]))
+		return true
 	case intentAsk, intentUnclear:
 		if strings.TrimSpace(u.Reply) == "" {
 			return false
@@ -658,7 +663,7 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 // merchantHelpText is the last resort for a merchant message
 // nothing understood: plain, honest, and it names what she can
 // ask for, in her own chat.
-const merchantHelpText = "I did not catch that one. I can show your catalogue, add a product when you describe it or send its photo, change a price or a last price, set your daily allowance, and tell you how today is going. Say \"my catalogue\", or ask me how today is going."
+const merchantHelpText = "I did not catch that one. I can show your catalogue, add a product when you describe it or send its photo, change a price or a last price, set your daily allowance, tell you how today is going, and tell you what needs your attention. Say \"my catalogue\", or ask me what needs your attention."
 
 // courtesyRe reads a closing pleasantry in the no-model net:
 // thanks and goodbyes are part of the shop's conversation and

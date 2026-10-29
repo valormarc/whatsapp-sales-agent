@@ -356,7 +356,7 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 		// Her shelf may be empty while her orders still move:
 		// an operational word about them is served by the
 		// mind before the empty-shelf help.
-		if u := think(); u != nil && (u.Intent == intentOrderSent || u.Intent == intentOrderPayment || u.Intent == intentAskBuyer) && actOnMerchantUnderstanding(from, merchant, merchantID, text, u) {
+		if u := think(); u != nil && (u.Intent == intentOrderSent || u.Intent == intentOrderPayment || u.Intent == intentAskBuyer || u.Intent == intentAttention) && actOnMerchantUnderstanding(from, merchant, merchantID, text, u) {
 			return
 		}
 		whatsapp.SendText(from, "Hello. Your shelf at "+merchant.Name+" is empty just now, so there is nothing to sell yet. Say \"add a product\" and I will walk you through it: a name, a short description, the price customers see, and your last price, the lowest you would accept, which customers never see. The moment you confirm, I can sell it.")
