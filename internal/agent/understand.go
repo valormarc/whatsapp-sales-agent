@@ -18,9 +18,9 @@ package agent
 // carrying an invented number is never sent. The model has
 // freedom to understand and to phrase; it has no freedom to
 // invent stock, prices, times, promises, or the truth about
-// money, and a payment it understands a buyer to be claiming
-// is still only a claim, settled by the merchant's own word
-// or the platform's confirmation, exactly as the rules had it.
+// money, and a payment a buyer says she has made is still
+// only her word: the platform confirms it against the
+// payment service itself, and nothing else settles it.
 //
 // The keyword branches below the thinking step are the net,
 // not the mind: they catch what the thinking declined and
@@ -59,7 +59,7 @@ const (
 	intentPaymentExpired = "payment_expired" // the link is dead, expired, will not open as a link
 	intentPaymentLater   = "payment_later"   // she will pay, just not now
 	intentPaymentWant    = "payment_want"    // she wants to pay now, or asks for the link
-	intentPaymentClaim   = "payment_claim"   // she says she has paid directly: a claim, never proof
+	intentPaymentClaim   = "payment_claim"   // she says she has paid: a report the platform verifies itself, never proof by itself
 	intentItem           = "item"            // she is asking about a product on the shelf
 	intentPicture        = "picture"         // she wants to see the product before she goes on
 	intentOrderStatus    = "order_status"    // she is asking after an order she already made
@@ -81,14 +81,11 @@ type understood struct {
 	Item   string `json:"item"`
 	Reply  string `json:"reply"`
 
-	// NamedAmount is not the model's: it is the amount the
-	// buyer herself named in her own message, read by code,
-	// carried here so a claim records what she said she sent.
-	NamedAmount *float64 `json:"-"`
-	// DirectRoute is read by code from her words too: she said
-	// the money went to the merchant's own number, so the
-	// merchant is who verifies it. Without it, a paid report on
-	// a link order is verified by the agent with Seev itself.
+	// DirectRoute is read by code from her words: she said the
+	// money went somewhere other than the payment link, so it
+	// is a payment the platform cannot see or confirm at all.
+	// Without it, a paid report on a link order is verified by
+	// the agent with Seev itself.
 	DirectRoute bool `json:"-"`
 }
 
@@ -160,14 +157,14 @@ The acts you can name:
 - "payment_expired": the payment link itself is dead: it has expired, it is closed, it will not open as a link, she asks for a NEW link because the old one is finished.
 - "payment_later": she will pay, just later: tomorrow, in the evening, when money comes.
 - "payment_want": she wants to pay now, or asks for the payment link: "send me the payment link", "I want to pay now", "let me pay", asking for the link again without saying it is dead.
-- "payment_claim": she says she has paid, in her own words, whether or not she uses the word paid: "I just sent the money", "check your phone, I have done it", "I have made the payment". Whether she paid by the link or to the shop's number, this is the act: the platform then verifies a link payment with the payment service itself, and sends only a payment to the shop's own number to the merchant to confirm. Her word alone never settles anything.
+- "payment_claim": she says she has paid, in her own words, whether or not she uses the word paid: "I just sent the money", "check your phone, I have done it", "I have made the payment". Payment here is only ever through the payment button the platform sent for the order: the platform verifies a payment on it with the payment service itself, and a payment she says went anywhere else is one the platform cannot see or confirm. Her word alone never settles anything, and no merchant is ever asked to confirm a payment.
 - "item": she is asking about, or wants, a product on the shelf. Put the product's name, as it appears in the facts, in "item".
 - "picture": she wants to SEE a product before she goes on: asking for its photo in any words, or saying she will not buy until she has seen it. Put the product's name in "item" when she names one; when she plainly means the one she was last looking at, leave "item" empty and the platform will use that one. A picture ask is never a generic question and never a buy: the picture is served first.
 - "order_status": she is asking after an order she already made: where it stands, whether it is paid, what happens next with it.
 - "order_sent": the shop owner is reporting that the goods for a paid order have gone out to the buyer: she has sent it, dispatched it, given it to the rider or the station, or made it ready for collection. Only the owner names this act; a buyer never does.
 - "order_received": the buyer is confirming that the goods from her paid order have arrived and she has them: "it has come", "I have received it", "the parcel reached me". Not thanks on its own; she is reporting the arrival.
 - "order_missing": the buyer is reporting that the goods from her paid order have NOT arrived: they never came, she is still waiting and it is overdue, the parcel is lost. Asking where an order is, without saying it has failed to arrive, is "order_status", not this.
-- "order_payment": the shop owner is asking about the payment on an order: whether it has been paid, how it was paid (through the payment link or straight to her own MoMo number), what is happening with it. When a claim or an open order is in the facts and she asks about "the payment" or "this order" without naming another, that is the order she means.
+- "order_payment": the shop owner is asking about the payment on an order: whether it has been paid, what is happening with it. When an open order is in the facts and she asks about "the payment" or "this order" without naming another, that is the order she means.
 - "ask_buyer": the shop owner is telling you to ask her buyer something, or to find something out from the buyer: "ask the buyer", "ask her", "find out from her". You carry the question to the buyer yourself; never ask the owner what to ask when the facts show the open matter.
 - "new_listing": the shop owner is giving you a product to sell: describing goods she stocks, pasting an advert for a product, naming a product with its price or description so it can be listed. Goods copy meant for the shelf is this act, never a question; a statement about her shop, her orders or her day is not.
 - "shelf": she wants to see what the shop has, or start again from the shelf.
@@ -200,10 +197,7 @@ func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, sh
 	}
 	b.WriteString(quoteFactLine())
 	if order := orders.Default.NewestUnpaidFor(shopID, from); order != nil {
-		b.WriteString("She has an open order waiting for payment: " + order.ProductName + ", " + money.GHS(order.Charged()) + ", reference " + order.Reference + ".\n")
-		if order.ClaimStatus == "open" {
-			b.WriteString("She has already told the shop she paid directly, and that claim is waiting for the merchant to confirm.\n")
-		}
+		b.WriteString("She has an open order waiting for payment: " + order.ProductName + ", " + money.GHS(order.Charged()) + ", reference " + order.Reference + ". Payment is only through the payment button Stall sent for it, and Stall confirms it itself.\n")
 	} else if latest := orders.Default.NewestFor(shopID, from); latest != nil && latest.Status == "paid" {
 		b.WriteString("Her latest order (" + latest.Reference + ", " + latest.ProductName + ") is paid.")
 		switch latest.DeliveryState {
@@ -224,7 +218,6 @@ func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, sh
 	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys})
 	u := parseUnderstood(out)
 	if u != nil {
-		u.NamedAmount = claimAmountOf(msg)
 		u.DirectRoute = directWordsRe.MatchString(strings.ToLower(msg))
 	}
 	return u
@@ -240,10 +233,10 @@ func merchantDayFigures(merchant *catalogue.Merchant, shopID string) (string, []
 
 // understandMerchantMessage asks the model what the merchant
 // herself means, with her own facts: her shelf, her day, her
-// allowance, and the live state of her orders and claims. The
-// orders and claims are what her payment questions are about;
-// a thinking step that cannot see them can only deflect, and
-// deflection is what this step replaced.
+// allowance, and the live state of her orders. The orders are
+// what her payment questions are about; a thinking step that
+// cannot see them can only deflect, and deflection is what
+// this step replaced.
 func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID, msg string) *understood {
 	shelf, _ := shelfFacts(shopID)
 	dayText, _ := merchantDayFigures(merchant, shopID)
@@ -261,18 +254,6 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	if merchant.DailyGiveawayAllowance <= 0 {
 		b.WriteString("She has not set an allowance yet, so the agent has nothing to give away when buyers bargain. Setting one is done by saying: set allowance 300.\n")
 	}
-	claims := openClaimsFor(shopID)
-	for _, o := range claims {
-		amt := o.Charged()
-		if o.ClaimAmount > 0 {
-			amt = o.ClaimAmount
-		}
-		shot := "She sent no screenshot, only her word."
-		if o.ScreenshotRef != "" {
-			shot = "She sent a screenshot with it."
-		}
-		b.WriteString("An open payment claim waits for her word: order " + o.Reference + ", the buyer " + o.From + " says she paid " + money.GHS(amt) + " for the " + o.ProductName + " straight to the owner's MoMo number. " + shot + " The owner settles it by replying yes or no.\n")
-	}
 	for _, o := range paidOrdersOf(shopID) {
 		switch o.DeliveryState {
 		case "missing":
@@ -283,7 +264,7 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	}
 	open := 0
 	for _, o := range orders.Default.All() {
-		if o.MerchantID != shopID || o.Status != "pending" || o.ClaimStatus == "open" {
+		if o.MerchantID != shopID || o.Status != "pending" {
 			continue
 		}
 		open++
@@ -305,26 +286,10 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	return parseUnderstood(out)
 }
 
-// openClaimsFor lists the shop's orders carrying an open
-// direct-payment claim, oldest first (the book's own order).
-func openClaimsFor(shopID string) []*orders.Order {
-	out := []*orders.Order{}
-	for _, o := range orders.Default.All() {
-		oo := o
-		if oo.MerchantID == shopID && oo.ClaimStatus == "open" {
-			out = append(out, &oo)
-		}
-	}
-	return out
-}
-
 // focusOrder is the order a conversation is about when none
-// is named: the one carrying an open claim first, then the
-// newest open order, then the newest order of any kind.
+// is named: the newest open order first, then the newest
+// order of any kind.
 func focusOrder(shopID string) *orders.Order {
-	if claims := openClaimsFor(shopID); len(claims) > 0 {
-		return claims[0]
-	}
 	var newestOpen, newestAny *orders.Order
 	for _, o := range orders.Default.All() {
 		if o.MerchantID != shopID {
@@ -466,7 +431,7 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		if order == nil {
 			return false
 		}
-		handlePaidReport(from, merchant, order, u.NamedAmount, u.DirectRoute)
+		handlePaidReport(from, merchant, order, u.DirectRoute)
 		return true
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant:
 		order := orders.Default.NewestUnpaidFor(shopID, from)
@@ -531,9 +496,6 @@ func sendPaymentLink(from string, s *Session, merchant *catalogue.Merchant, orde
 	}
 	sendPieces(from, "Of course. Here is the payment link for your order "+order.Reference+" ("+order.ProductName+", "+money.GHS(order.Charged())+").")
 	sendPayButton(from, order.Charged(), url)
-	if merchant.PayoutPhone != "" {
-		whatsapp.SendText(from, "Or send MoMo directly to "+merchant.Name+"'s number, "+merchant.PayoutPhone+", and send me the screenshot here.")
-	}
 	return true
 }
 
@@ -549,12 +511,9 @@ func answerPaymentBlocked(from string, s *Session, merchant *catalogue.Merchant,
 		"Nothing has been charged, and your order " + order.Reference + " for the " + order.ProductName + " at " + money.GHS(order.Charged()) + " is still open and held for you.",
 		"When the network settles, the same link I sent you will work.",
 	}
-	if merchant.PayoutPhone != "" {
-		pieces = append(pieces, "Or send MoMo directly to "+merchant.Name+"'s number, "+merchant.PayoutPhone+", and send me the screenshot here.")
-	}
 	sendPieces(from, pieces...)
 	if phone := merchantNotifyPhone(merchant); phone != "" {
-		whatsapp.SendText(phone, "Payment trouble\n\n*"+order.ProductName+"*\nBuyer "+from+" says she could not complete the payment for order "+order.Reference+" ("+money.GHS(order.Charged())+"): the network or the payment service at her end.\n\nThe order is still open. She has the link and your MoMo number.")
+		whatsapp.SendText(phone, "Payment trouble\n\n*"+order.ProductName+"*\nBuyer "+from+" says she could not complete the payment for order "+order.Reference+" ("+money.GHS(order.Charged())+"): the network or the payment service at her end.\n\nThe order is still open. She has the link.")
 	}
 	return true
 }
@@ -574,11 +533,8 @@ func reissueLink(from string, s *Session, merchant *catalogue.Merchant, order *o
 	if attempts >= 3 {
 		sendPieces(from,
 			"I have made you fresh links a few times now, and I do not want to keep sending dead ends.",
-			"Your order "+order.Reference+" for the "+order.ProductName+" at "+money.GHS(order.Charged())+" is still open.",
+			"Your order "+order.Reference+" for the "+order.ProductName+" at "+money.GHS(order.Charged())+" is still open, and the payment button is the way to complete it. If it keeps failing, tell me what it says and I will look into it with the payment service.",
 		)
-		if merchant.PayoutPhone != "" {
-			sendPieces(from, "Send MoMo directly to "+merchant.Name+"'s number, "+merchant.PayoutPhone+", and send me the screenshot here, and we will complete it that way.")
-		}
 		return true
 	}
 	link := checkout.CreatePaymentLink(checkout.LinkRequest{
@@ -610,9 +566,6 @@ func reissueLink(from string, s *Session, merchant *catalogue.Merchant, order *o
 	}
 	sendPieces(from, "That link has expired, so I have made you a fresh one. The old one will not work now.")
 	sendPayButton(from, order.Charged(), *link.URL)
-	if merchant.PayoutPhone != "" {
-		whatsapp.SendText(from, "Or send MoMo directly to "+merchant.Name+"'s number, "+merchant.PayoutPhone+", and send me the screenshot here.")
-	}
 	return true
 }
 
@@ -640,9 +593,6 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 		figures = append(figures, dayFigures...)
 		if focus := focusOrder(shopID); focus != nil {
 			figures = append(figures, focus.Charged(), focus.Price)
-			if focus.ClaimAmount > 0 {
-				figures = append(figures, focus.ClaimAmount)
-			}
 		}
 		figures = append(figures, merchant.DailyGiveawayAllowance)
 		// The figures in the agent's own last note to her are

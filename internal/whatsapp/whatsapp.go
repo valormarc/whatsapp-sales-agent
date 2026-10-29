@@ -469,8 +469,8 @@ func SendText(to, body string) Result {
 // it first with RefreshMediaRef (download and re-upload), because
 // WhatsApp does not promise that an id received on one message can
 // be re-sent as-is by this number. The send is recorded in the
-// outbox either way, so the merchant always has the claim text
-// even if the picture itself fails.
+// outbox either way, so the merchant always has the caption
+// text even if the picture itself fails.
 func SendImage(to, mediaRef, caption string) Result {
 	token := os.Getenv("WHATSAPP_TOKEN")
 	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")

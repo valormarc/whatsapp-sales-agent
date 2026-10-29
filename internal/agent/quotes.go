@@ -403,19 +403,3 @@ func quotedUnpaidOrder(shopID, from string) *orders.Order {
 	}
 	return nil
 }
-
-// quotedClaimOrder returns the open direct-payment claim
-// the turn's quote is about, for this shop, or nil: a
-// merchant quoting one claim alert out of several and
-// answering it is answering THAT claim.
-func quotedClaimOrder(merchant *catalogue.Merchant) *orders.Order {
-	q := turnQuote
-	if q == nil || !q.Known || q.Order == nil || merchant == nil {
-		return nil
-	}
-	o := orders.Default.GetOrder(q.Order.Reference)
-	if o == nil || o.MerchantID != merchant.ID || o.Status != "pending" || o.ClaimStatus != "open" {
-		return nil
-	}
-	return o
-}

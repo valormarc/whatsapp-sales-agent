@@ -134,9 +134,9 @@ func orderItemLabel(o *orders.Order) string {
 // on its paper: the confirmation, the goods, the exact
 // amount, the delivery facts the order carries, the
 // reference, and the shop's thanks. It reads the same on
-// every road that confirms a payment, the link's own
-// verification and the seller's word on a direct payment
-// alike, because the facts it prints are the order's own.
+// every road that confirms a payment — the webhook, the
+// agent's own read-back, the unpaid watch — because the
+// facts it prints are the order's own.
 func paymentConfirmedRecord(o *orders.Order) string {
 	lines := []string{"Payment confirmed", "Item: " + orderItemLabel(o), "Amount: " + money.GHS(o.Charged())}
 	switch o.Fulfilment {

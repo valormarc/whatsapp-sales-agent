@@ -502,8 +502,9 @@ func HandleInbound(in Inbound) {
 	// Photo intake, routed by shop context like everything else.
 	// A shop owner's photo is a throw-in: it opens onboarding from
 	// the photo and whatever words came with it (see photo.go).
-	// A buyer's photo in a shop she is bound to is read as her
-	// payment claim or as a question the text shelf must answer.
+	// A buyer's photo in a shop she is bound to is read as a
+	// payment screenshot she is showing, or as a question the
+	// text shelf must answer.
 	if in.ImageID != "" {
 		if shop := ownerShopFor(from); shop != nil {
 			startPhotoOnboarding(from, shop, in.ImageID, in.Caption)
@@ -512,24 +513,25 @@ func HandleInbound(in Inbound) {
 		if shopID := bindings[from]; shopID != "" {
 			if shop := catalogue.GetMerchant(shopID); shop != nil {
 				// A buyer with an unpaid order in this shop who
-				// sends a picture is sending her payment
-				// screenshot: the direct path's claim, forwarded
-				// to this shop's merchant for her word (see
-				// payment.go). The media reference travels with
-				// the claim; the picture alone settles nothing.
-				// A screenshot that quotes one order's bubble
-				// (its total, its pay button) is a claim on THAT
-				// order, not merely her newest.
+				// sends a picture is almost always showing a
+				// payment screenshot. A screenshot confirms
+				// nothing here: payment is only through the
+				// button Stall sent for the order, and Stall
+				// checks that itself the moment it lands. She
+				// is told so plainly, and the button is sent
+				// again for the order her picture points at
+				// (quoted) or her newest unpaid one.
 				order := orders.Default.NewestUnpaidFor(shopID, from)
 				if qo := quotedUnpaidOrder(shopID, from); qo != nil {
 					order = qo
 				}
 				if order != nil {
-					createClaim(from, shop, order, claimAmountOf(in.Caption), in.ImageID, true)
+					whatsapp.SendText(from, "Thank you. A screenshot cannot confirm a payment here, so I have not marked anything paid. Payment for your order is only through the button I sent you, and I check it myself the moment it lands.")
+					sendPayButton(from, order.Charged(), orderPaymentURL(order))
 					return
 				}
 				if isClaimText(strings.ToLower(in.Caption)) {
-					whatsapp.SendText(from, noOrderClaimText(shop))
+					whatsapp.SendText(from, noOrderPaymentText(shop))
 					return
 				}
 				whatsapp.SendText(from, "Got your photo. I sell in text here at "+shop.Name+", and I cannot price or list goods from a photo yet. Tell me the name of the item you are asking about and I will help.")

@@ -1,5 +1,5 @@
 // The buyer's turn inside a shop, once her shop is resolved:
-// payment claims on a finished sale first, then the stage she
+// payment reports on a finished sale first, then the stage she
 // is in (agreed, fulfilment, confirmation), then browsing and
 // haggling.
 package agent
@@ -65,19 +65,20 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 
 	// An answer owed to her merchant: the merchant asked this
 	// buyer a question through the agent, and her reply is
-	// carried back first. A route answer is settled here by
-	// checks and claims; any other answer is relayed in her
-	// own words and her turn then continues as normal below.
+	// carried back first. A payment answer is settled here by
+	// the agent's own check of the link; any other answer is
+	// relayed in her own words and her turn then continues as
+	// normal below.
 	if (s.Stage == "browsing" || s.Stage == "agreed" || s.Stage == "") && relayBuyerAnswer(from, s, merchant, msg, lower) {
 		return
 	}
 
-	// Paying for a sale already completed: choosing the direct
-	// route to the merchant's own number, or claiming a direct
-	// payment. Both attach to her own newest unpaid order in this
-	// shop (payment.go), and run before the stage handling below:
-	// a claim's words ("I have paid", "payment done") must never
-	// be mistaken for a request to resend the link.
+	// Paying for a sale already completed: reporting a payment,
+	// or asking for the merchant's number to pay it. Both attach
+	// to her own newest unpaid order in this shop (payment.go),
+	// and run before the stage handling below: a report's words
+	// ("I have paid", "payment done") must never be mistaken
+	// for a request to resend the link.
 	if handleBuyerPayment(from, merchant, msg, lower) {
 		return
 	}

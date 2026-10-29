@@ -23,11 +23,10 @@ import (
 
 // merchantOrderPayment answers the owner's question about the
 // payment on the order in focus: what the order is, whether
-// it is paid, what the buyer has claimed and what that claim
-// says about the route, and what the payment link itself says
-// when it is checked live. A link payment the check finds has
-// landed settles the order on the spot, the same settlement
-// the webhook performs, because finding it is the agent's job
+// it is paid, and what the payment link itself says when it
+// is checked live. A link payment the check finds has landed
+// settles the order on the spot, the same settlement the
+// webhook performs, because finding it is the agent's job
 // however it comes to look.
 func merchantOrderPayment(from string, merchant *catalogue.Merchant, shopID, msg string) bool {
 	order := orderFromMessage(shopID, msg)
@@ -39,24 +38,10 @@ func merchantOrderPayment(from string, merchant *catalogue.Merchant, shopID, msg
 	}
 	pieces := []string{"Order " + order.Reference + ": the " + order.ProductName + ", " + money.GHS(order.Charged()) + ", buyer " + order.From + "."}
 	switch {
-	case order.Status == "paid" && order.PaymentPath == "seev":
-		pieces = append(pieces, "It is paid. The money came through the payment link, and I confirmed it to the buyer.")
 	case order.Status == "paid":
-		pieces = append(pieces, "It is paid. The money came to your MoMo number directly, and you confirmed it yourself.")
-	case order.ClaimStatus == "open":
-		amt := order.Charged()
-		if order.ClaimAmount > 0 {
-			amt = order.ClaimAmount
-		}
-		claimLine := "The buyer says she paid " + money.GHS(amt) + " straight to your MoMo number."
-		if order.ScreenshotRef == "" {
-			claimLine += " She sent no screenshot, only her word."
-		} else {
-			claimLine += " She sent a screenshot with it."
-		}
-		pieces = append(pieces, claimLine+" It is waiting on your word: reply yes if you have received it, or no if you have not.")
+		pieces = append(pieces, "It is paid. The money came through the payment link, and I confirmed it to the buyer.")
 	default:
-		pieces = append(pieces, "It is not paid yet, and the buyer has not claimed a payment to your number.")
+		pieces = append(pieces, "It is not paid yet.")
 	}
 	if order.Status != "paid" && order.ProviderRef != nil && *order.ProviderRef != "" {
 		check := checkout.VerifyPayment(*order.ProviderRef)
@@ -93,13 +78,13 @@ func orderFromMessage(shopID, msg string) *orders.Order {
 }
 
 // merchantAskBuyer carries the owner's question to her buyer.
-// The question is composed from the open matter: on a payment
-// claim or an open order it is the route question, the one
-// thing only the buyer can settle; on anything else it is the
-// owner's drafted words, guarded like every draft. The buyer
-// hears it in her own chat, her session remembers that her
-// answer is owed to the merchant, and the merchant is told
-// the errand is done, never asked what the errand should be.
+// The question is composed from the open matter: on an open
+// order it is the payment check-in, the one thing only the
+// buyer can settle; on anything else it is the owner's
+// drafted words, guarded like every draft. The buyer hears
+// it in her own chat, her session remembers that her answer
+// is owed to the merchant, and the merchant is told the
+// errand is done, never asked what the errand should be.
 func merchantAskBuyer(from string, merchant *catalogue.Merchant, shopID string, u *understood) bool {
 	order := focusOrder(shopID)
 	if order == nil {
@@ -107,8 +92,8 @@ func merchantAskBuyer(from string, merchant *catalogue.Merchant, shopID string, 
 	}
 	buyer := order.From
 	question := ""
-	if order.ClaimStatus == "open" || order.Unpaid() {
-		question = "Hello, I am helping " + merchant.Name + " with this chat. The shop is checking on your payment for the " + order.ProductName + " (order " + order.Reference + "): did you pay through the payment link that was sent to you, or straight to the shop's MoMo number?"
+	if order.Unpaid() {
+		question = "Hello, I am helping " + merchant.Name + " with this chat. The shop is checking on your payment for the " + order.ProductName + " (order " + order.Reference + "): were you able to pay through the payment link that was sent to you?"
 	} else if strings.TrimSpace(u.Reply) != "" && voiceClean(u.Reply) && figuresClean(u.Reply, order.Charged(), order.Price) {
 		question = u.Reply
 	}
@@ -130,9 +115,10 @@ func merchantAskBuyer(from string, merchant *catalogue.Merchant, shopID string, 
 
 // relayBuyerAnswer runs on a buyer turn while her merchant's
 // question is open. It returns true when the turn was the
-// answer's own business (a route answer, settled by checks
-// and claims); for any other answer it relays her words to
-// the merchant and lets her turn continue as normal.
+// answer's own business (a payment answer, settled by the
+// agent's own check of the link); for any other answer it
+// relays her words to the merchant and lets her turn
+// continue as normal.
 func relayBuyerAnswer(from string, s *Session, merchant *catalogue.Merchant, msg, lower string) bool {
 	if s.RelayOrderRef == "" || merchant == nil || s.RelayShopID != merchant.ID {
 		return false
@@ -148,10 +134,15 @@ func relayBuyerAnswer(from string, s *Session, merchant *catalogue.Merchant, msg
 	saysLink := !saysNumber && (strings.Contains(lower, "link") || strings.Contains(lower, "seev"))
 	switch {
 	case saysNumber:
+		// She says the money went outside the link: that
+		// is a payment Stall cannot see or confirm, and no
+		// claim is opened on it. The merchant hears what
+		// she said, and the buyer hears the plain truth
+		// from handlePaidReport, with the button again.
 		if phone != "" {
-			whatsapp.SendText(phone, "Your buyer answered about order "+order.Reference+": she paid straight to your MoMo number.")
+			whatsapp.SendText(phone, "Your buyer answered about order "+order.Reference+": she says she paid outside the payment link. A payment made that way cannot be confirmed here, so the order is still open; I have told her the payment button is the way to complete it.")
 		}
-		handlePaidReport(from, merchant, order, claimAmountOf(msg), true)
+		handlePaidReport(from, merchant, order, true)
 		return true
 	case saysLink:
 		if order.ProviderRef == nil || *order.ProviderRef == "" {

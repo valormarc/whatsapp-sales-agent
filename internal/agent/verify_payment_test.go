@@ -52,9 +52,6 @@ func TestPaidReportOnALinkIsVerifiedAndSettledByTheAgent(t *testing.T) {
 	if o == nil || o.Status != "paid" || o.PaymentPath != "seev" {
 		t.Fatalf("a verified link payment must settle as a Seev payment, got %+v", o)
 	}
-	if o.ClaimStatus == "open" {
-		t.Fatal("a link payment must never become a claim for the merchant to verify")
-	}
 	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Payment confirmed") || !strings.Contains(got, "Amount: GH₵875") || !strings.Contains(got, "Thank you for buying from") {
 		t.Fatalf("buyer confirmation = %q", got)
 	}
@@ -83,8 +80,8 @@ func TestPaidReportOnALinkNotYetPaid(t *testing.T) {
 	if got := c.replies(t, merchant); len(got) != 0 {
 		t.Fatalf("the merchant hears nothing about an unpaid link, got %v", got)
 	}
-	if o := orders.Default.GetOrder("TEST-4002"); o.Status != "pending" || o.ClaimStatus == "open" {
-		t.Fatalf("the order must stay open and unclaimed, got %+v", o)
+	if o := orders.Default.GetOrder("TEST-4002"); o.Status != "pending" {
+		t.Fatalf("the order must stay open, got %+v", o)
 	}
 }
 

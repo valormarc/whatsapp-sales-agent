@@ -23,19 +23,20 @@ func TestMerchantOrderPaymentAnswersFromTheRecord(t *testing.T) {
 	c := &chat{dir: dir}
 	buyer := "233550002002"
 	seedOpenOrder(t, "TEST-5001", buyer, 1)
-	order := orders.Default.GetOrder("TEST-5001")
-	createClaim(buyer, catalogue.GetMerchant(MerchantID), order, nil, "", false)
 	fakeSeevReadback(t, "pending", 87500)
 
 	shop := catalogue.GetMerchant(MerchantID)
 	if !actOnMerchantUnderstanding(merchant, shop, MerchantID, "Is it made to seev link or my momo direct?", &understood{Intent: intentOrderPayment}) {
-		t.Fatal("the route question must be answered")
+		t.Fatal("the payment question must be answered")
 	}
 	got := strings.Join(c.replies(t, merchant), "\n")
-	for _, want := range []string{"TEST-5001", "straight to your MoMo number", "waiting on your word", "checked the payment link", "nothing has come through there"} {
+	for _, want := range []string{"TEST-5001", "not paid yet", "checked the payment link", "nothing has come through there"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("answer is missing %q: %q", want, got)
 		}
+	}
+	if strings.Contains(got, "MoMo number") || strings.Contains(got, "waiting on your word") {
+		t.Fatalf("the answer must not offer a direct route or ask her to confirm: %q", got)
 	}
 }
 
@@ -60,8 +61,6 @@ func TestMerchantAskBuyerAndTheAnswerComesBack(t *testing.T) {
 	c := &chat{dir: dir}
 	buyer := "233550002022"
 	seedOpenOrder(t, "TEST-5003", buyer, 1)
-	order := orders.Default.GetOrder("TEST-5003")
-	createClaim(buyer, catalogue.GetMerchant(MerchantID), order, nil, "", false)
 	c.replies(t, merchant)
 
 	shop := catalogue.GetMerchant(MerchantID)
@@ -69,7 +68,7 @@ func TestMerchantAskBuyerAndTheAnswerComesBack(t *testing.T) {
 		t.Fatal("the instruction to ask the buyer must be carried out")
 	}
 	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "TEST-5003") || !strings.Contains(got, "payment link") {
-		t.Fatalf("the buyer must be asked the route question, got %q", got)
+		t.Fatalf("the buyer must be asked the payment question, got %q", got)
 	}
 	if got := strings.Join(c.replies(t, merchant), "\n"); !strings.Contains(got, "I have asked your buyer") {
 		t.Fatalf("the merchant must be told the errand is done, got %q", got)

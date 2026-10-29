@@ -1,51 +1,44 @@
 package agent
 
-// The direct payment path: the second door beside the Seev link
-// (both paths built).
-//
-// The link path confirms itself: Seev's signed webhook settles
-// the order and the merchant hears her exact figures. The direct
-// path is how Ghana already buys every day: the buyer sends MoMo
-// straight to the merchant's own number and sends the transfer
-// screenshot into the chat as proof. But a screenshot is a CLAIM,
-// never proof (the BizHub rule: a screenshot is a claim, not
-// evidence). So the agent forwards the claim to the merchant of
-// that shop, with the amount, the buyer and the order reference,
-// plus the screenshot itself, and only the merchant's own word
-// settles it. On her yes the order becomes paid, settled by her,
-// with no Seev fee (she received the full amount at once). On her
-// no the buyer is told the payment has not been seen, the claim
-// closes as rejected, and she may claim again. The agent never
-// tells a buyer a payment is confirmed before the merchant's yes
-// or Seev's webhook, and a screenshot alone never changes an
-// order's status.
+// Payment has exactly one door: the payment button Stall
+// issues for the order, with the Seev link under it. The
+// shop's payout number is settlement-only and is never shown
+// to a buyer, and there is no second route: no paying a
+// number directly, and no screenshot a buyer can send that
+// settles anything. A screenshot is a picture, not evidence,
+// and a buyer's word is a report, not proof. When she says
+// she has paid, the agent checks the link with Seev itself
+// and answers from what Seev says. A payment she says went
+// somewhere else — to a number she got elsewhere, in cash to
+// a rider — is one Stall cannot see or confirm, and she is
+// told so plainly: her order stays open until the button is
+// paid, and only that payment settles it. No merchant is ever
+// asked to confirm a payment; confirming is the agent's job,
+// against the rail, or it does not happen.
 
 import (
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/checkout"
-	"github.com/valormarc/hackathon-agent/internal/daybook"
-	"github.com/valormarc/hackathon-agent/internal/insights"
 	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/seevwebhook"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
-// directIntentRe reads the buyer choosing the merchant's number
-// over the link: "I will pay to the number", "I'll send it
-// direct", "MoMo to her number", "I prefer the number". It is only
-// consulted while she has an unpaid order, where paying can only
-// mean paying for that order.
+// directIntentRe reads the buyer asking for the merchant's
+// number as her way to pay: "I will pay to the number", "I'll
+// send it direct", "MoMo to her number", "I prefer the
+// number". It is only consulted while she has an unpaid
+// order, where paying can only mean paying for that order.
 var directIntentRe = regexp.MustCompile(`(pay (it )?(to|into|on) (the|her|your) number|send (it )?(direct|straight)|momo (to|into|on) (the|her|your) number|to (her|your) number\b|prefer (the|that|this) number|use (the|her|that) number|pay (direct|directly)|the number (is|will be) (fine|ok)|number (is )?fine)`)
 
 // claimRe reads a buyer saying the money has already gone: "I
 // have paid", "I just sent it", "payment done", "check your
 // phone". A bare "sent" is read by isClaimText as well. Questions
-// are never claims: "have you sent it?" asks, it does not tell.
+// are never reports: "have you sent it?" asks, it does not tell.
 var claimRe = regexp.MustCompile(`(\bi have paid\b|\bi've paid\b|\bi just paid\b|\bi paid\b|\bpaid\b|\bi have sent (it|the money|payment)\b|\bi just sent it\b|\bi sent it\b|\bi have sent the money\b|\bsent the money\b|\bpayment (done|made|sent)\b|\bi have made the payment\b|\bcheck your phone\b)`)
 
 func isClaimText(lower string) bool {
@@ -58,297 +51,81 @@ func isClaimText(lower string) bool {
 	return claimRe.MatchString(lower)
 }
 
-// claimAmountOf reads the amount a claim names, when it names one:
-// the first figure in her words. Nothing named means she is
-// claiming the order total, which the caller fills in.
-func claimAmountOf(text string) *float64 {
-	nums := numbersIn(text)
-	if len(nums) == 0 {
-		return nil
-	}
-	return &nums[0]
+// noOrderPaymentText is the plain answer to a payment report
+// with no unpaid order behind it: there is nothing to check,
+// and nothing is passed to any merchant.
+func noOrderPaymentText(merchant *catalogue.Merchant) string {
+	return "I have no unpaid order for you here just now. When you buy something here, you pay through the payment button I send you for the order, and I confirm it myself the moment it lands."
 }
 
-// noOrderClaimText is the plain answer to a payment claim with no
-// unpaid order behind it: there is nothing to confirm, and no
-// merchant is troubled with it.
-func noOrderClaimText(merchant *catalogue.Merchant) string {
-	return "I have no unpaid order for you here just now, so there is nothing to pass on for confirmation. When you buy something here, pay and send the screenshot in this chat, and I will send it to " + merchant.Name + " to confirm."
-}
-
-// handleBuyerPayment is the buyer's side of the direct path,
-// consulted once a shop is bound and before the ordinary stage
-// handling: choosing the number, and claiming a payment, attach
-// to her own newest unpaid order in this shop and to nothing
-// else. It reports whether it took the message.
+// handleBuyerPayment is the buyer's payment door, consulted
+// once a shop is bound and before the ordinary stage
+// handling: a report that she has paid, and a request for
+// the shop's number, both attach to her own unpaid order in
+// this shop (the one she quotes, when she quotes one) and to
+// nothing else. It reports whether it took the message.
 func handleBuyerPayment(from string, merchant *catalogue.Merchant, msg, lower string) bool {
-	claim := isClaimText(lower)
 	order := orders.Default.NewestUnpaidFor(merchant.ID, from)
+	if qo := quotedUnpaidOrder(merchant.ID, from); qo != nil {
+		order = qo
+	}
+	claim := isClaimText(lower)
 	if order == nil {
 		if claim {
-			whatsapp.SendText(from, noOrderClaimText(merchant))
+			whatsapp.SendText(from, noOrderPaymentText(merchant))
 			return true
 		}
 		return false
 	}
 	if claim {
-		handlePaidReport(from, merchant, order, claimAmountOf(msg), directWordsRe.MatchString(lower))
+		handlePaidReport(from, merchant, order, directWordsRe.MatchString(lower))
 		return true
 	}
 	if directIntentRe.MatchString(lower) {
-		payout := order.PayoutPhone
-		if payout == "" {
-			payout = merchant.PayoutPhone
-		}
-		if payout == "" {
-			// She asked for a number the shop never put on
-			// record: the link stays her only door, and no
-			// number is invented for her.
-			return false
-		}
-		orders.Default.Update(order.Reference, func(o *orders.Order) {
-			o.PaymentPath = "direct"
-		})
+		// She is asking for a number Stall does not give
+		// out: the button is the only way to pay, said
+		// plainly, with the button itself sent again.
 		sendPieces(from,
-			"Send "+money.GHS(order.Charged())+" to "+payout+". The name on the number is "+merchant.Name+".",
-			"When you have sent it, send the screenshot here.")
+			"Payment here is only through the payment button I sent you for your order. I do not give out "+merchant.Name+"'s number for payment, and a payment made any other way cannot be confirmed here.",
+			"Your order "+order.Reference+" is still open.")
+		sendPayButton(from, order.Charged(), orderPaymentURL(order))
 		return true
 	}
 	return false
 }
 
-// createClaim records a direct payment claim on the buyer's order
-// and puts it in front of the merchant of that shop, and only that
-// shop: the claim pieces, plainly labelled when the buyer sent no
-// screenshot or named a different amount, and the screenshot
-// itself as an image message when one came. A second claim while
-// one is open is acknowledged, never duplicated to the merchant.
-func createClaim(from string, merchant *catalogue.Merchant, order *orders.Order, named *float64, screenshotRef string, hasShot bool) {
-	if order.ClaimStatus == "open" {
-		whatsapp.SendText(from, "Already with "+merchant.Name+" to confirm.")
-		return
-	}
-	total := order.Charged()
-	amount := total
-	if named != nil {
-		amount = *named
-	}
-	mismatch := money.Round(amount*100) != money.Round(total*100)
-	orders.Default.Update(order.Reference, func(o *orders.Order) {
-		o.PaymentPath = "direct"
-		o.ClaimStatus = "open"
-		o.ClaimAmount = amount
-		o.ClaimMismatch = mismatch
-		o.ClaimedAt = time.Now().UTC().Format(time.RFC3339)
-		o.ClaimShot = hasShot
-		o.ScreenshotRef = screenshotRef
-	})
-
-	summary := "Payment claim: " + from + " says she has paid " + money.GHS(amount) + " for " + order.ProductName + " (order " + order.Reference + ") by MoMo to your number."
-	pieces := []string{summary}
-	if mismatch {
-		pieces = append(pieces, "Careful: she names "+money.GHS(amount)+", but the order total is "+money.GHS(total)+".")
-	}
-	if !hasShot {
-		pieces = append(pieces, "She sent no screenshot, only her word.")
-	}
-	pieces = append(pieces, "Reply yes if you have received it, or no if you have not.")
-	if phone := merchantNotifyPhone(merchant); phone != "" {
-		sendPieces(phone, pieces...)
-		if hasShot && screenshotRef != "" {
-			// The screenshot travels with its claim summary as
-			// the caption. Media a buyer sent belongs to her
-			// conversation and its id is not guaranteed to send
-			// onward from this number, so the picture is first
-			// refreshed under our own number (downloaded and
-			// uploaded again); when that cannot be done, the
-			// received reference is attempted as before.
-			ref := screenshotRef
-			if fresh, ok := whatsapp.RefreshMediaRef(screenshotRef); ok {
-				ref = fresh
-			}
-			whatsapp.SendImage(phone, ref, summary)
-		}
-	}
-	whatsapp.SendText(from, "I have sent it to "+merchant.Name+" to confirm. I will tell you the moment she does.")
-}
-
-// claimRefRe finds an order reference inside a merchant's answer:
-// "yes EFUA-0003" names the claim outright instead of settling
-// the oldest open one. A reference is a shop's code, a dash and
-// its serial; the shape minted before shop codes (HACK-<stamp>)
-// matches the same pattern.
-var claimRefRe = regexp.MustCompile(`\b([a-z]{2,}-\d+)\b`)
-
-// isClaimYes reads the merchant's confirming word. A question is
-// never a confirmation, and "not received" is a no wearing yes's
-// clothes, so the no is always read first by the caller.
-func isClaimYes(lower string) bool {
-	if strings.HasSuffix(strings.TrimSpace(lower), "?") {
-		return false
-	}
-	switch controlWord(lower) {
-	case "yes", "yeah", "yep", "ok", "okay", "confirm", "confirmed",
-		"received", "seen it", "received it",
-		"i have received it", "i received it", "i have seen it", "i saw it",
-		"yes received", "yes i have received it":
-		return true
-	}
-	w := controlWord(lower)
-	return len(strings.Fields(w)) <= 6 && strings.Contains(w, "received") && !strings.Contains(w, "not")
-}
-
-// isClaimNo reads the merchant's refusing word.
-func isClaimNo(lower string) bool {
-	if strings.HasSuffix(strings.TrimSpace(lower), "?") {
-		return false
-	}
-	switch controlWord(lower) {
-	case "no", "nope", "not received", "not seen", "not yet",
-		"haven't seen it", "have not seen it", "i have not seen it",
-		"i haven't seen it", "i did not receive it", "did not receive it",
-		"i have not received it":
-		return true
-	}
-	w := controlWord(lower)
-	return strings.Contains(w, "not received") || strings.Contains(w, "not seen") || strings.Contains(w, "haven't seen")
-}
-
-// handleMerchantClaim is the merchant's word on an open claim, the
-// only thing that can settle a direct payment. It runs inside
-// merchant mode, for her own shop only (resolved by the caller
-// before anything else), after her in-progress flows, which own
-// her words while they are open. A yes or no with no open claim
-// in her shop is not consumed here at all: it falls through to
-// her ordinary handling, and it can never reach another shop's
-// claim, because the lookups below are keyed to her shop alone.
-// claimLeadAnswer reads a referenced answer ("yes EFUA-0003",
-// "no EFUA-0003") by its leading word. isClaimYes rightly demands
-// the whole message, which a reference can never satisfy, so a
-// named claim is answered by the word the merchant led with.
-func claimLeadAnswer(lower string) (yes, no bool) {
-	fields := strings.Fields(lower)
-	if len(fields) == 0 || strings.HasSuffix(strings.TrimSpace(lower), "?") {
-		return false, false
-	}
-	switch strings.Trim(fields[0], ".,!") {
-	case "yes", "yeah", "yep", "received", "confirmed", "seen":
-		return true, false
-	case "no", "nope", "not":
-		return false, true
-	}
-	return false, false
-}
-
-func handleMerchantClaim(from string, merchant *catalogue.Merchant, lower string) bool {
-	if m := claimRefRe.FindStringSubmatch(lower); m != nil {
-		yes, no := claimLeadAnswer(lower)
-		if !yes && !no {
-			return false
-		}
-		ref := strings.ToUpper(m[1])
-		o := orders.Default.GetOrder(ref)
-		if o == nil || o.MerchantID != merchant.ID || o.Status != "pending" || o.ClaimStatus != "open" {
-			whatsapp.SendText(from, "That reference is not an open payment claim at "+merchant.Name+" just now.")
-			return true
-		}
-		settleClaim(from, merchant, o, yes)
-		return true
-	}
-
-	// A reply quoting one claim alert out of several is an
-	// answer about THAT claim: her yes or no settles the
-	// quoted one, never merely the oldest open one, and she
-	// does not have to type its reference. A quoted claim
-	// she is not answering (a question about it, say) is not
-	// consumed here; her words fall through untouched.
-	if o := quotedClaimOrder(merchant); o != nil {
-		no := isClaimNo(lower)
-		yes := !no && isClaimYes(lower)
-		if !yes && !no {
-			yes, no = claimLeadAnswer(lower)
-		}
-		if yes || no {
-			settleClaim(from, merchant, o, yes)
-			return true
-		}
-		return false
-	}
-
-	no := isClaimNo(lower)
-	yes := !no && isClaimYes(lower)
-	if !yes && !no {
-		return false
-	}
-	o := orders.Default.OldestOpenClaim(merchant.ID)
-	if o == nil {
-		return false
-	}
-	settleClaim(from, merchant, o, yes)
-	return true
-}
-
-// settleClaim applies the merchant's word to one open claim. Yes:
-// the order is paid, by the direct path, settled by her word, and
-// both sides hear it, the merchant with her direct figures (the
-// full amount is hers; there is no Seev fee on money that never
-// went near Seev). No: the claim closes as rejected, the order
-// stays unpaid, and the buyer is told where to check and that she
-// may claim again when the money lands.
-func settleClaim(merchantPhone string, merchant *catalogue.Merchant, o *orders.Order, confirmed bool) {
-	total := o.Charged()
-	if confirmed {
-		orders.Default.Update(o.Reference, func(x *orders.Order) {
-			x.Status = "paid"
-			x.PaymentPath = "direct"
-			x.SettledVia = "merchant-confirmed"
-			x.ClaimStatus = "confirmed"
-		})
-		whatsapp.SendText(o.From, ComposeDirectSettleText(o))
-		day := daybook.Default.GetDayState(merchant.ID, daybook.Options{Allowance: merchant.DailyGiveawayAllowance})
-		whatsapp.SendText(merchantPhone, "Confirmed. "+o.ProductName+" paid in full by MoMo to your number: "+money.GHS(total)+" is yours, no Seev fee on this one. Day book: "+insights.DayReportText(day))
-		return
-	}
-	orders.Default.Update(o.Reference, func(x *orders.Order) {
-		x.ClaimStatus = "rejected"
-	})
-	payout := o.PayoutPhone
-	if payout == "" {
-		payout = merchant.PayoutPhone
-	}
-	whatsapp.SendText(o.From, merchant.Name+" says she has not seen the payment yet. Check the number you sent to: "+payout+". When it lands, send the screenshot again.")
-	whatsapp.SendText(merchantPhone, "Told "+o.From+" you have not seen it yet, and to check the number she sent to. The order stays unpaid; she can claim again when it lands.")
-}
-
-// directWordsRe reads a buyer saying the money went to the
-// shop's own number rather than through the link: she names
-// the number, the sending to it, or the direct route itself.
-// It decides one thing only: who can verify her report. A
-// payment to the merchant's number is verified by the merchant,
-// who can see her own MoMo; a payment through the Seev link
-// is verified by the agent with Seev, because the merchant has
-// no window into Seev at all and must never be asked to
-// confirm a payment she cannot see.
+// directWordsRe reads a buyer saying the money went somewhere
+// other than the payment link: she names a number, the sending
+// to it, or the direct route itself. It decides one thing only:
+// what her report can mean. A payment through the link is
+// verified by the agent with Seev. A payment she says went
+// elsewhere is one the agent cannot see at all, and no one's
+// word — hers or the merchant's — is asked to settle it here.
 var directWordsRe = regexp.MustCompile(`(?i)(momo\s+number|your\s+number|her\s+number|the\s+shop'?s\s+number|sent\s+(it|the\s+money)\s+to|paid\s+(it\s+)?(to|into)|directly|to\s+the\s+number)`)
 
-// handlePaidReport answers a buyer who says she has paid, and
-// routes the report to whoever can actually verify it. When
-// her order carries a live Seev session and she does not say
-// the money went to the number, the agent checks with Seev
-// itself and confirms or corrects her from what Seev says.
-// Only a payment she says went to the merchant's own number,
-// or an order with no Seev session at all, becomes a claim for
-// the merchant to settle with her own word.
-func handlePaidReport(from string, merchant *catalogue.Merchant, order *orders.Order, named *float64, direct bool) {
+// handlePaidReport answers a buyer who says she has paid.
+// A report about the link is checked against Seev itself and
+// answered from the result. A report about money sent
+// elsewhere is answered with the plain truth: Stall cannot
+// see it or confirm it, a screenshot cannot change that, and
+// her order stays open until the button is paid.
+func handlePaidReport(from string, merchant *catalogue.Merchant, order *orders.Order, direct bool) {
 	if fresh := orders.Default.GetOrder(order.Reference); fresh != nil && fresh.Status == "paid" {
 		whatsapp.SendText(from, "That one is already confirmed paid. Thank you.")
 		return
 	}
-	if !direct && order.ProviderRef != nil && *order.ProviderRef != "" {
+	if direct {
+		sendPieces(from,
+			"That payment went outside the payment button I sent you, so I cannot check it or confirm it from here, and a screenshot cannot confirm it either.",
+			"Your order "+order.Reference+" is still open. To complete it, pay through the button for the order, and I will confirm it myself the moment it lands.")
+		sendPayButton(from, order.Charged(), orderPaymentURL(order))
+		return
+	}
+	if order.ProviderRef != nil && *order.ProviderRef != "" {
 		verifyLinkPayment(from, merchant, order)
 		return
 	}
-	createClaim(from, merchant, order, named, "", false)
+	whatsapp.SendText(from, "I have no payment session to check for order "+order.Reference+" yet. Use the payment button I sent you for the order, and I will confirm it myself the moment it lands.")
 }
 
 // verifyLinkPayment checks a buyer's "I have paid" against
@@ -365,7 +142,7 @@ func verifyLinkPayment(from string, merchant *catalogue.Merchant, order *orders.
 	check := checkout.VerifyPayment(*order.ProviderRef)
 	switch {
 	case check == nil:
-		whatsapp.SendText(from, "I could not reach the payment service to check just now. The moment it confirms your payment I will tell you, and "+merchant.Name+" will hear it from me at the same time. If you sent the money to the shop's MoMo number instead, say so and I will pass it to the shop to confirm.")
+		whatsapp.SendText(from, "I could not reach the payment service to check just now. The moment it confirms your payment I will tell you, and "+merchant.Name+" will hear it from me at the same time.")
 	case checkout.IsPaidStatus(check.Status) && check.AmountMajor != nil && money.Round(*check.AmountMajor*100) != money.Round(charged*100):
 		whatsapp.SendText(from, "I have checked with the payment service. A payment came through, but the amount does not match your order, so I have told "+merchant.Name+" and we are looking at it together. Your order is not settled yet.")
 		if phone := merchantNotifyPhone(merchant); phone != "" {
@@ -380,6 +157,6 @@ func verifyLinkPayment(from string, merchant *catalogue.Merchant, order *orders.
 		)
 		sendPayButton(from, order.Charged(), orderPaymentURL(order))
 	default:
-		whatsapp.SendText(from, "I have checked with the payment service, and your payment has not come through yet. Your order "+order.Reference+" for the "+order.ProductName+" is still open. If the money has only just left your phone, give it a small moment and tell me again, and I will check again. If you sent it to the shop's MoMo number instead, say so and I will pass it to the shop to confirm.")
+		whatsapp.SendText(from, "I have checked with the payment service, and your payment has not come through yet. Your order "+order.Reference+" for the "+order.ProductName+" is still open. If the money has only just left your phone, give it a small moment and tell me again, and I will check again.")
 	}
 }

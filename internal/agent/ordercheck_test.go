@@ -3,6 +3,8 @@ package agent
 import (
 	"strings"
 	"testing"
+
+	"github.com/valormarc/hackathon-agent/internal/orders"
 )
 
 // The buyer's receipt and order checking: at the sale she is
@@ -82,29 +84,36 @@ func TestCheckByReferenceAndByAsking(t *testing.T) {
 	}
 }
 
-func TestCheckedOrderShowsPaidAfterTheMerchantConfirms(t *testing.T) {
+func TestCheckedOrderShowsPaidOnlyWhenTheLinkSettles(t *testing.T) {
 	_, c := setupTwitterShops(t)
 	buyer := "233550010006"
 	buySheaPickup(t, c, buyer)
 	c.replies(t, ownerEfua)
 
+	// Neither asking for the number nor showing a screenshot
+	// moves the order: the check keeps saying unpaid.
 	c.say(t, buyer, "I will pay to the number")
 	c.replies(t, buyer)
 	sayImage(t, buyer, "MEDIA-CHECK-1", "")
 	c.last(t, buyer)
-	c.replies(t, ownerEfua)
-
-	// While the claim is open, the check says so in plain words.
 	c.say(t, buyer, "check my order")
-	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "waiting for them to confirm") {
-		t.Fatalf("readback with an open claim = %q", got)
+	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "It is not paid yet.") {
+		t.Fatalf("readback before settlement = %q, want the unpaid line", got)
 	}
 
-	c.say(t, ownerEfua, "yes")
-	c.last(t, buyer)
+	// Her report is checked against the payment service itself;
+	// when it says the money landed, the order settles and the
+	// check then says paid. (The harness walk mints no real
+	// session, so the order is given the session reference it
+	// would carry in production.)
+	ref := "EFUA-0001"
+	orders.Default.Update("EFUA-0001", func(o *orders.Order) { o.ProviderRef = &ref })
+	fakeSeevReadback(t, "completed", 12000)
+	c.say(t, buyer, "I have paid")
+	c.replies(t, buyer)
 	c.say(t, buyer, "EFUA-0001")
 	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "It is paid. Thank you.") {
-		t.Fatalf("readback after confirmation = %q, want the paid line", got)
+		t.Fatalf("readback after settlement = %q, want the paid line", got)
 	}
 }
 
@@ -139,27 +148,5 @@ func TestCheckingNeverCrossesBuyersOrShops(t *testing.T) {
 	c.say(t, fresh, "check my order")
 	if got := c.last(t, fresh); !strings.Contains(got, "You have no order at Ama's Stall yet.") {
 		t.Fatalf("no-order check = %q", got)
-	}
-}
-
-func TestMerchantCanSettleAClaimByItsNewReference(t *testing.T) {
-	dir, c := setupTwitterShops(t)
-	buyer := "233550010010"
-	buySheaPickup(t, c, buyer)
-	c.replies(t, ownerEfua)
-
-	c.say(t, buyer, "I will pay to the number")
-	c.replies(t, buyer)
-	sayImage(t, buyer, "MEDIA-CHECK-2", "")
-	c.last(t, buyer)
-	c.replies(t, ownerEfua)
-
-	c.say(t, ownerEfua, "yes EFUA-0001")
-	if got := c.last(t, buyer); !strings.Contains(got, "confirmed") {
-		t.Fatalf("buyer told after a named-reference yes = %q", got)
-	}
-	orders := ordersOnDisk(t, dir)
-	if len(orders) != 1 || orders[0]["status"] != "paid" {
-		t.Fatalf("orders = %v, want the named claim settled as paid", orders)
 	}
 }

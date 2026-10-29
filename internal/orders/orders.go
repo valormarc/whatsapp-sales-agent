@@ -43,21 +43,12 @@ import (
 // arrival; the fee is never part of Total and never the merchant's
 // money) or "merchant" (the fee rides inside Total, as charged).
 //
-// PaymentPath is how the buyer pays the charged total: "" while
-// she has not chosen, "seev" when the hosted link settles, "direct"
-// when she sends MoMo straight to the merchant's own number.
-// SettledVia records whose word settled a direct order:
-// "merchant-confirmed", the merchant's own yes in chat. A Seev
-// settlement needs no SettledVia; PaymentPath "seev" says it.
-//
-// The Claim fields are a direct payment's claim state. A
-// screenshot, or the buyer's word alone, is a CLAIM, never proof:
-// ClaimStatus runs "open" (with the merchant to confirm),
-// "confirmed" or "rejected", and nothing in these fields can move
-// an order to paid by itself. ClaimAmount is what the buyer said
-// she sent (the order total when she named nothing); ClaimMismatch
-// flags that it differs from the total she owed. ScreenshotRef is
-// the inbound media reference of her screenshot, when one came.
+// PaymentPath records how the order was settled: "seev" when
+// the hosted payment link settles it, which is the only way an
+// order is ever paid. It stays empty while the order is open.
+// SettledVia is a legacy field from the removed direct-payment
+// path; nothing writes it now, and old books keep whatever they
+// recorded then.
 // Unpaid reports whether the order is still open and
 // owing: a live checkout is waiting on her (pending), or
 // its link never came up (link_failed) and she still has
@@ -125,15 +116,10 @@ type Order struct {
 	Quantity float64 `json:"quantity,omitempty"`
 	Unit     string  `json:"unit,omitempty"`
 
-	DeliveryPaidTo string  `json:"deliveryPaidTo,omitempty"`
-	PaymentPath    string  `json:"paymentPath,omitempty"`
-	SettledVia     string  `json:"settledVia,omitempty"`
-	ClaimStatus    string  `json:"claimStatus,omitempty"`
-	ClaimAmount    float64 `json:"claimAmount,omitempty"`
-	ClaimMismatch  bool    `json:"claimMismatch,omitempty"`
-	ClaimedAt      string  `json:"claimedAt,omitempty"`
-	ClaimShot      bool    `json:"claimScreenshot,omitempty"`
-	ScreenshotRef  string  `json:"screenshotRef,omitempty"`
+	DeliveryPaidTo string `json:"deliveryPaidTo,omitempty"`
+	PaymentPath    string `json:"paymentPath,omitempty"`
+	SettledVia     string `json:"settledVia,omitempty"`
+	ScreenshotRef  string `json:"screenshotRef,omitempty"`
 
 	// CreatedAt is when the order was placed, RFC3339. Orders
 	// placed before this field existed carry none; the unpaid
@@ -288,8 +274,8 @@ func (b *Book) SetStatus(reference, status string) *Order {
 
 // Update applies a change to the stored order in place and saves
 // it, returning the stored order, or nil when the reference is
-// unknown. Payment state (the chosen path, a claim, a settlement)
-// moves through here, one small step at a time.
+// unknown. Payment state (the settled path, the settlement
+// itself) moves through here, one small step at a time.
 func (b *Book) Update(reference string, mutate func(*Order)) *Order {
 	all := b.loadAll()
 	o, ok := all[reference]
@@ -349,9 +335,9 @@ func (b *Book) NewestFor(merchantID, buyer string) *Order {
 }
 
 // NewestUnpaidFor returns the buyer's most recent unpaid order in
-// one shop, or nil. Claims and direct-payment choices attach here:
-// to her own newest open order, in the shop she is bound to, and
-// never to another shop's order or another buyer's.
+// one shop, or nil. Payment reports and payment questions attach
+// here: to her own newest open order, in the shop she is bound
+// to, and never to another shop's order or another buyer's.
 func (b *Book) NewestUnpaidFor(merchantID, buyer string) *Order {
 	var best *Order
 	for _, o := range b.loadAll() {
@@ -360,25 +346,6 @@ func (b *Book) NewestUnpaidFor(merchantID, buyer string) *Order {
 		}
 		oo := o
 		if best == nil || refStamp(oo.Reference) > refStamp(best.Reference) {
-			best = &oo
-		}
-	}
-	return best
-}
-
-// OldestOpenClaim returns the shop's oldest order whose direct
-// payment claim is still open and unpaid, or nil. The merchant's
-// yes or no settles claims in the order buyers made them, and only
-// ever inside her own shop: the caller resolves her shop first and
-// this lookup never crosses into another.
-func (b *Book) OldestOpenClaim(merchantID string) *Order {
-	var best *Order
-	for _, o := range b.loadAll() {
-		if o.MerchantID != merchantID || o.Status != "pending" || o.ClaimStatus != "open" {
-			continue
-		}
-		oo := o
-		if best == nil || refStamp(oo.Reference) < refStamp(best.Reference) {
 			best = &oo
 		}
 	}

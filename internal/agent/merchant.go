@@ -216,16 +216,7 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 		return
 	}
 
-	// Her word on an open direct-payment claim settles it (see
-	// payment.go). It sits after her in-progress flows, which own
-	// her words while they are open, and before her commands and
-	// day questions. With no open claim in her shop it consumes
-	// nothing and her message falls through untouched.
-	if handleMerchantClaim(from, merchant, lower) {
-		return
-	}
-
-	// The payment setup retry lives here, beside the claim, rather
+	// The payment setup retry lives here, rather
 	// than with her catalogue commands: a shop whose payment setup
 	// failed at signup is usually still empty-shelved, and the
 	// empty-shelf help below would swallow the command before the

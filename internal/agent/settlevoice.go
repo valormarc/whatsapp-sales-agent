@@ -35,17 +35,6 @@ func ComposeBuyerSettleText(o *orders.Order, _ string) string {
 	return paymentConfirmedRecord(o)
 }
 
-// ComposeDirectSettleText is the same record for the
-// direct path, where the confirmation is the seller's own
-// word on money she received on her number: the facts the
-// record prints are the order's, and they are the same.
-func ComposeDirectSettleText(o *orders.Order) string {
-	if o == nil {
-		return ""
-	}
-	return paymentConfirmedRecord(o)
-}
-
 // ComposeMerchantSettleText is the registered composer
 // behind seevwebhook.MerchantNoticeText: the seller's
 // order notice at settlement, with the day's figures read

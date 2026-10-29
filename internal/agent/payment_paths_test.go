@@ -11,14 +11,17 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/seevwebhook"
 )
 
-// Both payment paths. The link
-// path confirms itself through Seev's webhook. The direct path
-// is how Ghana already buys: MoMo straight to the merchant's own
-// number, then the screenshot into the chat. A screenshot is a
-// claim, never proof: the agent forwards it to the merchant of
-// that shop alone, and only her word settles the order. These
-// tests pin the whole discipline: the offer, the choice, the
-// claim, her yes, her no, and the shop walls around all of it.
+// One payment door. The buyer pays through the payment button
+// Stall issues for her order, and Stall confirms it itself
+// against Seev. There is no second route: the shop's payout
+// number is settlement-only and is never shown to a buyer, a
+// payment she says went somewhere else is one Stall cannot
+// see or confirm, and a screenshot settles nothing — no claim
+// is opened, no merchant is asked to confirm anything, and
+// no one's word moves an order to paid. These tests pin the
+// whole discipline: the single offer, the refused number, the
+// unconfirmable report, the screenshot that changes nothing,
+// and the shop walls around all of it.
 
 // sayImage delivers one inbound image message, the way a buyer
 // sends her transfer screenshot.
@@ -82,174 +85,76 @@ func closePickupSale(t *testing.T, c *chat, buyer, entry, view string, listPrice
 	return strings.Join(c.replies(t, buyer), "\n")
 }
 
-func TestDirectPathHappyPathEndToEnd(t *testing.T) {
+func TestSaleCompletionOffersOnlyThePaymentButton(t *testing.T) {
 	dir, c := setupTwitterShops(t)
 	buyer := "233550008001"
 
 	got := closePickupSale(t, c, buyer, "SHOP-EFUA", "Shea butter", "120")
-	// Both doors are offered at the payment moment, the direct
-	// one worded from the shop's own payout phone.
-	if !strings.Contains(got, "Pay here") || !strings.Contains(got, "Or send MoMo directly to Efua's Store's number, "+ownerEfua+", and send me the screenshot here.") {
-		t.Fatalf("completion = %q, want the link and the direct offer", got)
+	// One door only: the button. The shop's payout number
+	// appears nowhere in anything the buyer is sent.
+	if !strings.Contains(got, "Pay here") {
+		t.Fatalf("completion = %q, want the payment button", got)
+	}
+	for _, rec := range rawOutboxRecords(t, dir) {
+		if rec.To == buyer && strings.Contains(rec.Body, ownerEfua) {
+			t.Fatalf("the payout number reached the buyer: %+v", rec)
+		}
 	}
 	c.replies(t, ownerEfua) // drain the New order notice
 
-	// She chooses the number: the agent names the amount, the
-	// number, and whose name is on it, and asks for the screenshot.
+	// She asks for the number: it is refused, plainly, and the
+	// button is sent again. The order stays open and unsettled.
 	c.say(t, buyer, "I will pay to the number")
 	got = strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Send GH₵120 to "+ownerEfua+". The name on the number is Efua's Store.") || !strings.Contains(got, "When you have sent it, send the screenshot here.") {
-		t.Fatalf("direct instructions = %q", got)
+	if !strings.Contains(got, "only through the payment button") || !strings.Contains(got, "still open") {
+		t.Fatalf("number request answer = %q", got)
 	}
-	orders := ordersOnDisk(t, dir)
-	if len(orders) != 1 || orders[0]["paymentPath"] != "direct" {
-		t.Fatalf("orders = %v, want the direct path recorded on the order", orders)
+	if strings.Contains(got, ownerEfua) {
+		t.Fatalf("the number was given out after all: %q", got)
 	}
-	ref := orders[0]["reference"].(string)
+	o := ordersOnDisk(t, dir)[0]
+	if o["status"] != "pending" || o["paymentPath"] != nil {
+		t.Fatalf("order after the number request = %v, want open with no path settled", o)
+	}
 
-	// The screenshot arrives: a claim, forwarded to Efua alone,
-	// with the picture itself sent on as an image message.
+	// The screenshot arrives: it confirms nothing, is forwarded
+	// to no one, and the button is what she is given again.
 	sayImage(t, buyer, "MEDIA-TEST-1", "")
-	got = c.last(t, buyer)
-	if !strings.Contains(got, "I have sent it to Efua's Store to confirm. I will tell you the moment she does.") {
-		t.Fatalf("buyer claim ack = %q", got)
+	got = strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "cannot confirm a payment here") || !strings.Contains(got, "Click to pay") {
+		t.Fatalf("screenshot answer = %q", got)
 	}
-	notes := strings.Join(c.replies(t, ownerEfua), "\n")
-	if !strings.Contains(notes, "Payment claim: "+buyer+" says she has paid GH₵120 for Raw Shea Butter (500g) (order "+ref+") by MoMo to your number.") ||
-		!strings.Contains(notes, "Reply yes if you have received it, or no if you have not.") {
-		t.Fatalf("merchant claim = %q", notes)
+	if got := c.replies(t, ownerEfua); len(got) != 0 {
+		t.Fatalf("the merchant was troubled with a screenshot: %q", got)
 	}
-	if strings.Contains(notes, "no screenshot") {
-		t.Fatalf("a screenshot claim was labelled word-only: %q", notes)
-	}
-	images := 0
 	for _, rec := range rawOutboxRecords(t, dir) {
 		if rec.To == ownerEfua && rec.Kind == "image" {
-			images++
-			if rec.MediaRef != "MEDIA-TEST-1" || !strings.Contains(rec.Body, "Payment claim:") {
-				t.Fatalf("image outbox record = %+v, want the media ref and the claim summary as caption", rec)
-			}
+			t.Fatalf("the screenshot was forwarded to the merchant: %+v", rec)
 		}
 	}
-	if images != 1 {
-		t.Fatalf("image messages to the merchant = %d, want exactly 1", images)
-	}
-	if got := c.replies(t, ownerAma); len(got) != 0 {
-		t.Fatalf("Ama was told about Efua's claim: %q", got)
-	}
-	// The claim alone paid nothing: the order waits on her word.
-	o := ordersOnDisk(t, dir)[0]
-	if o["status"] != "pending" || o["claimStatus"] != "open" || o["claimScreenshot"] != true || o["screenshotRef"] != "MEDIA-TEST-1" || o["claimAmount"] != 120.0 {
-		t.Fatalf("order after the claim = %v", o)
+	if o := ordersOnDisk(t, dir)[0]; o["status"] != "pending" {
+		t.Fatalf("order after the screenshot = %v, want still open", o)
 	}
 
-	// A second screenshot while the claim is open is acknowledged,
-	// never duplicated to the merchant.
-	sayImage(t, buyer, "MEDIA-TEST-2", "")
-	if got := c.last(t, buyer); !strings.Contains(got, "Already with Efua's Store to confirm.") {
-		t.Fatalf("duplicate claim ack = %q", got)
-	}
-	// Exactly two outbox records carry the claim: the text piece
-	// and the image caption. The duplicate added neither.
-	if n := outboxCountContaining(t, dir, ownerEfua, "Payment claim:"); n != 2 {
-		t.Fatalf("claim records to Efua = %d, want 2 (the text piece and the image caption)", n)
-	}
-
-	// Her yes settles it: the order is paid by her word, the buyer
-	// hears it from her, and Efua's figures carry no Seev fee,
-	// because no Seev was anywhere near this money.
-	c.say(t, ownerEfua, "yes")
-	if got := c.last(t, buyer); !strings.Contains(got, "Payment confirmed") || !strings.Contains(got, "Amount: GH₵120") {
-		t.Fatalf("buyer confirmation = %q", got)
-	}
-	notes = strings.Join(c.replies(t, ownerEfua), "\n")
-	if !strings.Contains(notes, "Confirmed. Raw Shea Butter (500g) paid in full by MoMo to your number: GH₵120 is yours, no Seev fee on this one.") || !strings.Contains(notes, "Day book:") {
-		t.Fatalf("merchant closing figures = %q", notes)
-	}
-	o = ordersOnDisk(t, dir)[0]
-	if o["status"] != "paid" || o["paymentPath"] != "direct" || o["settledVia"] != "merchant-confirmed" || o["claimStatus"] != "confirmed" {
-		t.Fatalf("settled order = %v", o)
-	}
-}
-
-func TestDirectMerchantNoLeavesItUnpaidAndSheMayClaimAgain(t *testing.T) {
-	dir, c := setupTwitterShops(t)
-	buyer := "233550008002"
-
-	closePickupSale(t, c, buyer, "SHOP-AMA", "Smoked Tilapia", "180")
-	c.replies(t, ownerAma)
-
-	// A word-only claim: labelled as exactly that to the merchant.
+	// Her word alone settles nothing either: the report goes to
+	// be checked against the payment service. This harness walk
+	// minted no real session, so she is told there is no session
+	// to check — the point either way is that nothing settles
+	// on her word.
 	c.say(t, buyer, "I have paid")
-	if got := c.last(t, buyer); !strings.Contains(got, "I have sent it to Ama's Stall to confirm.") {
-		t.Fatalf("claim ack = %q", got)
+	got = strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "no payment session to check") {
+		t.Fatalf("paid report answer = %q", got)
 	}
-	notes := strings.Join(c.replies(t, ownerAma), "\n")
-	if !strings.Contains(notes, "Payment claim:") || !strings.Contains(notes, "She sent no screenshot, only her word.") {
-		t.Fatalf("word-only claim to Ama = %q", notes)
+	if o := ordersOnDisk(t, dir)[0]; o["status"] != "pending" {
+		t.Fatalf("order after the word-only report = %v, want still open", o)
 	}
-
-	// Her no: the buyer is told the payment has not been seen and
-	// where to check; the order stays unpaid; the claim closes.
-	c.say(t, ownerAma, "no")
-	if got := c.last(t, buyer); !strings.Contains(got, "Ama's Stall says she has not seen the payment yet. Check the number you sent to: "+ownerAma+".") || !strings.Contains(got, "send the screenshot again") {
-		t.Fatalf("buyer after the no = %q", got)
-	}
-	c.replies(t, ownerAma)
-	o := ordersOnDisk(t, dir)[0]
-	if o["status"] != "pending" || o["claimStatus"] != "rejected" {
-		t.Fatalf("order after the no = %v", o)
-	}
-
-	// When the money actually lands she claims again, and the
-	// merchant hears about the new claim; her yes then settles.
-	c.say(t, buyer, "I have paid")
-	c.replies(t, buyer)
-	if n := outboxCountContaining(t, dir, ownerAma, "Payment claim:"); n != 2 {
-		t.Fatalf("claims forwarded to Ama = %d, want 2", n)
-	}
-	c.say(t, ownerAma, "yes")
-	if got := c.last(t, buyer); !strings.Contains(got, "Payment confirmed") || !strings.Contains(got, "Amount: GH₵180") {
-		t.Fatalf("buyer after the second claim's yes = %q", got)
-	}
-	if o := ordersOnDisk(t, dir)[0]; o["status"] != "paid" || o["settledVia"] != "merchant-confirmed" {
-		t.Fatalf("order after the second claim = %v", o)
+	if got := c.replies(t, ownerEfua); len(got) != 0 {
+		t.Fatalf("the merchant was asked to confirm a payment: %q", got)
 	}
 }
 
-func TestClaimAmountMismatchIsFlaggedToTheMerchant(t *testing.T) {
-	dir, c := setupTwitterShops(t)
-	buyer := "233550008003"
-
-	closePickupSale(t, c, buyer, "SHOP-EFUA", "Shea butter", "120")
-	c.replies(t, ownerEfua)
-	ref := ordersOnDisk(t, dir)[0]["reference"].(string)
-
-	// She names less than the total: what she said is recorded,
-	// and the merchant is warned in the claim itself.
-	c.say(t, buyer, "I have paid 100")
-	c.replies(t, buyer)
-	notes := strings.Join(c.replies(t, ownerEfua), "\n")
-	if !strings.Contains(notes, "says she has paid GH₵100") || !strings.Contains(notes, "Careful: she names GH₵100, but the order total is GH₵120.") {
-		t.Fatalf("mismatch claim = %q", notes)
-	}
-	o := ordersOnDisk(t, dir)[0]
-	if o["claimAmount"] != 100.0 || o["claimMismatch"] != true || o["status"] != "pending" {
-		t.Fatalf("order after the mismatched claim = %v", o)
-	}
-
-	// A merchant who names the reference settles that claim
-	// outright; her word is what counts, warned or not.
-	c.say(t, ownerEfua, "yes "+ref)
-	if got := c.last(t, buyer); !strings.Contains(got, "Payment confirmed") || !strings.Contains(got, "Amount: GH₵120") {
-		t.Fatalf("buyer after the referenced yes = %q", got)
-	}
-	if o := ordersOnDisk(t, dir)[0]; o["status"] != "paid" || o["claimStatus"] != "confirmed" {
-		t.Fatalf("order after the referenced yes = %v", o)
-	}
-}
-
-func TestClaimWithNoUnpaidOrderTroublesNoMerchant(t *testing.T) {
+func TestPaymentReportWithNoUnpaidOrderTroublesNoMerchant(t *testing.T) {
 	_, c := setupTwitterShops(t)
 	buyer := "233550008004"
 
@@ -257,28 +162,29 @@ func TestClaimWithNoUnpaidOrderTroublesNoMerchant(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "I have paid")
 	if got := c.last(t, buyer); !strings.Contains(got, "no unpaid order for you here just now") {
-		t.Fatalf("no-order claim reply = %q", got)
+		t.Fatalf("no-order report reply = %q", got)
 	}
 	if got := c.replies(t, ownerEfua); len(got) != 0 {
-		t.Fatalf("the merchant was troubled with a claim that has no order: %q", got)
+		t.Fatalf("the merchant was troubled with a report that has no order: %q", got)
 	}
-	// A screenshot with a claiming caption and no order behind it
-	// gets the same plain answer, and still no merchant message.
+	// A screenshot with a claiming caption and no order behind
+	// it gets the same plain answer, and still no merchant
+	// message.
 	sayImage(t, buyer, "MEDIA-TEST-9", "I have paid")
 	if got := c.last(t, buyer); !strings.Contains(got, "no unpaid order for you here just now") {
-		t.Fatalf("no-order image claim reply = %q", got)
+		t.Fatalf("no-order image reply = %q", got)
 	}
 	if got := c.replies(t, ownerEfua); len(got) != 0 {
 		t.Fatalf("the merchant was troubled with an orderless screenshot: %q", got)
 	}
 }
 
-func TestClaimsAndConfirmationsNeverCrossShops(t *testing.T) {
+func TestPaymentReportsNeverCrossShops(t *testing.T) {
 	dir, c := setupTwitterShops(t)
 	buyer := "233550008005"
 
-	// Her order is Ama's. Standing in Efua's shop, her claim
-	// attaches to nothing: it is answered as a claim with no
+	// Her order is Ama's. Standing in Efua's shop, her report
+	// attaches to nothing: it is answered as a report with no
 	// order here, and neither merchant hears a word of it.
 	closePickupSale(t, c, buyer, "SHOP-AMA", "Smoked Tilapia", "180")
 	c.replies(t, ownerAma)
@@ -286,43 +192,38 @@ func TestClaimsAndConfirmationsNeverCrossShops(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "I have paid")
 	if got := c.last(t, buyer); !strings.Contains(got, "no unpaid order for you here just now") {
-		t.Fatalf("claim in the wrong shop = %q", got)
+		t.Fatalf("report in the wrong shop = %q", got)
 	}
 	if got := c.replies(t, ownerAma); len(got) != 0 {
-		t.Fatalf("Ama heard a claim made in Efua's shop: %q", got)
+		t.Fatalf("Ama heard a report made in Efua's shop: %q", got)
 	}
-	if o := ordersOnDisk(t, dir)[0]; o["claimStatus"] != nil {
-		t.Fatalf("Ama's order grew a claim from another shop: %v", o)
+	if o := ordersOnDisk(t, dir)[0]; o["status"] != "pending" {
+		t.Fatalf("Ama's order was touched from another shop: %v", o)
 	}
 
-	// Back in Ama's shop the claim lands where it belongs.
+	// Back in Ama's shop the report is answered by the agent's
+	// own check of the link — never by asking the merchant.
 	c.say(t, buyer, "SHOP-AMA")
 	c.replies(t, buyer)
 	c.say(t, buyer, "I have paid")
 	c.replies(t, buyer)
-	if n := outboxCountContaining(t, dir, ownerAma, "Payment claim:"); n != 1 {
-		t.Fatalf("claims to Ama = %d, want 1", n)
+	if got := c.replies(t, ownerAma); len(got) != 0 {
+		t.Fatalf("the merchant was asked to confirm a report: %q", got)
+	}
+	if o := ordersOnDisk(t, dir)[0]; o["status"] != "pending" {
+		t.Fatalf("order after the in-shop report = %v, want still open", o)
 	}
 
-	// Efua's yes is about her own shop, which has no open claim:
-	// it falls through to her ordinary handling and settles
-	// nothing of Ama's.
+	// Efua's yes settles nothing of Ama's: there is no claim
+	// for it to land on, and it falls through to her ordinary
+	// handling.
 	c.say(t, ownerEfua, "yes")
 	c.replies(t, ownerEfua)
-	if o := ordersOnDisk(t, dir)[0]; o["status"] != "pending" || o["claimStatus"] != "open" {
-		t.Fatalf("Efua's yes touched Ama's claim: %v", o)
+	if o := ordersOnDisk(t, dir)[0]; o["status"] != "pending" {
+		t.Fatalf("Efua's yes touched Ama's order: %v", o)
 	}
 	if got := c.replies(t, buyer); len(got) != 0 {
 		t.Fatalf("the buyer was told something by another shop's yes: %q", got)
-	}
-
-	// Ama's own yes settles her own claim.
-	c.say(t, ownerAma, "yes")
-	if got := c.last(t, buyer); !strings.Contains(got, "Payment confirmed") || !strings.Contains(got, "Amount: GH₵180") {
-		t.Fatalf("buyer after Ama's yes = %q", got)
-	}
-	if o := ordersOnDisk(t, dir)[0]; o["status"] != "paid" || o["settledVia"] != "merchant-confirmed" {
-		t.Fatalf("order after Ama's yes = %v", o)
 	}
 }
 

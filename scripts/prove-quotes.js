@@ -130,33 +130,32 @@ const quoteRecID = (who, price) => {
     check("the fulfilment names the corrected place, Kumasi", bodies(deal).includes("Kumasi"));
     check("the old place, Accra, is nowhere in the fulfilment", !bodies(deal).includes("Accra"));
 
-    // D. The merchant quotes one claim among several.
-    async function claimSale(buyer, media) {
-      await turn(buyer, "SHOP-KOFI");
-      await turn(buyer, "Ankle Strap Heels");
-      await turn(buyer, "120");
-      await turn(buyer, "I will pick it up myself");
-      await turn(buyer, "40"); // the heels' size, when asked
-      await turn(buyer, "Akosua Mensah");
-      await turn(buyer, "no");
-      await turn(buyer, "yes");
-      await turn(buyer, "I will pay to the number");
-      const before = outboxTo(buyer).length;
-      await img(buyer, media);
-      for (let i = 0; i < 30; i++) { await sleep(600); if (outboxTo(buyer).length > before) break; }
-    }
-    await claimSale(D1, "MEDIA-Q1");
-    await claimSale(D2, "MEDIA-Q2");
+    // D. The buyer quotes her pay button and says she paid:
+    // the report attaches to THAT order, the agent checks the
+    // payment service itself, and no merchant is asked
+    // anything. (There are no claims any more: payment is
+    // link-only and Stall verifies it.)
+    await turn(D1, "SHOP-KOFI");
+    await turn(D1, "Ankle Strap Heels");
+    await turn(D1, "120");
+    await turn(D1, "I will pick it up myself");
+    await turn(D1, "40"); // the heels' size, when asked
+    await turn(D1, "Akosua Mensah");
+    await turn(D1, "no");
+    await turn(D1, "yes");
+    const payRec = outboxTo(D1).filter((r) => r.kind === "cta_url").pop();
+    const payID = payRec && payRec.id;
+    check("the pay button carries a quotable id", !!payID);
+    const ownerBefore = outboxTo(OWNER).length;
+    const paidReply = await turn(D1, "Paid", { id: payID, from: AGENTNUM });
+    // This harness runs on the placeholder payment rail (no
+    // Seev keys), so the check's honest answer is that there
+    // is no session to check — and it names the QUOTED order,
+    // which is what proves the report landed on it.
+    check("the quoted Paid is answered about the quoted order itself", bodies(paidReply).includes("KOFI-0001") && bodies(paidReply).includes("no payment session to check"));
+    check("the merchant is told nothing about the report", outboxTo(OWNER).length === ownerBefore);
     const os_ = orders();
-    check("two orders wait on the merchant's word", os_.length === 2 && os_.every((o) => o.claimStatus === "open"));
-    const alert2 = outboxTo(OWNER).filter((r) => (r.body || "").includes("(order KOFI-0002)")).pop();
-    check("the second claim's alert carries a quotable id", !!alert2 && !!alert2.id);
-    await turn(OWNER, "yes", { id: alert2.id, from: AGENTNUM });
-    const after = orders();
-    const o1 = after.find((o) => o.reference === "KOFI-0001");
-    const o2 = after.find((o) => o.reference === "KOFI-0002");
-    check("the quoted claim settles", !!o2 && o2.status === "paid" && o2.claimStatus === "confirmed");
-    check("the older claim stays open", !!o1 && o1.status === "pending" && o1.claimStatus === "open");
+    check("the order stays open on her word alone", os_.length === 1 && os_[0].status === "pending");
   } catch (e) {
     console.log("ERROR " + e.message); fail++;
   } finally {

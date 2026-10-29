@@ -16,8 +16,7 @@ import (
 // same item), and a buyer who asks for the pic is sent them.
 // The bytes are kept on disk at save time, because a
 // WhatsApp media id is not a storage promise; sending
-// re-uploads from the kept bytes, the same road the claim
-// screenshots already travel.
+// re-uploads from the kept bytes every time.
 
 var (
 	downloadMediaBytesFn = whatsapp.DownloadMediaBytes

@@ -130,15 +130,19 @@ func TestExpiredLinkIsReissuedUnderAFreshKey(t *testing.T) {
 	}
 
 	// Two more reports walk to the cap; the third is answered
-	// with the direct way instead of another link.
+	// honestly instead of with another link — and never with a
+	// number: the button stays the only door.
 	actOnBuyerUnderstanding(buyer, s, catalogue.GetMerchant(MerchantID), MerchantID, &understood{Intent: intentPaymentExpired})
 	c.replies(t, buyer)
 	if !actOnBuyerUnderstanding(buyer, s, catalogue.GetMerchant(MerchantID), MerchantID, &understood{Intent: intentPaymentExpired}) {
 		t.Fatal("the capped answer must still answer")
 	}
 	got = strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "a few times now") || !strings.Contains(got, "Send MoMo directly") {
+	if !strings.Contains(got, "a few times now") || !strings.Contains(got, "payment button is the way to complete it") {
 		t.Fatalf("capped answer = %q", got)
+	}
+	if strings.Contains(got, "MoMo directly") {
+		t.Fatalf("the capped answer must never offer a direct route: %q", got)
 	}
 	if o := orders.Default.GetOrder("TEST-3003"); o.LinkAttempts != 3 {
 		t.Fatalf("attempts must stop at the cap, got %d", o.LinkAttempts)
@@ -233,24 +237,29 @@ func TestPaymentWantServesTheLinkFromTheOrder(t *testing.T) {
 	}
 }
 
-func TestPaymentClaimFromThinkingGoesToTheMerchant(t *testing.T) {
+func TestDirectRouteReportIsNotAClaim(t *testing.T) {
 	merchant := "233550001861"
 	dir := setupChat(t, merchant, shopWithBag)
 	c := &chat{dir: dir}
 	buyer := "233550001862"
 	seedOpenOrder(t, "TEST-3006", buyer, 1)
 
-	// She said the money went to the shop's own number, so the
-	// report is a claim for the merchant, who can see her MoMo.
+	// She said the money went somewhere other than the payment
+	// link. There is no claim any more: Stall cannot see or
+	// confirm that payment, opens nothing, and asks no one to
+	// confirm anything. She is told so plainly, with the button.
 	if !actOnBuyerUnderstanding(buyer, &Session{Stage: "agreed"}, catalogue.GetMerchant(MerchantID), MerchantID, &understood{Intent: intentPaymentClaim, DirectRoute: true}) {
-		t.Fatal("an understood claim must be acted on")
+		t.Fatal("an understood payment report must be acted on")
 	}
 	o := orders.Default.GetOrder("TEST-3006")
-	if o == nil || o.ClaimStatus != "open" || o.Status == "paid" {
-		t.Fatalf("the claim must be open and the order unpaid, got %+v", o)
+	if o == nil || o.Status != "pending" {
+		t.Fatalf("the order must stay open, got %+v", o)
 	}
-	if got := strings.Join(c.replies(t, merchant), "\n"); !strings.Contains(got, "TEST-3006") {
-		t.Fatalf("the merchant must receive the claim, got %q", got)
+	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "cannot check it or confirm it") {
+		t.Fatalf("the buyer must be told the plain truth, got %q", got)
+	}
+	if got := c.replies(t, merchant); len(got) != 0 {
+		t.Fatalf("no claim may reach the merchant, got %v", got)
 	}
 }
 

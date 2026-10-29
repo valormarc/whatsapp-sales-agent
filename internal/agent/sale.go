@@ -212,21 +212,6 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	// The link itself arrives as a tap-to-pay button with
 	// the total on its face, not as a raw address in the chat.
 	sendPayButton(from, total, url)
-	// The second door, offered beside the button: plenty of
-	// buyers will not tap a link from a number they just met,
-	// but they will send MoMo to the merchant's own number,
-	// the way they already buy every day. The offer is worded
-	// from the order's own payout phone, and is only made
-	// when the shop has one on record: a number is never
-	// invented. Choosing it, and what a screenshot can and
-	// cannot prove, lives in payment.go.
-	if payout != "" {
-		shopName := ""
-		if merchant != nil {
-			shopName = merchant.Name
-		}
-		whatsapp.SendText(from, "Or send MoMo directly to "+shopName+"'s number, "+payout+", and send me the screenshot here.")
-	}
 	if merchantPhone != "" {
 		// The notice is the seller's receipt for the sale, and
 		// it is a record: one message on the fixed paper, the

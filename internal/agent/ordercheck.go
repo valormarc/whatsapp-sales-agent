@@ -31,7 +31,7 @@ var orderRefRe = regexp.MustCompile(`\b([A-Za-z]{2,}-\d{4,})\b`)
 var orderCheckRe = regexp.MustCompile(`(?i)\bmy order\b|\border status\b|\b(check|track)\b[^.?!]*\border\b|\bwhere is my\b[^.?!]*\border\b`)
 
 // handleOrderCheck answers a buyer's order check and reports
-// whether it did. It runs after payment claims and the stage
+// whether it did. It runs after payment reports and the stage
 // handling in her turn, and it touches nothing but the reply: a
 // check in the middle of a haggle or a fulfilment leaves the
 // stage exactly where it stood.
@@ -93,8 +93,6 @@ func orderReadback(merchant *catalogue.Merchant, o *orders.Order) string {
 		case "missing":
 			pieces = append(pieces, "You told me it has not arrived, and I have passed that to the seller with your number.")
 		}
-	case o.ClaimStatus == "open":
-		pieces = append(pieces, "You told me you have paid "+merchant.Name+" directly, and I am waiting for them to confirm it.")
 	default:
 		pieces = append(pieces, "It is not paid yet. The total is "+money.GHS(o.Charged())+".")
 	}
