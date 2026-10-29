@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
+	"github.com/valormarc/hackathon-agent/internal/orders"
 )
 
 // lastStagePrompt holds the most recent stage read the
@@ -455,5 +458,48 @@ func TestPendingCloseReadByMeaning(t *testing.T) {
 	c.say(t, buyer, "yes")
 	if got := c.last(t, buyer); !strings.Contains(got, "how do you want to get it") && !strings.Contains(got, "How do you want to get it") {
 		t.Fatalf("her yes after the answers should still close, got %q", got)
+	}
+}
+
+// A closed sale must not strand on Seev's memory: when the
+// plain order reference collides with a session Seev
+// already holds under that key (the same order number
+// minted again after a store reset, at another amount),
+// the mint is retried on a key that has never existed and
+// the order points at the session that actually opened.
+func TestLinkCreationSurvivesAnIdempotencyCollision(t *testing.T) {
+	dir, c := setupTwitterShops(t)
+	fake := &fakeSeev{conflictFirstMint: true}
+	startFakeSeev(t, fake)
+	stubStageModel(t)
+	buyer := "233550009130"
+	agreeBagAtList(t, c, buyer)
+	tap(t, buyer, "ff_self")
+	c.finishDetails(t, buyer)
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "Pay here to complete your order: https://pay.seevplus.com/PAY-test") {
+		t.Fatalf("the sale should still close with a link, got %q", got)
+	}
+	if strings.Contains(got, "not coming up right now") {
+		t.Fatalf("the buyer should never see the failure when the retry opened, got %q", got)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "data", "orders.json"))
+	if err != nil {
+		t.Fatalf("orders: %v", err)
+	}
+	var all map[string]orders.Order
+	if err := json.Unmarshal(data, &all); err != nil {
+		t.Fatalf("orders parse: %v", err)
+	}
+	o, ok := all["EFUA-0001"]
+	if !ok {
+		t.Fatalf("order EFUA-0001 missing: %v", all)
+	}
+	providerRef := ""
+	if o.ProviderRef != nil {
+		providerRef = *o.ProviderRef
+	}
+	if o.Status != "pending" || o.LinkAttempts != 2 || providerRef != "PAY-EFUA-0001" {
+		t.Fatalf("the order should point at the session the fresh key opened: %+v", o)
 	}
 }

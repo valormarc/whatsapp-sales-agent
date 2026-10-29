@@ -20,6 +20,7 @@ package checkout
 import (
 	"bytes"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/hex"
@@ -81,11 +82,32 @@ type Link struct {
 	ProviderRef *string
 }
 
+// FreshKey returns an idempotency key that has never been
+// used: the order reference plus a random suffix. Seev's
+// dedupe lives entirely on this key, and a reference's own
+// keys are a finite, burnable space (a serial reused after
+// a store reset collides with sessions minted in a former
+// era, at other amounts, plain key and attempt keys
+// alike), so every mint after the first rides a fresh key.
+// Settlement never reads the key: it follows the provider
+// reference of the session that actually opened.
+func FreshKey(reference string) string {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return reference + "-x"
+	}
+	return reference + "-" + hex.EncodeToString(b[:])
+}
+
 // LinkRequest carries the inputs to CreatePaymentLink.
 type LinkRequest struct {
-	Amount        float64
-	Reference     string
-	RecipientName string // defaults to "Customer"
+	Amount    float64
+	Reference string
+	// IdempotencyKey is the key this one mint rides. Empty
+	// means the reference itself; a mint that must not
+	// collide with anything before it passes FreshKey.
+	IdempotencyKey string
+	RecipientName  string // defaults to "Customer"
 	// Subaccount is the selling shop's own Seev subaccount code,
 	// when it has one: the payment is split at settlement, the
 	// seller's share going to her own MoMo.
@@ -143,7 +165,11 @@ func CreatePaymentLink(r LinkRequest) Link {
 	}
 	req.Header.Set("authorization", "Bearer "+os.Getenv("SEEV_SECRET_KEY"))
 	req.Header.Set("content-type", "application/json")
-	req.Header.Set("idempotency-key", r.Reference)
+	idem := r.IdempotencyKey
+	if idem == "" {
+		idem = r.Reference
+	}
+	req.Header.Set("idempotency-key", idem)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		// A failed link must never be a silent one: the provider's

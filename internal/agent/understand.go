@@ -537,10 +537,11 @@ func reissueLink(from string, s *Session, merchant *catalogue.Merchant, order *o
 		return true
 	}
 	link := checkout.CreatePaymentLink(checkout.LinkRequest{
-		Amount:        order.Charged(),
-		Reference:     order.Reference + "-" + strconv.Itoa(attempts+1),
-		RecipientName: order.PackageName,
-		Subaccount:    merchant.SubaccountCode,
+		Amount:         order.Charged(),
+		Reference:      order.Reference + "-" + strconv.Itoa(attempts+1),
+		IdempotencyKey: checkout.FreshKey(order.Reference),
+		RecipientName:  order.PackageName,
+		Subaccount:     merchant.SubaccountCode,
 	})
 	if link.URL == nil {
 		whatsapp.SendText(from, "The link is not coming up right now, even a fresh one. The shop has been told, and your order "+order.Reference+" is still open.")

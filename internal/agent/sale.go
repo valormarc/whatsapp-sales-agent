@@ -69,6 +69,23 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	}
 	total := price + chargedFee
 	link := checkout.CreatePaymentLink(checkout.LinkRequest{Amount: total, Reference: reference, Subaccount: merchant.SubaccountCode})
+	linkAttempts := 1
+	if link.URL == nil && checkout.Enabled() {
+		// A dead first key must not strand a closed sale.
+		// Seev remembers idempotency keys beyond our own
+		// books: a reference minted again after a store
+		// reset collides with the session it named in a
+		// former era, at another amount (a 409), and its
+		// old attempt keys are burned the same way, so
+		// walking them heals nothing. The retry rides a
+		// key that has never existed, and the order points
+		// at the session that actually opened, so
+		// settlement still finds it.
+		if retry := checkout.CreatePaymentLink(checkout.LinkRequest{Amount: total, Reference: reference, IdempotencyKey: checkout.FreshKey(reference), Subaccount: merchant.SubaccountCode}); retry.URL != nil {
+			link = retry
+			linkAttempts = 2
+		}
+	}
 	status := "link_failed"
 	if link.URL != nil {
 		status = "pending"
@@ -98,7 +115,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		DeliveryPaidTo: paidTo,
 		Quantity:       s.Qty,
 		Unit:           s.Unit,
-		LinkAttempts:   1,
+		LinkAttempts:   linkAttempts,
 	})
 	merchantPhone := merchantNotifyPhone(merchant)
 	// Seev was configured but the session could not be created: say so,

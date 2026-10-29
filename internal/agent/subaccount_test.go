@@ -17,9 +17,11 @@ import (
 )
 
 type fakeSeev struct {
-	failCreate bool
-	payments   []map[string]any
-	creates    []map[string]any
+	failCreate        bool
+	conflictFirstMint bool
+	paymentCalls      int
+	payments          []map[string]any
+	creates           []map[string]any
 }
 
 func startFakeSeev(t *testing.T, fake *fakeSeev) {
@@ -40,6 +42,12 @@ func startFakeSeev(t *testing.T, fake *fakeSeev) {
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"success": true, "data": map[string]any{"subaccount_code": "SUB_test123"}})
 		case "/api/v1/developer/payments":
+			fake.paymentCalls++
+			if fake.conflictFirstMint && fake.paymentCalls == 1 {
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]any{"success": false, "error": "IDEMPOTENCY_CONFLICT", "message": "Duplicate idempotency key with different body"})
+				return
+			}
 			fake.payments = append(fake.payments, body)
 			meta, _ := body["meta"].(map[string]any)
 			ref, _ := meta["order_reference"].(string)
