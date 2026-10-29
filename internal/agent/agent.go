@@ -144,6 +144,11 @@ type Session struct {
 	PendingAdd *catalogue.Product
 	SizeQueue  []int
 
+	// RememberedFulfil is how a returning buyer's goods
+	// reached her last time, held up at the fulfilment
+	// step for her to confirm or change (see returning.go).
+	RememberedFulfil fulfilment
+
 	// Relay state: the merchant has asked this buyer a question
 	// through the agent (see merchant_think.go), and her next
 	// answer is owed to the merchant. RelayOrderRef is the order
@@ -588,7 +593,7 @@ func HandleInbound(in Inbound) {
 			if p := entrySelection(shop, rest); p != nil {
 				sessions[sessionKey(shop.ID, from)] = &Session{Stage: "browsing", MerchantID: shop.ID, Product: p, Ask: p.ListPrice, LastViewed: p}
 				if wasBound == "" {
-					whatsapp.SendText(from, "Welcome to "+shop.Name+".")
+					whatsapp.SendText(from, welcomeFor(shop, from))
 				}
 				whatsapp.SendText(from, p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Want to make an offer?"))
 				return
@@ -632,7 +637,7 @@ func HandleInbound(in Inbound) {
 	// way a person types them, not as one block.
 	if strings.TrimSpace(lower) == "" {
 		if shop := catalogue.GetMerchant(boundID); shop != nil {
-			sendPieces(from, "Welcome to "+shop.Name+".", productListText(shop.ID))
+			sendPieces(from, welcomeFor(shop, from), productListText(shop.ID))
 			return
 		}
 	}

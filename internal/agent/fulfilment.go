@@ -101,6 +101,22 @@ func beginFulfilment(from string, s *Session, price float64) {
 		deal += " That makes your order " + money.GHS(basketGoods(s)+price) + " in all."
 	}
 
+	// A returning buyer is recognised: when she has bought
+	// here before and has not already said where she is this
+	// time, last time's way of getting the goods is held up
+	// for her to confirm or change, the way a seller who
+	// knows her would ask. One question, and a "different"
+	// lands on the ordinary choice below, untouched.
+	if s.Location == "" {
+		if remembered, ok := rememberedFulfilment(shopID, from, merchant); ok && (remembered.Location != "" || remembered.Mode == "pickup") {
+			s.RememberedFulfil = remembered
+			s.FulfilStep = "usual"
+			sessions[key] = s
+			sendPieces(from, deal, usualQuestionText(remembered))
+			return
+		}
+	}
+
 	if !shopHasDeliveryTerms(merchant) {
 		// No terms of its own: one question, where she is based,
 		// and the seller arranges the rest with her. A place she
@@ -116,16 +132,23 @@ func beginFulfilment(from string, s *Session, price float64) {
 		return
 	}
 
-	s.FulfilStep = "choice"
-	sessions[key] = s
-	// The choice itself is buttons now, so she taps instead of
-	// composing a sentence: Delivery, Pick up, Meet up. Pick up
-	// is two answers wearing one coat, so it splits into its own
-	// pair when tapped (see routeFulfilmentTap). Her typed words
-	// keep working exactly as before; the buttons ride in the one
-	// message that carries the question, and the words of the
-	// question itself are the same words she heard before.
 	sendPieces(from, deal)
+	sendChoiceQuestion(from, s, merchant)
+}
+
+// sendChoiceQuestion opens the fulfilment choice: the step
+// is set, and the question goes out with its buttons. The
+// choice itself is buttons now, so she taps instead of
+// composing a sentence: Delivery, Pick up, Meet up. Pick up
+// is two answers wearing one coat, so it splits into its
+// own pair when tapped (see routeFulfilmentTap). Her typed
+// words keep working exactly as before; the buttons ride in
+// the one message that carries the question, and the words
+// of the question itself are the same words she heard
+// before.
+func sendChoiceQuestion(from string, s *Session, merchant *catalogue.Merchant) {
+	s.FulfilStep = "choice"
+	sessions[sessionKey(s.MerchantID, from)] = s
 	ask := "How do you want to get it? " + deliveryOptionLine(merchant, s.Location) + " Or you can come and pick it up yourself, no delivery fee."
 	if s.Location != "" {
 		ask += " Which one?"
@@ -206,6 +229,8 @@ var (
 // quietly, and never chased with more than the question itself.
 func fulfilPrompt(s *Session) string {
 	switch s.FulfilStep {
+	case "usual":
+		return usualQuestionText(s.RememberedFulfil)
 	case "where":
 		return "Where should it go?"
 	case "meetwhere":
@@ -313,6 +338,41 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 	// read, the product's own full name in her message does.
 	// In the details the words belong to the details, so the
 	// add is only read at the fulfilment choices themselves.
+	// The returning buyer's same-or-different question: a
+	// yes (or "same") takes last time's way whole, a no (or
+	// "different") opens the ordinary choice, and anything
+	// else is a fresh answer in her own words, read by the
+	// ordinary choice readings below as this same message.
+	if s.FulfilStep == "usual" {
+		remembered := s.RememberedFulfil
+		switch {
+		case isClearYes(lower) || strings.Contains(lower, "same"):
+			s.RememberedFulfil = fulfilment{}
+			sessions[key] = s
+			beginPackageDetails(from, s, remembered)
+			return
+		case isClearNo(lower) || strings.Contains(lower, "different"):
+			s.RememberedFulfil = fulfilment{}
+			sessions[key] = s
+			if shopHasDeliveryTerms(merchant) {
+				sendChoiceQuestion(from, s, merchant)
+			} else {
+				s.FulfilStep = "based"
+				sessions[key] = s
+				whatsapp.SendText(from, "Where are you based?")
+			}
+			return
+		default:
+			s.RememberedFulfil = fulfilment{}
+			if shopHasDeliveryTerms(merchant) {
+				s.FulfilStep = "choice"
+			} else {
+				s.FulfilStep = "based"
+			}
+			sessions[key] = s
+		}
+	}
+
 	detailsStep := s.FulfilStep == "size" || s.FulfilStep == "pkgname" || s.FulfilStep == "pkgmessage" || s.FulfilStep == "confirm"
 	if !detailsStep {
 		if stageIntent == stageIntentAdd && reading.Item != "" {
@@ -518,20 +578,34 @@ func beginPackageDetails(from string, s *Session, f fulfilment) {
 	// pending product last.
 	s.SizeQueue = nil
 	spoken := recentSpeakerWords(s, 12)
+	// A size settles three ways, freshest first: one she
+	// labelled herself in this chat, the size she took for
+	// the same product on her last paid order here, or her
+	// answer to the question. The first two are read back
+	// in the recap, where she can correct them.
+	settleSize := func(p *catalogue.Product) string {
+		if stated := statedSize(p, spoken); stated != "" {
+			return stated
+		}
+		if remembered := lastSizeFor(s.MerchantID, from, p.Name); remembered != "" && matchListedSize(p, remembered) != "" {
+			return remembered
+		}
+		return ""
+	}
 	for i := range s.Basket {
 		it := &s.Basket[i]
 		if len(it.Product.Sizes) == 0 || it.Size != "" {
 			continue
 		}
-		if stated := statedSize(it.Product, spoken); stated != "" {
-			it.Size = stated
+		if size := settleSize(it.Product); size != "" {
+			it.Size = size
 		} else {
 			s.SizeQueue = append(s.SizeQueue, i)
 		}
 	}
 	if f.Size == "" && s.Product != nil && len(s.Product.Sizes) > 0 {
-		if stated := statedSize(s.Product, spoken); stated != "" {
-			f.Size = stated
+		if size := settleSize(s.Product); size != "" {
+			f.Size = size
 			s.PendingFulfil = f
 		} else {
 			s.SizeQueue = append(s.SizeQueue, -1)

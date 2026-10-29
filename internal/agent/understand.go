@@ -400,7 +400,7 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		whatsapp.SendText(from, reply)
 		return true
 	case intentShelf:
-		sendPieces(from, "Welcome to "+merchant.Name+".", productListText(shopID))
+		sendPieces(from, welcomeFor(merchant, from), productListText(shopID))
 		return true
 	case intentOrderStatus:
 		o := orders.Default.NewestFor(shopID, from)

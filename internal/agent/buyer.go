@@ -542,7 +542,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	}
 
 	if greetingRe.MatchString(lower) {
-		sendPieces(from, "Welcome to "+merchant.Name+".", productListText(shopID))
+		sendPieces(from, welcomeFor(merchant, from), productListText(shopID))
 		return
 	}
 
