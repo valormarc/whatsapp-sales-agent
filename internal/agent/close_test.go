@@ -57,40 +57,34 @@ func TestRecapConfirmsAndCorrectionsGoBack(t *testing.T) {
 	}
 }
 
-func TestSettleDraftChecks(t *testing.T) {
-	ref := "TEST-9001"
+func TestSettleRecordIsTheFixedPaper(t *testing.T) {
+	setupChat(t, "233550009101", shopWithBag)
 	o := orders.Order{
-		Reference: ref, ProductName: "Handmade Beaded Bag", Price: 850, Total: 850,
+		Reference: "TEST-9001", ProductName: "Handmade Beaded Bag", Price: 850, Total: 850,
 		Fulfilment: "delivery", Location: "Osu", MerchantID: MerchantID,
 	}
-	good := "Your payment has come through: GH₵850 for the Handmade Beaded Bag. Order TEST-9001. It goes to Osu. Thanks for buying."
-	if !checkSettleDraft(good, &o) {
-		t.Fatal("a sound draft must pass")
+	want := "Payment confirmed\nItem: Handmade Beaded Bag\nAmount: GH\u20b5850\nDelivery to: Osu\nOrder: TEST-9001\nThank you for buying from Test Shop."
+	if got := ComposeBuyerSettleText(&o, ""); got != want {
+		t.Fatalf("settlement record = %q, want exactly %q", got, want)
 	}
-	promise := "Your payment has come through: GH₵850 for the Handmade Beaded Bag. Order TEST-9001. I will send you the rider's number once it is dispatched."
-	if checkSettleDraft(promise, &o) {
-		t.Fatal("a draft promising a rider's number must never be sent")
-	}
-	invented := "Your payment has come through: GH₵850 for the Handmade Beaded Bag. Order TEST-9001. Delivery was GH₵40."
-	if checkSettleDraft(invented, &o) {
-		t.Fatal("a draft inventing a figure must never be sent")
+	// The record is printed from the order's facts, so it can
+	// never carry an invented figure or an unmade promise.
+	if strings.Contains(strings.ToLower(ComposeBuyerSettleText(&o, "")), "rider") {
+		t.Fatal("the record must never promise a rider")
 	}
 }
 
-func TestSettleFallbackCarriesTheOrderFacts(t *testing.T) {
+func TestSettleRecordCarriesTheOrderFacts(t *testing.T) {
 	setupChat(t, "233550009102", shopWithBag)
 	o := orders.Order{
 		Reference: "TEST-9002", ProductName: "Handmade Beaded Bag", Price: 850, Total: 850,
-		Fulfilment: "delivery", Location: "Osu", DeliveryFee: 25, MerchantID: MerchantID,
+		Fulfilment: "delivery", Location: "Osu", DeliveryFee: 25, DeliveryPaidTo: "carrier", MerchantID: MerchantID,
 	}
 	got := ComposeBuyerSettleText(&o, "")
-	for _, want := range []string{"Payment confirmed: GH₵850", "TEST-9002", "It goes to Osu.", "GH₵25", "Thanks for buying from Test Shop."} {
+	for _, want := range []string{"Payment confirmed", "Item: Handmade Beaded Bag", "Amount: GH\u20b5850", "Delivery to: Osu", "Delivery fee: GH\u20b525 to pay on arrival", "Order: TEST-9002", "Thank you for buying from Test Shop."} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("settlement = %q, want it to carry %q", got, want)
 		}
-	}
-	if strings.Contains(strings.ToLower(got), "rider") || strings.Contains(strings.ToLower(got), "dispatch") {
-		t.Fatalf("settlement promises what the shop has not: %q", got)
 	}
 }
 

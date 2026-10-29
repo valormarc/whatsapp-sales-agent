@@ -144,11 +144,17 @@ func Handle(rawBody, timestamp, signature string) int {
 
 // BuyerText composes the buyer's settlement confirmation when
 // a composer is registered. The agent registers one that
-// drafts the words from the order's own facts, in the agent's
-// own voice, following the post-payment format: the words are
-// composed per order, never scripted. Without a registered
+// prints the payment confirmed record from the order's own
+// facts (see the agent's records). Without a registered
 // composer the caller's plain factual text is used as given.
 var BuyerText = func(o *orders.Order, fallback string) string { return fallback }
+
+// MerchantNoticeText composes the merchant's settlement
+// notice when a composer is registered: the agent registers
+// one that prints the order notice record, settled, from
+// the order's facts and the settlement's fee and net.
+// Without one, SettleVerified falls back to its plain text.
+var MerchantNoticeText = func(o *orders.Order, fee, net float64) string { return "" }
 
 // SettleVerified settles an order whose payment Seev itself
 // has verified, by webhook or by the agent's own read-back
@@ -173,7 +179,9 @@ func SettleVerified(order *orders.Order, buyerText string) {
 	})
 	s := checkout.SettlementFor(charged)
 	whatsapp.SendText(order.From, BuyerText(order, buyerText))
-	notifyMerchant(order,
-		"Payment received\n\n*"+order.ProductName+"*\n"+money.GHS(charged)+" paid in full by the buyer.\nSeev fee "+money.GHS(s.Fee)+", so "+money.GHS(s.Net)+" settles to your MoMo tomorrow.\n\nRef: "+order.Reference+"\nBuyer: "+order.From,
-	)
+	notice := MerchantNoticeText(order, s.Fee, s.Net)
+	if notice == "" {
+		notice = "Payment received\n\n*" + order.ProductName + "*\n" + money.GHS(charged) + " paid in full by the buyer.\nSeev fee " + money.GHS(s.Fee) + ", so " + money.GHS(s.Net) + " settles to your MoMo tomorrow.\n\nRef: " + order.Reference + "\nBuyer: " + order.From
+	}
+	notifyMerchant(order, notice)
 }

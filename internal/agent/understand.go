@@ -407,7 +407,7 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		if o == nil {
 			return false
 		}
-		sendPieces(from, orderReadback(merchant, o)...)
+		whatsapp.SendText(from, orderReadback(merchant, o))
 		return true
 	case intentOrderReceived:
 		return buyerConfirmReceived(from, merchant, shopID)
@@ -422,7 +422,8 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		if s.Stage == "agreed" {
 			s.Stage = "browsing"
 		}
-		sendPieces(from, "Still available.", p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Want to make an offer?"))
+		whatsapp.SendText(from, "Still available.")
+		sendProductView(from, p, " Want to make an offer?")
 		return true
 	case intentPicture:
 		// The picture is served before anything is sold:
@@ -440,11 +441,11 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		}
 		s.LastViewed = p
 		if sendProductPhotos(from, p) {
-			whatsapp.SendText(from, p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Make me an offer and let us see."))
+			sendProductView(from, p, " Make me an offer and let us see.")
 			return true
 		}
 		answerPictureAsk(from, merchant, p)
-		whatsapp.SendText(from, "It is this: "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Make me an offer and let us see."))
+		sendProductViewLead(from, "It is this: "+p.Description, p, " Make me an offer and let us see.")
 		return true
 	case intentPaymentClaim:
 		order := orders.Default.NewestUnpaidFor(shopID, from)

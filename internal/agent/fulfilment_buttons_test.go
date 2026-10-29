@@ -88,8 +88,8 @@ func TestTapDeliveryThenDetailsThenSale(t *testing.T) {
 		t.Fatalf("order = %v, want delivery to Osu, package Akosua Mensah, with her note", o)
 	}
 	notes := strings.Join(c.replies(t, ownerEfua), "\n")
-	if !strings.Contains(notes, "Package name: Akosua Mensah.") ||
-		!strings.Contains(notes, "Buyer's message: Please call when the rider leaves.") {
+	if !strings.Contains(notes, "Package name: Akosua Mensah") ||
+		!strings.Contains(notes, "Buyer's message: Please call when the rider leaves") {
 		t.Fatalf("merchant notice = %q, want the package name and her message", notes)
 	}
 }

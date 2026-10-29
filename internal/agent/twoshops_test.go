@@ -360,7 +360,7 @@ func TestSettlementNoticeGoesToTheSellingShopsOwner(t *testing.T) {
 	}
 
 	amaNotes := strings.Join(c.replies(t, ownerAma), "\n")
-	if !strings.Contains(amaNotes, "Payment received") || !strings.Contains(amaNotes, "Smoked Tilapia") ||
+	if !strings.Contains(amaNotes, "Payment: confirmed") || !strings.Contains(amaNotes, "Smoked Tilapia") ||
 		!strings.Contains(amaNotes, "GH₵157.6 settles to your MoMo tomorrow") {
 		t.Fatalf("Ama's settlement notice = %q", amaNotes)
 	}

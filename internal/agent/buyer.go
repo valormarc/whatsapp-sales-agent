@@ -420,8 +420,8 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				} else {
 					s = openHaggle(shopID, merchant, target)
 				}
-				s.Location = loc // a fresh haggle never forgets where she is
-				s.History = hist // nor what she has said so far
+				s.Location = loc  // a fresh haggle never forgets where she is
+				s.History = hist  // nor what she has said so far
 				s.Basket = basket // nor what she has already agreed in this order
 				sessions[key] = s
 				processOffer(from, s, merchant, *offer, msg)
@@ -459,11 +459,11 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		if target != nil {
 			s.LastViewed = target
 			if sendProductPhotos(from, target) {
-				whatsapp.SendText(from, target.Name+": "+target.Description+" It goes for "+money.GHS(target.ListPrice)+"."+offerInvite(target, " Make me an offer and let us see."))
+				sendProductView(from, target, " Make me an offer and let us see.")
 				return
 			}
 			answerPictureAsk(from, merchant, target)
-			whatsapp.SendText(from, "It is this: "+target.Description+" It goes for "+money.GHS(target.ListPrice)+"."+offerInvite(target, " Make me an offer and let us see."))
+			sendProductViewLead(from, "It is this: "+target.Description, target, " Make me an offer and let us see.")
 			return
 		}
 	}
@@ -476,8 +476,8 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		hist := s.History
 		basket := s.Basket
 		s = openHaggle(shopID, merchant, product)
-		s.Location = loc // a fresh haggle never forgets where she is
-		s.History = hist // nor what she has said so far
+		s.Location = loc  // a fresh haggle never forgets where she is
+		s.History = hist  // nor what she has said so far
 		s.Basket = basket // nor what she has already agreed in this order
 		sessions[key] = s
 		whatsapp.SendText(from, product.Name+": "+product.Description+" The price is "+money.GHS(product.ListPrice)+"."+offerInvite(product, " Make me an offer and let us see."))
@@ -499,15 +499,13 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			s.Qty, s.Unit = 0, ""
 		}
 		s.LastViewed = product
-		view := product.Name + ": " + product.Description + " It goes for " + money.GHS(product.ListPrice) + "." + offerInvite(product, " Want to make an offer?")
 		if availabilityFramed(lower) {
 			// She asked in the availability frame, so the
 			// answer leads with the market's own plain words
 			// for it, then the goods.
-			sendPieces(from, "Still available.", view)
-		} else {
-			whatsapp.SendText(from, view)
+			whatsapp.SendText(from, "Still available.")
 		}
+		sendProductView(from, product, " Want to make an offer?")
 		return
 	}
 
@@ -522,9 +520,8 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	if needRe.MatchString(lower) {
 		if rec := recommendForNeed(shopID, lower); rec != nil {
 			s.LastViewed = rec
-			sendPieces(from,
-				"I understand what you mean.",
-				"For that, the "+rec.Name+" is the one: "+rec.Description+" It goes for "+money.GHS(rec.ListPrice)+".")
+			sendPieces(from, "I understand what you mean.")
+			sendProductViewLead(from, "For that, the "+rec.Name+" is the one: "+rec.Description, rec, "")
 			return
 		}
 		recordWantAndOfferShelf(from, s, msg)
@@ -560,7 +557,8 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			// beaded bag): answer the item itself, and never
 			// write a want for goods already in the shop.
 			s.LastViewed = p
-			sendPieces(from, "Still available.", p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Want to make an offer?"))
+			whatsapp.SendText(from, "Still available.")
+			sendProductView(from, p, " Want to make an offer?")
 			return
 		}
 		recordWantAndOfferShelf(from, s, msg)

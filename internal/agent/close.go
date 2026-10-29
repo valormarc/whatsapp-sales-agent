@@ -6,6 +6,7 @@ package agent
 import (
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/money"
+	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
@@ -121,29 +122,28 @@ func answerDeliveryOrTotal(from string, s *Session, merchant *catalogue.Merchant
 	fee := deliveryFeeOf(merchant)
 	carrier := fee > 0 && deliveryPaidToOf(merchant) == "carrier"
 	if totalRe.MatchString(lower) {
-		switch {
-		case carrier:
-			// Both purses, plainly: what she pays here, what
-			// she hands over on arrival, and the two together,
-			// so she still gets one clear picture and never
-			// has to add anything up herself.
-			whatsapp.SendText(from, "With me the "+p.Name+" is "+money.GHS(price)+". Delivery is "+money.GHS(fee)+", paid to "+carrierTarget(merchant.DeliveryNote)+" when it reaches you, so "+money.GHS(price+fee)+" in all.")
-		case fee > 0:
-			whatsapp.SendText(from, "Your total is "+money.GHS(price+fee)+": the "+p.Name+" at "+money.GHS(price)+", plus "+money.GHS(fee)+" delivery.")
-		default:
-			whatsapp.SendText(from, "The "+p.Name+" is "+money.GHS(price)+". Delivery is arranged with the seller, so there is no fixed delivery fee on top.")
-		}
+		// The total she asks for is a record: one message on
+		// the fixed paper, her parked items folded in as
+		// their own lines when the item in play is the one
+		// already being bought, so the figure she hears is
+		// never a part dressed as the whole.
+		items := []orders.OrderItem{}
 		if parked := basketGoods(s); parked > 0 && s.Product != nil && p.ID == s.Product.ID {
-			// She is pricing this item while others already sit
-			// agreed in the same order: the whole picture is
-			// owed too, or the total she hears is a part dressed
-			// as the whole.
-			line := "With the " + basketNames(s) + " already in your order, your items come to " + money.GHS(parked+price)
-			if fee > 0 && !carrier {
-				line += ", " + money.GHS(parked+price+fee) + " with delivery"
+			for _, it := range s.Basket {
+				items = append(items, orders.OrderItem{Name: it.Product.Name, Price: it.AgreedPrice})
 			}
-			whatsapp.SendText(from, line+".")
 		}
+		items = append(items, orders.OrderItem{Name: p.Name, Price: price})
+		chargedFee := fee
+		if carrier {
+			chargedFee = 0
+		}
+		mode := "delivery"
+		note := ""
+		if merchant != nil {
+			note = merchant.DeliveryNote
+		}
+		whatsapp.SendText(from, totalRecord(items, fee, chargedFee, mode, s.Location, deliveryPaidToOf(merchant), note))
 		return true
 	}
 	if fee > 0 {

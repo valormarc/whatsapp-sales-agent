@@ -600,7 +600,7 @@ func HandleInbound(in Inbound) {
 				if wasBound == "" {
 					whatsapp.SendText(from, welcomeFor(shop, from))
 				}
-				whatsapp.SendText(from, p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Want to make an offer?"))
+				sendProductView(from, p, " Want to make an offer?")
 				return
 			}
 		}

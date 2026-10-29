@@ -143,7 +143,7 @@ func TestDeliveryAskedWhileBrowsingThenCloseChargesOneTotal(t *testing.T) {
 	c.say(t, buyer, "Send it to Koforidua")
 	c.finishDetails(t, buyer)
 	got = strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Item GH₵850 + delivery GH₵25 = GH₵875 total") || !strings.Contains(got, "Pay here") {
+	if !strings.Contains(got, "Handmade Beaded Bag: GH₵850\nDelivery to Koforidua: GH₵25\nTotal: GH₵875") || !strings.Contains(got, "Pay here") {
 		t.Fatalf("close with delivery = %q, want the breakdown and the link", got)
 	}
 	orders := ordersOnDisk(t, dir)
@@ -164,7 +164,7 @@ func TestDeliveryAskedWhileBrowsingThenCloseChargesOneTotal(t *testing.T) {
 		t.Fatalf("Efua day book = %v, want the item figures only", day)
 	}
 	notes := strings.Join(c.replies(t, ownerEfua), "\n")
-	if !strings.Contains(notes, "The buyer pays GH₵875 in all: item GH₵850 + delivery GH₵25.") {
+	if !strings.Contains(notes, "Agreed price: GH₵850") || !strings.Contains(notes, "Total: GH₵875") {
 		t.Fatalf("merchant notice = %q, want the same breakdown", notes)
 	}
 	if got := c.replies(t, ownerAma); len(got) != 0 {
@@ -199,7 +199,7 @@ func TestTotalQuestionMidHaggleUsesTheStandingPrice(t *testing.T) {
 			found = true
 		}
 	}
-	if !strings.Contains(got, "Your total is") || !found {
+	if !strings.Contains(got, "Total: GH₵"+moneyFigure(wantTotal)) || !found {
 		t.Fatalf("total answer = %q, want one total of GH₵%v (standing %v plus GH₵15 delivery)", got, wantTotal, standing)
 	}
 
@@ -309,7 +309,7 @@ func TestIllBuyAsksFirstAndYesAgreesThenFulfils(t *testing.T) {
 	c.say(t, buyer, "Koforidua")
 	c.finishDetails(t, buyer)
 	got = strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "= GH₵875 total") || !strings.Contains(got, "Pay here") {
+	if !strings.Contains(got, "Total: GH₵875") || !strings.Contains(got, "Pay here") {
 		t.Fatalf("close after fulfilment = %q, want the one total and the link", got)
 	}
 	orders := ordersOnDisk(t, dir)

@@ -72,7 +72,7 @@ func TestSizeIsAskedVerifiedAndLandsOnTheOrder(t *testing.T) {
 		t.Fatalf("the order should carry the chosen size, got %v", book[0])
 	}
 	notice := strings.Join(c.replies(t, "233550002001"), "\n")
-	if !strings.Contains(notice, "Size: 40.") {
+	if !strings.Contains(notice, "Item: Ankle Strap Heels, size 40") {
 		t.Fatalf("the seller's notice should carry the size, got %q", notice)
 	}
 	_ = orders.Default

@@ -55,11 +55,11 @@ func TestPaidReportOnALinkIsVerifiedAndSettledByTheAgent(t *testing.T) {
 	if o.ClaimStatus == "open" {
 		t.Fatal("a link payment must never become a claim for the merchant to verify")
 	}
-	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Payment confirmed: GH₵875") || !strings.Contains(got, "Thanks for buying from") {
+	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Payment confirmed") || !strings.Contains(got, "Amount: GH₵875") || !strings.Contains(got, "Thank you for buying from") {
 		t.Fatalf("buyer confirmation = %q", got)
 	}
 	notes := strings.Join(c.replies(t, merchant), "\n")
-	if !strings.Contains(notes, "Payment received") || !strings.Contains(notes, "TEST-4001") {
+	if !strings.Contains(notes, "Payment: confirmed") || !strings.Contains(notes, "TEST-4001") {
 		t.Fatalf("the merchant must be alerted by the agent, got %q", notes)
 	}
 	if strings.Contains(notes, "Reply yes if you have received it") {

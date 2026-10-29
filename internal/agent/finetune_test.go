@@ -71,8 +71,9 @@ func TestAvailabilityAskLeadsWithStillAvailable(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "is the beaded bag available?")
 	pieces := c.replies(t, buyer)
-	if len(pieces) < 2 || pieces[0] != "Still available." || !strings.Contains(pieces[1], "GH₵850") {
-		t.Fatalf("availability answer = %q, want 'Still available.' leading, then the bag", pieces)
+	joined := strings.Join(pieces, "\n")
+	if len(pieces) < 2 || pieces[0] != "Still available." || !strings.Contains(joined, "Price: GH₵850") {
+		t.Fatalf("availability answer = %q, want 'Still available.' leading, then the bag on its quote record", pieces)
 	}
 
 	loose := "233550005105"
@@ -93,7 +94,7 @@ func TestPlainViewingHasNoAvailabilityLead(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "show me the beaded bag")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if strings.Contains(got, "Still available") || !strings.Contains(got, "It goes for GH₵850") {
+	if strings.Contains(got, "Still available") || !strings.Contains(got, "Price: GH₵850") {
 		t.Fatalf("plain viewing = %q, want the ordinary item quote, no availability lead", got)
 	}
 }

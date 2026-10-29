@@ -192,7 +192,7 @@ func servePendingAdd(from string, s *Session, merchant *catalogue.Merchant, msg,
 		s.LastViewed = candidate
 		sessions[key] = s
 		whatsapp.SendText(from, "Added. The "+s.Basket[len(s.Basket)-1].Product.Name+" stays in your order.")
-		sendPieces(from, candidate.Name+": "+candidate.Description+" It goes for "+money.GHS(candidate.ListPrice)+"."+offerInvite(candidate, " Make me an offer and let us see."))
+		sendProductView(from, candidate, " Make me an offer and let us see.")
 		return true
 	}
 	if isClearNo(lower) {

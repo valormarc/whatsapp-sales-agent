@@ -222,7 +222,7 @@ func bindDiscoveryShop(from string, shop *catalogue.Merchant, focus *catalogue.P
 		s.Product = focus
 		s.Ask = focus.ListPrice
 		s.LastViewed = focus
-		whatsapp.SendText(from, focus.Name+": "+focus.Description+" It goes for "+money.GHS(focus.ListPrice)+"."+offerInvite(focus, " Want to make an offer?"))
+		sendProductView(from, focus, " Want to make an offer?")
 	}
 }
 
@@ -237,9 +237,9 @@ func bindDiscoveryShop(from string, shop *catalogue.Merchant, focus *catalogue.P
 // her into the shop. Nothing is sold before that pick, as
 // discovery has always held.
 func presentSingleDiscoveryMatch(from string, shop *catalogue.Merchant, p *catalogue.Product) {
-	whatsapp.SendText(from, shop.ShopCode+" has: "+p.Name+" - "+money.GHS(p.ListPrice))
+	whatsapp.SendText(from, shop.ShopCode+" has it:")
 	sendProductPhotos(from, p)
-	whatsapp.SendText(from, p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Want to make an offer?"))
+	sendProductView(from, p, " Want to make an offer?")
 	pre, ok := sessions[sessionKey("", from)]
 	if !ok {
 		pre = &Session{Stage: "unbound"}

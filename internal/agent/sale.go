@@ -11,8 +11,6 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/checkout"
 	"github.com/valormarc/hackathon-agent/internal/daybook"
-	"github.com/valormarc/hackathon-agent/internal/haggle"
-	"github.com/valormarc/hackathon-agent/internal/insights"
 	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
@@ -166,75 +164,34 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	})
 	sessions[sessionKey(shopID, from)] = &Session{Stage: "agreed", MerchantID: shopID, Product: p, AgreedPrice: price, PaymentURL: url, Location: s.Location}
 	linkPiece := "Pay here to complete your order: " + url
-	// The completion goes out piece by piece, the way a person
-	// types it: the total the seller worked out for her, what
-	// happens with the goods, then the link. The deal line itself
-	// was already sent when the price was agreed (beginFulfilment).
-	var pieces []string
-	switch {
-	case f.Mode == "delivery" && chargedFee > 0:
-		// The merchant takes the delivery money herself: one
-		// total, worked out for the buyer, fee inside it.
-		goodsWord := "Item "
-		if multi {
-			goodsWord = "Items "
+	// The completion goes out in the two families. The total
+	// is a record: one message on the fixed paper, never split
+	// (see records.go). What happens with the goods is talk,
+	// in pieces the way a person types it, before it; the
+	// package read-backs and the link follow it. The deal line
+	// itself was already sent when the price was agreed
+	// (beginFulfilment).
+	var talk []string
+	switch f.Mode {
+	case "pickup":
+		if f.Collector != "" {
+			talk = append(talk, "Noted. I have told the seller that "+f.Collector+" is coming for it.")
 		}
-		line := goodsWord + money.GHS(goods) + " + delivery " + money.GHS(deliveryFee) + " = " + money.GHS(total) + " total"
-		if f.Location != "" {
-			line += ", to " + f.Location
-		}
-		pieces = []string{line + "."}
-	case f.Mode == "delivery" && deliveryFee > 0:
-		// The carrier takes the delivery money: two purses,
-		// named plainly, so she never mistakes the fee for part
-		// of what she pays here. What she pays here is the item.
-		note := ""
-		if merchant != nil {
-			note = merchant.DeliveryNote
-		}
-		feeLine := "Delivery is " + money.GHS(deliveryFee) + ", you pay that to " + carrierTarget(note) + " when it reaches you."
-		if f.Location != "" {
-			feeLine += " It is going to " + f.Location + "."
-		}
-		pieces = []string{
-			"Your total with me is " + money.GHS(goods) + ".",
-			feeLine,
-		}
-	case f.Mode == "delivery":
-		line := "Your total is " + money.GHS(total) + "."
-		if f.Location != "" {
-			line = "Your total is " + money.GHS(total) + ". It goes to " + f.Location + "."
-		}
-		pieces = []string{line}
-	case f.Mode == "pickup" && f.Collector != "":
-		pieces = []string{
-			"Noted. I have told the seller that " + f.Collector + " is coming for it.",
-			"No delivery fee. Your total is " + money.GHS(total) + ".",
-		}
-	case f.Mode == "pickup":
-		pieces = []string{
-			"No delivery fee, you collect it yourself. Your total is " + money.GHS(total) + ".",
-		}
-	case f.Mode == "meet":
+	case "meet":
 		// Honest wording, no guarantees beyond the sale: the
 		// seller has been told the place and it is on the order;
 		// whether she comes to it is hers to say.
-		pieces = []string{
-			"I have told the seller you want to meet at " + f.Location + " to collect it. The place is on your order.",
-			"No delivery fee. Your total is " + money.GHS(total) + ".",
-		}
-	default: // arranged
-		pieces = []string{
-			"Delivery will be arranged with the seller.",
-			"Your total is " + money.GHS(total) + ".",
-		}
+		talk = append(talk, "I have told the seller you want to meet at "+f.Location+" to collect it. The place is on your order.")
+	case "arranged":
+		talk = append(talk, "Delivery will be arranged with the seller.")
 	}
-	if multi {
-		// Her items are read back first, each with its price,
-		// before the totals: the switch above builds its lines
-		// fresh, so the breakdown joins here, ahead of them.
-		pieces = append([]string{"Your items: " + basketBreakdown(items) + "."}, pieces...)
+	sendPieces(from, talk...)
+	note := ""
+	if merchant != nil {
+		note = merchant.DeliveryNote
 	}
+	whatsapp.SendText(from, totalRecord(items, deliveryFee, chargedFee, f.Mode, f.Location, paidTo, note))
+	var pieces []string
 	// The package details she gave ride with the order, and she
 	// hears the name read back so a wrong name is caught here,
 	// not at the rider's door.
@@ -269,120 +226,12 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	}
 	sendPieces(from, pieces...)
 	if merchantPhone != "" {
-		// The notice is the seller's receipt for the sale, and it
-		// is laid out the way she reads on her phone: the goods
-		// and the money first, then the order's own details with
-		// labels, then the day so far. One message, short lines,
-		// nothing buried inside a paragraph. A measured sale is
-		// named by its amount, so the merchant knows what to cut
-		// ("3 yards of Ankara Fabric (6 yards)"), and the figures
-		// behind it are the scaled ones the haggle ran on, list
-		// included.
-		var lines []string
-		lines = append(lines, "New order", "")
-		if multi {
-			for _, it := range items {
-				lines = append(lines, "*"+it.Name+"*")
-			}
-			listSum := p.ListPrice
-			for _, it := range s.Basket {
-				listSum += it.Product.ListPrice
-			}
-			margin := haggle.MarginGivenAway(listSum, goods)
-			sold := "Sold for " + money.GHS(goods) + " in all (list " + money.GHS(listSum) + ", "
-			if margin > 0 {
-				sold += money.GHS(margin) + " given away)"
-			} else {
-				sold += "nothing given away)"
-			}
-			lines = append(lines, sold)
-		} else {
-			if s.Qty > 0 {
-				lines = append(lines, "*"+qtyLabel(p, s.Qty)+"*")
-			} else {
-				lines = append(lines, "*"+p.Name+"*")
-			}
-			margin := haggle.MarginGivenAway(p.ListPrice, price)
-			sold := "Sold for " + money.GHS(price) + " (list " + money.GHS(p.ListPrice) + ", "
-			if margin > 0 {
-				sold += money.GHS(margin) + " given away)"
-			} else {
-				sold += "nothing given away)"
-			}
-			lines = append(lines, sold)
+		// The notice is the seller's receipt for the sale, and
+		// it is a record: one message on the fixed paper, the
+		// same lines in the same order every time (see
+		// records.go), filled from the order's own facts.
+		if o := orders.Default.GetOrder(reference); o != nil {
+			whatsapp.SendText(merchantPhone, saleNoticeRecord(o, merchant, day))
 		}
-		if chargedFee > 0 {
-			goodsWord := "item "
-			if multi {
-				goodsWord = "items "
-			}
-			lines = append(lines, "The buyer pays "+money.GHS(total)+" in all: "+goodsWord+money.GHS(goods)+" + delivery "+money.GHS(deliveryFee)+".")
-		}
-		lines = append(lines, "", "Ref: "+reference, "Buyer: "+from)
-		switch f.Mode {
-		case "delivery":
-			line := "Delivery: "
-			note := ""
-			rawNote := ""
-			if merchant != nil {
-				rawNote = merchant.DeliveryNote
-				note = strings.TrimRight(strings.TrimSpace(rawNote), ".")
-			}
-			switch {
-			case note != "" && f.Location != "":
-				line += note + ", to " + f.Location
-			case note != "":
-				line += note
-			case f.Location != "":
-				line += "to " + f.Location
-			default:
-				line += "arranged with the buyer; she gave no location"
-			}
-			switch {
-			case paidTo == "carrier" && deliveryFee > 0:
-				// Her money is the item alone: the fee is the
-				// buyer's to hand to the carrier on arrival,
-				// and the notice says so in as many words, so
-				// she never counts it as hers.
-				line += ". The " + money.GHS(deliveryFee) + " delivery is hers to pay " + carrierTarget(rawNote) + " on arrival; your money is the " + money.GHS(goods) + "."
-			case chargedFee > 0:
-				line += ", fee " + money.GHS(deliveryFee) + " included in the total."
-			default:
-				line += "."
-			}
-			lines = append(lines, line)
-		case "pickup":
-			if f.Collector != "" {
-				lines = append(lines, "Pickup: a collector is coming for it: "+f.Collector+".")
-			} else {
-				lines = append(lines, "Pickup: the buyer will come and pick it up herself.")
-			}
-		case "meet":
-			lines = append(lines, "Meet up: the buyer wants to meet at "+f.Location+" to collect it.")
-		case "arranged":
-			if f.Location != "" {
-				lines = append(lines, "Delivery: to be arranged with the buyer. She is in "+f.Location+".")
-			} else {
-				lines = append(lines, "Delivery: to be arranged with the buyer. No location given.")
-			}
-		}
-		if multi {
-			for _, it := range items {
-				if it.Size != "" {
-					lines = append(lines, "Size for "+it.Name+": "+it.Size+".")
-				}
-			}
-		} else if f.Size != "" {
-			lines = append(lines, "Size: "+f.Size+".")
-		}
-		if f.PackageName != "" {
-			lines = append(lines, "Package name: "+f.PackageName+".")
-		}
-		if f.Note != "" {
-			lines = append(lines, "Buyer's message: "+f.Note+".")
-		}
-		lines = append(lines, "")
-		lines = append(lines, insights.DayReportLines(day)...)
-		whatsapp.SendText(merchantPhone, strings.Join(lines, "\n"))
 	}
 }

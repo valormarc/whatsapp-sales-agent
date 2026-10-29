@@ -315,7 +315,7 @@ try {
   const cutNotes = drain(MERCHANT);
   check(
     'the merchant notice names the cut',
-    cutNotes.some((b) => b.includes('*3 yards of Ankara Cloth*') && b.includes(`Sold for GH₵${cutPrice}`)),
+    cutNotes.some((b) => b.includes('Item: 3 yards of Ankara Cloth') && b.includes(`Agreed price: GH₵${cutPrice}`)),
     JSON.stringify(cutNotes),
   );
 

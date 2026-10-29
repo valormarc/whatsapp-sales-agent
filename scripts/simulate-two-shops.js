@@ -191,7 +191,7 @@ try {
   let r = await say(BUYER_NOCODE, 'buyer (no code)', 'How much is the beaded bag?');
   check(
     'discovery answers with the attributed public result',
-    r.join(' ').includes('EFUA has: Handmade Beaded Bag - GH₵850'),
+    r.join(' ').includes('EFUA has it:') && r.join(' ').includes('Price: GH₵850'),
     r.join(' '),
   );
   check('no other shop\'s goods mix into her result', !/Tilapia|GH₵180/.test(r.join(' ')), r.join(' '));
@@ -321,7 +321,7 @@ try {
   const amaSettled = drain(OWNER_AMA).join('\n');
   check(
     "Ama's owner gets the settlement figures for her sale",
-    amaSettled.includes('Payment received') && amaSettled.includes('Smoked Tilapia') && amaSettled.includes('GH₵157.6'),
+    amaSettled.includes('Payment: confirmed') && amaSettled.includes('Item: Smoked Tilapia') && amaSettled.includes('GH₵157.6'),
     amaSettled,
   );
   const efuaSettled = drain(OWNER_EFUA);

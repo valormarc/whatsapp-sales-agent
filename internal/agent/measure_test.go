@@ -158,7 +158,7 @@ func TestOfferWithQuantityHagglesOnScaledFigures(t *testing.T) {
 			t.Fatalf("opening %q: day book = %+v, want 1 sale, GH₵200 in, GH₵25 given away off the scaled list 225", opening, day)
 		}
 		notes := strings.Join(c.replies(t, merchant), "\n")
-		if !strings.Contains(notes, "*3 yards of Ankara Fabric (6 yards)*\nSold for GH₵200") {
+		if !strings.Contains(notes, "Item: 3 yards of Ankara Fabric (6 yards)") || !strings.Contains(notes, "Agreed price: GH₵200") {
 			t.Fatalf("opening %q: merchant notice should name the cut, got %q", opening, notes)
 		}
 		_ = dir
@@ -241,11 +241,11 @@ func TestPackDescriptorIsNotASplitRequest(t *testing.T) {
 	enterMeasureShop(t, c, buyer)
 
 	c.say(t, buyer, "Raw Shea Butter (500g)")
-	got := c.last(t, buyer)
+	got := strings.Join(c.replies(t, buyer), "\n")
 	if strings.Contains(got, "piece by piece") {
 		t.Fatalf("naming the pack earned a refusal: %q", got)
 	}
-	if !strings.Contains(got, "It goes for GH₵120") {
+	if !strings.Contains(got, "Price: GH₵120") {
 		t.Fatalf("pack-named view = %q, want the ordinary quote", got)
 	}
 }

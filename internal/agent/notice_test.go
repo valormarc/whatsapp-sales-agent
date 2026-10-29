@@ -1,10 +1,9 @@
 package agent
 
-// The merchant's sale notice is her receipt for the sale, and it
-// is laid out the way she reads on her phone: goods and money
-// first, the order's details labelled underneath, the day so far
-// at the foot. Nothing is buried inside one long paragraph and
-// no figure is stated twice in different words.
+// The merchant's sale notice is her receipt for the sale, and
+// it is a record: one message on the fixed paper, the same
+// lines in the same order every time (see records.go), the
+// day so far at the foot.
 
 import (
 	"strings"
@@ -31,17 +30,18 @@ func TestSaleNoticeIsLaidOutInLines(t *testing.T) {
 		t.Fatalf("merchant notices = %v, want the one sale notice", notes)
 	}
 	notice := notes[0]
-	if !strings.HasPrefix(notice, "New order\n") {
-		t.Fatalf("notice should open with its heading on its own line:\n%s", notice)
+	if !strings.HasPrefix(notice, "New order EFUA-0001\n") {
+		t.Fatalf("notice should open with its heading and reference:\n%s", notice)
 	}
 	for _, want := range []string{
-		"Sold for GH₵",
-		"(list GH₵",
-		"\nRef: EFUA-0001",
+		"Item: Handmade Beaded Bag",
+		"Agreed price: GH₵850",
 		"\nBuyer: " + buyer,
 		"\nDelivery: ",
-		"\nPackage name: Akosua Mensah.",
-		"\nBuyer's message: Please call when the rider leaves.",
+		"\nPackage name: Akosua Mensah",
+		"\nBuyer's message: Please call when the rider leaves",
+		"\nTotal: GH₵875",
+		"\nPayment: waiting",
 		"\nToday: 1 sale, GH₵",
 		"\nGiven away: GH₵",
 	} {
@@ -55,7 +55,7 @@ func TestSaleNoticeIsLaidOutInLines(t *testing.T) {
 		}
 	}
 	// The day figures close the notice, below a blank line.
-	if !strings.Contains(notice, "Please call when the rider leaves.\n\nToday:") {
+	if !strings.Contains(notice, "Payment: waiting\n\nToday:") {
 		t.Fatalf("the day block should sit at the foot, set off by a blank line:\n%s", notice)
 	}
 }

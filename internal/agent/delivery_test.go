@@ -47,7 +47,7 @@ func TestDeliveryLoopClosesTheSale(t *testing.T) {
 		t.Fatalf("the buyer should be told, got %q", got)
 	}
 	// The readback now narrates the goods, not only the money.
-	rb := strings.Join(orderReadback(shop, o), "\n")
+	rb := orderReadback(shop, o)
 	if !strings.Contains(rb, "on its way") {
 		t.Fatalf("the readback should say the goods are moving, got %q", rb)
 	}

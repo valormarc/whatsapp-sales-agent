@@ -49,7 +49,7 @@ func handleOrderCheck(from string, merchant *catalogue.Merchant, msg, lower stri
 		if o.Unpaid() && linkRe.MatchString(lower) {
 			return false
 		}
-		sendPieces(from, orderReadback(merchant, o)...)
+		whatsapp.SendText(from, orderReadback(merchant, o))
 		return true
 	}
 	if orderCheckRe.MatchString(lower) {
@@ -58,7 +58,7 @@ func handleOrderCheck(from string, merchant *catalogue.Merchant, msg, lower stri
 			whatsapp.SendText(from, "You have no order at "+merchant.Name+" yet. When you buy something here I will give you a reference for it, and you can check it with me any time.")
 			return true
 		}
-		sendPieces(from, orderReadback(merchant, o)...)
+		whatsapp.SendText(from, orderReadback(merchant, o))
 		return true
 	}
 	return false
@@ -66,7 +66,11 @@ func handleOrderCheck(from string, merchant *catalogue.Merchant, msg, lower stri
 
 // orderReadback states an order the way the buyer thinks of it:
 // what it is, whether it is paid, and how the goods are moving.
-func orderReadback(merchant *catalogue.Merchant, o *orders.Order) []string {
+// orderReadback states an order the way the buyer thinks of
+// it: what it is, whether it is paid, and how the goods are
+// moving. It is a record, so it is one message, its lines
+// joined, never split into pieces.
+func orderReadback(merchant *catalogue.Merchant, o *orders.Order) string {
 	item := o.ProductName
 	if o.Quantity > 0 && o.Unit != "" {
 		item = formatQty(o.Quantity) + " " + unitWord(o.Unit, o.Quantity) + " of " + o.ProductName
@@ -132,5 +136,5 @@ func orderReadback(merchant *catalogue.Merchant, o *orders.Order) []string {
 	if o.PackageName != "" {
 		pieces = append(pieces, "The package carries the name "+o.PackageName+".")
 	}
-	return pieces
+	return strings.Join(pieces, "\n")
 }

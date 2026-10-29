@@ -59,12 +59,13 @@ func TestLinkSuccessAlertsTheMerchantInLines(t *testing.T) {
 	}
 	note := notes[0]
 	for _, want := range []string{
-		"Payment received\n",
-		"*Smoked Tilapia*",
-		"paid in full by the buyer.",
+		"New order " + ref,
+		"Item: Smoked Tilapia",
+		"Agreed price: GH₵",
+		"Total paid: GH₵",
+		"Payment: confirmed",
 		"Seev fee GH₵",
 		"settles to your MoMo tomorrow.",
-		"\nRef: " + ref,
 		"\nBuyer: " + buyer,
 	} {
 		if !strings.Contains(note, want) {
@@ -181,11 +182,11 @@ func TestUnpaidWatchHealsALandedPaymentInsteadOfReminding(t *testing.T) {
 		t.Fatalf("order = %+v, want paid", got)
 	}
 	buyerNotes := c.replies(t, "233550001802")
-	if len(buyerNotes) != 1 || !strings.Contains(buyerNotes[0], "Payment confirmed: GH\u20b5875") || !strings.Contains(buyerNotes[0], "Thanks for buying from") {
+	if len(buyerNotes) != 1 || !strings.Contains(buyerNotes[0], "Payment confirmed") || !strings.Contains(buyerNotes[0], "Amount: GH\u20b5875") || !strings.Contains(buyerNotes[0], "Thank you for buying from") {
 		t.Fatalf("buyer notes = %v", buyerNotes)
 	}
 	merchantNotes := c.replies(t, merchant)
-	if len(merchantNotes) != 1 || !strings.Contains(merchantNotes[0], "Payment received") {
+	if len(merchantNotes) != 1 || !strings.Contains(merchantNotes[0], "Payment: confirmed") {
 		t.Fatalf("merchant notes = %v", merchantNotes)
 	}
 	for _, notes := range [][]string{buyerNotes, merchantNotes} {

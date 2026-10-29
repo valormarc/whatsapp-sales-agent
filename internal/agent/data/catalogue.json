@@ -1,0 +1,68 @@
+{
+  "merchants": {
+    "ama": {
+      "id": "ama",
+      "name": "Ama's Stall",
+      "dailyGiveawayAllowance": 200,
+      "products": [
+        {
+          "id": "smoked-tilapia",
+          "name": "Smoked Tilapia",
+          "description": "Smoked tilapia from Lake Volta, well dried.",
+          "listPrice": 180,
+          "floorPrice": 140,
+          "stock": 10
+        },
+        {
+          "id": "groundnut-paste",
+          "name": "Groundnut Paste (1kg)",
+          "description": "Stone-ground groundnut paste, nothing added.",
+          "listPrice": 95,
+          "floorPrice": 75,
+          "stock": 25
+        }
+      ],
+      "shopCode": "AMA",
+      "deliveryFee": 15,
+      "deliveryNote": "Rider brings it to you in town, same day.",
+      "deliveryPaidTo": "carrier"
+    },
+    "demo": {
+      "id": "demo",
+      "name": "Efua's Store",
+      "dailyGiveawayAllowance": 300,
+      "products": [
+        {
+          "id": "ankara",
+          "name": "Ankara Fabric (6 yards)",
+          "description": "Bright wax-print cotton, 6 yards.",
+          "listPrice": 450,
+          "floorPrice": 360,
+          "stock": 12,
+          "unit": "yard",
+          "baseQty": 6
+        },
+        {
+          "id": "beaded-bag",
+          "name": "Handmade Beaded Bag",
+          "description": "Hand-beaded evening bag with a gold clasp.",
+          "listPrice": 850,
+          "floorPrice": 680,
+          "stock": 3
+        },
+        {
+          "id": "shea",
+          "name": "Raw Shea Butter (500g)",
+          "description": "Unrefined shea butter from Tamale, for skin and hair; keeps the moisture in.",
+          "listPrice": 120,
+          "floorPrice": 95,
+          "stock": 40
+        }
+      ],
+      "shopCode": "EFUA",
+      "deliveryFee": 25,
+      "deliveryNote": "Sent by bus to your station; you collect it the next day.",
+      "deliveryPaidTo": "carrier"
+    }
+  }
+}
