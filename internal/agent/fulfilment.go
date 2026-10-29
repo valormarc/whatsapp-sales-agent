@@ -306,6 +306,17 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		return
 	}
 
+	// "Use the same details as last time" outranks the open
+	// question entirely: it is a direct instruction with one
+	// referent in the book, the way a cancellation is, so it
+	// is honoured from her words before any reading or step
+	// can eat them as its own answer and print them on a
+	// package. Everything the book holds is applied at once
+	// and the sale goes to its recap (see reorder.go).
+	if sameDetailsRe.MatchString(lower) && adoptSameDetails(from, s, merchant) {
+		return
+	}
+
 	// The intent layer runs before any step reads her words:
 	// the thinking reads what she means against the open
 	// question, and two meanings outrank the question itself.

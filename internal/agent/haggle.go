@@ -198,6 +198,15 @@ func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer f
 		whatsapp.SendText(from, "The "+s.itemLabel()+" is "+money.GHS(s.Ask)+", and that price is fixed. I cannot take "+money.GHS(offer)+" for it. If you want it at "+money.GHS(s.Ask)+", say the word and it is yours.")
 		return
 	}
+	// An opening offer that meets the asking price in full
+	// is not an opening at all: she has taken it at the
+	// price, and nobody behind a counter haggles against a
+	// full-price yes. It closes at the price here, by code,
+	// so no road that reaches this point can drag it out.
+	if s.Round == 0 && offer >= s.Ask {
+		beginFulfilment(from, s, s.Ask)
+		return
+	}
 	result := negotiateStep(s, offer, merchant)
 	if result.Type == "accept" {
 		beginFulfilment(from, s, result.Price)

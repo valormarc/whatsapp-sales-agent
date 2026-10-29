@@ -67,6 +67,7 @@ const (
 	intentOrderReceived  = "order_received"  // the buyer confirms her paid order reached her
 	intentOrderMissing   = "order_missing"   // the buyer reports her paid order has not arrived
 	intentOrderDispute   = "order_dispute"   // the buyer opens a dispute on a paid order: cheated, scammed, refund demanded
+	intentReorder        = "reorder"         // the buyer wants a past order again, the same items with the same details
 	intentOrderPayment   = "order_payment"   // the owner asks about the payment on an order
 	intentAskBuyer       = "ask_buyer"       // the owner tells the agent to ask her buyer
 	intentNewListing     = "new_listing"     // the owner is giving the agent a product to list
@@ -171,6 +172,7 @@ The acts you can name:
 - "order_received": the buyer is confirming that the goods from her paid order have arrived and she has them: "it has come", "I have received it", "the parcel reached me". Not thanks on its own; she is reporting the arrival.
 - "order_missing": the buyer is reporting that the goods from her paid order have NOT arrived: they never came, she is still waiting and it is overdue, the parcel is lost. Asking where an order is, without saying it has failed to arrive, is "order_status", not this.
 - "order_dispute": the buyer is opening a dispute on a paid order: she says she was cheated or scammed, that the seller took her money and sent nothing, or she demands her money back through the platform for goods that never came. Stronger than "order_missing": not a delay being reported, a sale being called dishonest.
+- "reorder": the buyer wants a past order AGAIN: the same items, the same details, bought once more. "Can I buy this again", "reorder the same", "I want the same thing I bought last time", quoting a completed order and asking to repeat it. She is not asking where that order stands (that is "order_status") and not starting a fresh browse; she is repeating a purchase.
 - "order_payment": the shop owner is asking about the payment on an order: whether it has been paid, what is happening with it. When an open order is in the facts and she asks about "the payment" or "this order" without naming another, that is the order she means.
 - "ask_buyer": the shop owner is telling you to ask her buyer something, or to find something out from the buyer: "ask the buyer", "ask her", "find out from her". You carry the question to the buyer yourself; never ask the owner what to ask when the facts show the open matter.
 - "new_listing": the shop owner is giving you a product to sell: describing goods she stocks, pasting an advert for a product, naming a product with its price or description so it can be listed. Goods copy meant for the shelf is this act, never a question; a statement about her shop, her orders or her day is not.
@@ -333,7 +335,7 @@ func parseUnderstood(out *string) *understood {
 	}
 	switch u.Intent {
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
-		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentOrderPayment, intentAskBuyer, intentNewListing, intentShelf, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
+		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentOrderPayment, intentAskBuyer, intentNewListing, intentShelf, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
 		return &u
 	}
 	return nil
@@ -398,6 +400,8 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		}
 		openDispute(from, merchant, order, u.Words)
 		return true
+	case intentReorder:
+		return startReorder(from, s, merchant, shopID, u.Words)
 	case intentItem:
 		p := catalogue.FindProduct(shopID, strings.ToLower(u.Item))
 		if p == nil {
