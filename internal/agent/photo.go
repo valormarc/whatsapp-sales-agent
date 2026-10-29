@@ -350,18 +350,45 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		flow.Name == "" && flow.Description == "" && flow.ListPrice <= 0
 
 	draft := throwDraftFromCaption(caption)
-	// The same photo sent again while its listing is still
-	// open (a double tap, a redelivery, a seller checking
-	// whether it landed) changes nothing: one short line says
-	// the agent is still on it, and nothing is asked again.
-	if s.Onboarding != nil && flow.Photo &&
-		(draft.Name == "" || draft.Name == flow.Name) &&
+	// A forwarded Stall Status caption already contains the
+	// product name and list price. Read that text as an advert
+	// before relying on the pixels: the image is the product
+	// photo, while the caption is already the seller's words.
+	if advert, _, isAdvert := parsePastedAdvert(caption); isAdvert {
+		if advert.Name != "" {
+			draft.Name = advert.Name
+		}
+		if advert.Description != "" {
+			draft.Description = advert.Description
+		}
+		if advert.ListPrice > 0 {
+			draft.ListPrice = advert.ListPrice
+			draft.PriceDoubted = advert.PriceDoubted
+		}
+		if advert.Unit != "" {
+			draft.Unit, draft.BaseQty = advert.Unit, advert.BaseQty
+		}
+		if len(advert.Sizes) > 0 {
+			draft.Sizes = advert.Sizes
+		}
+	}
+	// A duplicate media id is a duplicate photo. An empty
+	// caption is NOT evidence that two different photos show
+	// the same item; decide that only after reading the image.
+	sameMedia := false
+	if s.Onboarding != nil && flow.Photo && imageID != "" {
+		for _, ref := range flow.PhotoRefs {
+			if ref == imageID {
+				sameMedia = true
+				break
+			}
+		}
+	}
+	if s.Onboarding != nil && flow.Photo && sameMedia &&
+		(draft.Name == "" || sameProductName(draft.Name, flow.Name)) &&
 		(draft.Description == "" || draft.Description == flow.Description) &&
 		(draft.ListPrice <= 0 || draft.ListPrice == flow.ListPrice) &&
 		(draft.Unit == "" || draft.Unit == flow.Unit) {
-		// Another angle of the same goods: it joins the
-		// listing's kept photos even though it earns no reply.
-		collectFlowPhoto(flow, imageID)
 		if photoAckCovered(flow.RepeatAckAt) {
 			return
 		}
@@ -406,19 +433,25 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			draft.Description = ""
 		}
 	}
-	// A photo of a DIFFERENT product while a photo listing is
-	// already open (the second item in an album she forwarded)
-	// does not merge into the listing under way and does not
-	// disturb it: listings are taken one at a time, and she is
-	// told what the open one is waiting for.
-	if s.Onboarding != nil && flow.Photo && flow.Name != "" && draft.Name != "" &&
-		!sameProductName(flow.Name, draft.Name) {
-		if photoAckCovered(flow.HeldAckAt) {
+	// A new media id has to prove that it belongs with the
+	// open photo listing. A different name is a different item;
+	// a missing name is ambiguous, not permission to append it.
+	// Never silently turn an album of products into one listing.
+	if s.Onboarding != nil && flow.Photo {
+		differentOrUnknown := draft.Name == "" || flow.Name == "" ||
+			!sameProductName(flow.Name, draft.Name)
+		if differentOrUnknown {
+			if photoAckCovered(flow.HeldAckAt) {
+				return
+			}
+			flow.HeldAckAt = time.Now()
+			if draft.Name == "" || flow.Name == "" {
+				whatsapp.SendText(from, "One at a time: I am still listing the photo already in progress. I could not identify this new photo confidently, so I have not attached it. "+photoStepReminder(flow)+" When that listing is finished, send this photo again with the product name if it is a different item.")
+			} else {
+				whatsapp.SendText(from, "One at a time: I am still listing "+flow.Name+". "+photoStepReminder(flow))
+			}
 			return
 		}
-		flow.HeldAckAt = time.Now()
-		whatsapp.SendText(from, "One at a time: I am still listing "+flow.Name+". "+photoStepReminder(flow))
-		return
 	}
 	flow.Photo = true
 	flow.PhotoRef = imageID
