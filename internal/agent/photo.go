@@ -600,31 +600,39 @@ func photoNameKey(name string) string {
 }
 
 // sameProductName judges whether two drafted names plausibly
-// name the same goods: exactly alike, one inside the other,
-// or sharing a real word. It keeps a second angle of the same
-// product (read slightly differently) merging into its
-// listing, while a genuinely different product in the same
+// name the same goods: exactly alike, or one's words entirely
+// inside the other's ("Maxi Dress" read again as "White Maxi
+// Dress"). Sharing a single word is NOT enough: "Thong
+// Sandals" and "Flat strappy sandals" share only the category
+// word and are different products, and a shared-word rule
+// merged a whole supplier range onto its first listing on
+// the live number. A genuinely different product in the same
 // album is held for its own turn.
 func sameProductName(a, b string) bool {
 	ka, kb := photoNameKey(a), photoNameKey(b)
 	if ka == "" || kb == "" {
 		return false
 	}
-	if ka == kb || strings.Contains(ka, kb) || strings.Contains(kb, ka) {
+	if ka == kb {
 		return true
 	}
-	seen := map[string]bool{}
+	wa := map[string]bool{}
 	for _, w := range strings.Fields(ka) {
-		if len(w) > 3 {
-			seen[w] = true
-		}
+		wa[w] = true
 	}
+	wb := map[string]bool{}
 	for _, w := range strings.Fields(kb) {
-		if seen[w] {
-			return true
-		}
+		wb[w] = true
 	}
-	return false
+	subset := func(x, y map[string]bool) bool {
+		for w := range x {
+			if !y[w] {
+				return false
+			}
+		}
+		return true
+	}
+	return subset(wa, wb) || subset(wb, wa)
 }
 
 // photoStepReminder names, shortly, the one thing a repeated

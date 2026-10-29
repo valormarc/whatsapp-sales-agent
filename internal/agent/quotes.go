@@ -191,6 +191,26 @@ func init() {
 	}
 }
 
+// alreadyHandled reports whether an inbound message id is
+// already in the book, meaning an earlier delivery of the
+// same message was handled in full. WhatsApp delivers a
+// webhook more than once when the answer is slow, and a
+// photo turn is slow; the book refuses to record the same
+// id twice, but until this check the handling itself ran
+// again on every redelivery — the same photo opening a
+// second listing, the same "last price" answer saving the
+// next product too. A message with no id cannot be judged
+// and is never dropped on this ground.
+func alreadyHandled(id string) bool {
+	if id == "" {
+		return false
+	}
+	msgMu.Lock()
+	defer msgMu.Unlock()
+	_, seen := loadMsgIndex()[id]
+	return seen
+}
+
 // recordInboundMsg writes one received message into the
 // book, under the id the webhook carried, so the person's
 // own earlier words can be quoted back and resolved too.

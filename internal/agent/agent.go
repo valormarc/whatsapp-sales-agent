@@ -510,6 +510,13 @@ func HandleInbound(in Inbound) {
 	sessionsMu.Lock()
 	defer sessionsMu.Unlock()
 
+	// A redelivery of a message that was already handled is
+	// dropped whole, before it can record, answer or act
+	// again (see alreadyHandled in quotes.go).
+	if alreadyHandled(in.MessageID) {
+		return
+	}
+
 	// Every inbound message is one turn, and the turn's
 	// model budget opens with it: one call to understand,
 	// drafting on its own small budget (see model.BeginTurn).
