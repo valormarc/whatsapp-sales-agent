@@ -353,10 +353,10 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		(draft.Description == "" || draft.Description == flow.Description) &&
 		(draft.ListPrice <= 0 || draft.ListPrice == flow.ListPrice) &&
 		(draft.Unit == "" || draft.Unit == flow.Unit) {
-		if photoAckCovered(flow) {
+		if photoAckCovered(flow.RepeatAckAt) {
 			return
 		}
-		flow.PhotoAckAt = time.Now()
+		flow.RepeatAckAt = time.Now()
 		whatsapp.SendText(from, "I am still on that same photo.")
 		return
 	}
@@ -401,10 +401,10 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	// told what the open one is waiting for.
 	if s.Onboarding != nil && flow.Photo && flow.Name != "" && draft.Name != "" &&
 		!sameProductName(flow.Name, draft.Name) {
-		if photoAckCovered(flow) {
+		if photoAckCovered(flow.HeldAckAt) {
 			return
 		}
-		flow.PhotoAckAt = time.Now()
+		flow.HeldAckAt = time.Now()
 		whatsapp.SendText(from, "One at a time: I am still listing "+flow.Name+". "+photoStepReminder(flow))
 		return
 	}
@@ -448,12 +448,14 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	// description; anything less falls back to the walk.
 	if !virginGuided && flow.Name != "" && flow.Description != "" {
 		flow.PhotoCompact = true
+		flow.RepeatAckAt = time.Now()
 		// A photo joining a listing whose last price question
 		// is already outstanding (her advert opened it a
 		// moment ago) is acknowledged, not answered with the
 		// question all over again: the question stands, and
 		// her answer to it now saves the product at once.
 		if s.Onboarding != nil && flow.Step == "lastprice" && flow.FloorPrice <= 0 {
+			flow.RepeatAckAt = time.Now()
 			whatsapp.SendText(from, "Got it ✅ Photo added to "+flow.Name+".")
 			return
 		}
@@ -471,6 +473,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		return
 	}
 
+	flow.RepeatAckAt = time.Now()
 	whatsapp.SendText(from, "Got your photo.")
 	if read := throwReadBack(flow); read != "" {
 		whatsapp.SendText(from, read)
@@ -549,9 +552,9 @@ func isAdvertDump(text string) bool {
 // Past the window, a fresh photo earns a fresh line.
 const photoAckWindow = 90 * time.Second
 
-// photoAckCovered reports whether an acknowledgement for
-// this listing's photo burst has already gone out inside the
-// window, in which case the item is taken in silently.
-func photoAckCovered(flow *OnboardingFlow) bool {
-	return !flow.PhotoAckAt.IsZero() && time.Since(flow.PhotoAckAt) < photoAckWindow
+// photoAckCovered reports whether the given acknowledgement
+// stamp falls inside the burst window, in which case the
+// item is taken in silently.
+func photoAckCovered(stamp time.Time) bool {
+	return !stamp.IsZero() && time.Since(stamp) < photoAckWindow
 }

@@ -85,12 +85,19 @@ type OnboardingFlow struct {
 	// answered (including "only as a whole"), so the walk can
 	// move past it for good.
 	MeasureSettled bool
-	// PhotoAckAt stamps the last acknowledgement sent for a
-	// burst of photos against this listing. An album arrives
-	// as one message after another, seconds apart, and one
-	// acknowledgement covers the whole burst: the rest of the
-	// items are taken in silently.
-	PhotoAckAt time.Time
+	// RepeatAckAt stamps when this listing last spoke about
+	// its photos: when the photo listing opened, when a photo
+	// joined it, or when the still-on-that-photo line was
+	// sent. An album arrives as one message after another,
+	// seconds apart, all one act of sending, so a repeat
+	// inside that window is taken in silently; the line
+	// exists for a photo re-sent after the window, when the
+	// seller is genuinely checking whether it landed.
+	RepeatAckAt time.Time
+	// HeldAckAt stamps the one-at-a-time line for a different
+	// product held during this listing, so a burst of held
+	// products earns it once between them.
+	HeldAckAt time.Time
 }
 
 var (

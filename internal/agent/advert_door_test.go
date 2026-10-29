@@ -69,18 +69,30 @@ func TestAPhotoAfterHerAdvertKeepsTheAdvertPrice(t *testing.T) {
 	}
 }
 
-// The same photo sent again while its listing is open gets
-// one short line, and nothing is asked again.
+// The same photo sent again well after the burst, by a
+// seller checking whether it landed, earns one short line
+// and nothing else: that is the line's whole purpose.
 func TestARepeatedPhotoRemindsShortly(t *testing.T) {
 	owner := "233550002402"
 	dir := setupChat(t, owner, shopWithBag)
 	c := &chat{dir: dir}
 	HandleInbound(Inbound{From: owner, ImageID: "heels-2", Caption: "Sparkly heels"})
 	c.replies(t, owner)
+	// A re-send inside the burst is silent.
+	HandleInbound(Inbound{From: owner, ImageID: "heels-2", Caption: "Sparkly heels"})
+	if got := c.replies(t, owner); len(got) != 0 {
+		t.Fatalf("a re-send inside the burst should be silent, got %q", got)
+	}
+	// A re-send after the window is answered, once.
+	for _, candidate := range sessions {
+		if candidate.Onboarding != nil {
+			candidate.Onboarding.RepeatAckAt = candidate.Onboarding.RepeatAckAt.Add(-2 * photoAckWindow)
+		}
+	}
 	HandleInbound(Inbound{From: owner, ImageID: "heels-2", Caption: "Sparkly heels"})
 	got := strings.Join(c.replies(t, owner), "\n")
 	if got != "I am still on that same photo." {
-		t.Fatalf("the repeat should earn exactly one short line: %q", got)
+		t.Fatalf("the late repeat should earn exactly one short line: %q", got)
 	}
 }
 
@@ -155,8 +167,10 @@ func TestAnAlbumBurstIsAcknowledgedOnce(t *testing.T) {
 		HandleInbound(Inbound{From: owner, ImageID: id, Caption: "B buckle slides, 75gh each. Sizes from 37 to 42"})
 		rest = append(rest, c.replies(t, owner)...)
 	}
-	if len(rest) != 1 || rest[0] != "I am still on that same photo." {
-		t.Fatalf("the burst should earn exactly one acknowledgement line, got %q", rest)
+	// The listing's own reply already covered the burst:
+	// every further item of the album is taken in silently.
+	if len(rest) != 0 {
+		t.Fatalf("the rest of the album should be silent, got %q", rest)
 	}
 }
 

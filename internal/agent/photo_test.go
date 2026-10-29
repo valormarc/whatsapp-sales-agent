@@ -302,11 +302,23 @@ func TestThrowInSamePhotoTwiceIsNotReadBackTwice(t *testing.T) {
 
 	c.photo(t, merchant, "300")
 	_ = c.replies(t, merchant)
+	// Inside the same burst the resend is silent: the first
+	// reply already covered it. After the window, one short
+	// line answers it, and the readback never repeats.
+	c.photo(t, merchant, "300")
+	if replies := c.replies(t, merchant); len(replies) != 0 {
+		t.Fatalf("a resend inside the burst should be silent, got %q", replies)
+	}
+	for _, candidate := range sessions {
+		if candidate.Onboarding != nil {
+			candidate.Onboarding.RepeatAckAt = candidate.Onboarding.RepeatAckAt.Add(-2 * photoAckWindow)
+		}
+	}
 	c.photo(t, merchant, "300")
 	replies := c.replies(t, merchant)
 	joined := strings.Join(replies, "\n")
 	if !strings.Contains(joined, "still on that same photo") {
-		t.Fatalf("second send replies = %q", replies)
+		t.Fatalf("the late resend replies = %q", replies)
 	}
 	if strings.Contains(joined, "Here is what I have from it") {
 		t.Fatalf("the readback was repeated on a resend: %q", replies)
