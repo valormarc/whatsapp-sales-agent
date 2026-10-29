@@ -107,7 +107,17 @@ func parsePastedAdvert(text string) (draft throwDraft, sizeNote string, ok bool)
 	draft.Name = name
 	sizeNote = note
 	for _, line := range restLines[1:] {
-		descLines = append(descLines, trimDecorEdges(line))
+		line = trimDecorEdges(line)
+		lowerLine := strings.ToLower(strings.TrimSpace(line))
+		// A copied Stall Status includes an ordering link as its
+		// final line. That is distribution copy, not product
+		// description, and must not be shown to buyers as a feature.
+		if strings.HasPrefix(lowerLine, "order here:") ||
+			strings.HasPrefix(lowerLine, "to order,") ||
+			strings.HasPrefix(lowerLine, "order here ") {
+			continue
+		}
+		descLines = append(descLines, line)
 	}
 	if len(descLines) > 0 {
 		draft.Description = strings.Join(descLines, "\n")
@@ -177,9 +187,19 @@ func trimDecorEdges(line string) string {
 // price: it is kept in the name and the settled price stands.
 func parseTypedNameLine(text string, settled float64) (name string, price float64, sizeNote string) {
 	rest := strings.TrimSpace(text)
-	if settled <= 0 {
-		if p, span, ok := throwPrice(rest); ok {
-			price = p
+	if p, span, ok := throwPrice(rest); ok {
+		// When the flow already has a list price, preserve bare
+		// figures in the name ("EliteBook 840"), but still remove
+		// an explicitly marked price ("Rack — GH₵270") from the
+		// product name. The settled price remains authoritative.
+		marked := span != nil && span[0] >= 0 && span[1] <= len(rest) &&
+			(strings.ContainsAny(rest[span[0]:span[1]], "@₵") ||
+				strings.Contains(strings.ToLower(rest[span[0]:span[1]]), "gh") ||
+				strings.Contains(strings.ToLower(rest[span[0]:span[1]]), "cedi"))
+		if settled <= 0 || marked {
+			if settled <= 0 {
+				price = p
+			}
 			rest = rest[:span[0]] + " " + rest[span[1]:]
 		}
 	}

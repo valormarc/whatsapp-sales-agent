@@ -339,7 +339,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	}
 	flow := s.Onboarding
 	if flow == nil {
-		flow = &OnboardingFlow{}
+		flow = &OnboardingFlow{PhotoOpened: true}
 	}
 	// A guided walk she started by typing ("add a product")
 	// and has not yet given a single fact to keeps its own
@@ -350,24 +350,28 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		flow.Name == "" && flow.Description == "" && flow.ListPrice <= 0
 
 	draft := throwDraftFromCaption(caption)
-	// The same photo sent again while its listing is still
-	// open (a double tap, a redelivery, a seller checking
-	// whether it landed) changes nothing: one short line says
-	// the agent is still on it, and nothing is asked again.
-	if s.Onboarding != nil && flow.Photo &&
-		(draft.Name == "" || draft.Name == flow.Name) &&
-		(draft.Description == "" || draft.Description == flow.Description) &&
-		(draft.ListPrice <= 0 || draft.ListPrice == flow.ListPrice) &&
-		(draft.Unit == "" || draft.Unit == flow.Unit) {
-		// Another angle of the same goods: it joins the
-		// listing's kept photos even though it earns no reply.
-		collectFlowPhoto(flow, imageID)
-		if photoAckCovered(flow.RepeatAckAt) {
-			return
+	// A forwarded Status caption already contains the product
+	// name and list price: it is the seller's own advert in
+	// text, riding on the photo. Read it as an advert before
+	// relying on the pixels: the image is the product photo,
+	// while the caption is already her words.
+	if advert, _, isAdvert := parsePastedAdvert(caption); isAdvert {
+		if advert.Name != "" {
+			draft.Name = advert.Name
 		}
-		flow.RepeatAckAt = time.Now()
-		whatsapp.SendText(from, "I am still on that same photo.")
-		return
+		if advert.Description != "" {
+			draft.Description = advert.Description
+		}
+		if advert.ListPrice > 0 {
+			draft.ListPrice = advert.ListPrice
+			draft.PriceDoubted = advert.PriceDoubted
+		}
+		if advert.Unit != "" {
+			draft.Unit, draft.BaseQty = advert.Unit, advert.BaseQty
+		}
+		if len(advert.Sizes) > 0 {
+			draft.Sizes = advert.Sizes
+		}
 	}
 	// The model's draft from the photograph fills only the
 	// gaps her own words left, including its judgement of how
@@ -418,6 +422,78 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		}
 		flow.HeldAckAt = time.Now()
 		whatsapp.SendText(from, "One at a time: I am still listing "+flow.Name+". "+photoStepReminder(flow))
+		return
+	}
+	// The gate for a photo-opened listing that already has an
+	// identity: a new photo joins it only when this photo's
+	// own read is consistent with the listing. A read carrying
+	// a different price contradicts it, and a read carrying
+	// nothing at all — no name, no price, the picture itself
+	// unread — does not identify the photo as the same goods.
+	// Different products were merged exactly that way on the
+	// live number: a forwarded burst of separately priced
+	// items landed on the first listing as its "angles", and
+	// it was saved wearing all of them. A held photo earns
+	// one clear message per burst and is not collected; the
+	// seller sends it again, with its name, once this listing
+	// is finished. A listing opened by text is not gated: its
+	// photos are thrown in deliberately against a listing she
+	// named herself.
+	if s.Onboarding != nil && flow.PhotoOpened && flow.Name != "" && imageID != "" {
+		already := false
+		for _, ref := range flow.PhotoRefs {
+			if ref == imageID {
+				already = true
+				break
+			}
+		}
+		contradicts := draft.ListPrice > 0 && flow.ListPrice > 0 && draft.ListPrice != flow.ListPrice
+		unidentified := draft.Name == "" && draft.ListPrice <= 0
+		if !already && len(flow.PhotoRefs) > 0 && (contradicts || unidentified) {
+			if photoAckCovered(flow.HeldAckAt) {
+				return
+			}
+			flow.HeldAckAt = time.Now()
+			if contradicts {
+				whatsapp.SendText(from, "One at a time: I am still listing "+flow.Name+". "+photoStepReminder(flow))
+			} else {
+				whatsapp.SendText(from, "One at a time: I am still listing "+flow.Name+". I could not identify this new photo, so I have not attached it. "+photoStepReminder(flow)+" If it is a different item, send it again with its name once this listing is finished.")
+			}
+			return
+		}
+	}
+	// The same photo sent again while its listing is still
+	// open (a double tap, a redelivery, a seller checking
+	// whether it landed) changes nothing: one short line says
+	// the agent is still on it, and nothing is asked again.
+	// The same judgement governs every later photo in the
+	// burst: one that is positively read as a DIFFERENT
+	// product is held (below); anything else — the same
+	// product under a variant of its name, or a photo the
+	// platform cannot name at all — is another angle of the
+	// goods being listed, collected silently under the album
+	// rule. An album is never interrogated photo by photo,
+	// and an unidentified angle is never, by itself, proof
+	// of a different product.
+	// A nameless open listing is not covered by this branch
+	// when the new photo carries a name: that name is the
+	// listing's own, still unsettled, and the fill below is
+	// what adopts it.
+	sameName := draft.Name == "" || (flow.Name != "" && sameProductName(draft.Name, flow.Name))
+	if s.Onboarding != nil && flow.Photo && sameName &&
+		(draft.Description == "" || draft.Description == flow.Description) &&
+		(draft.ListPrice <= 0 || draft.ListPrice == flow.ListPrice) &&
+		(draft.Unit == "" || draft.Unit == flow.Unit) {
+		// Another angle of the same goods: it joins the
+		// listing's kept photos even though it earns no reply.
+		// A media id already collected is not collected
+		// twice (collectFlowPhoto keeps each id once).
+		collectFlowPhoto(flow, imageID)
+		if photoAckCovered(flow.RepeatAckAt) {
+			return
+		}
+		flow.RepeatAckAt = time.Now()
+		whatsapp.SendText(from, "I am still on that same photo.")
 		return
 	}
 	flow.Photo = true

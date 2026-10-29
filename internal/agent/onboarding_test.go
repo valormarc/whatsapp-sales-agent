@@ -66,8 +66,9 @@ type outboxRecord struct {
 // to two numbers (the customer and the merchant), and neither may
 // swallow the other's.
 type chat struct {
-	dir  string
-	seen map[string]int
+	dir      string
+	seen     map[string]int
+	photoSeq int
 }
 
 func (c *chat) say(t *testing.T, from, text string) {
