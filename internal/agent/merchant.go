@@ -23,6 +23,7 @@ import (
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/checkout"
+	"github.com/valormarc/hackathon-agent/internal/model"
 	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/wants"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
@@ -69,6 +70,20 @@ type OnboardingFlow struct {
 	// name has clashed with, held while she decides between
 	// replacing it and renaming hers (step "dupchoice").
 	DupName string
+	// PhotoCompact marks a listing that began with a photo:
+	// the seller gets one compact read-back with one question,
+	// and her last price answer saves the product at once,
+	// with no summary to confirm and no further questions.
+	PhotoCompact bool
+	// UnitJudged records that the agent has already made its
+	// one smart call on how this product is sold, so the
+	// judgement is never repeated and the measure question,
+	// when it survives the judgement, is asked exactly once.
+	UnitJudged bool
+	// MeasureSettled records that the measure step has been
+	// answered (including "only as a whole"), so the walk can
+	// move past it for good.
+	MeasureSettled bool
 }
 
 var (
@@ -522,11 +537,13 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		// how much of it her list price is for.
 		if q, ok := parseQuantity(lower); ok {
 			flow.Unit, flow.BaseQty = q.Unit, q.Qty
-			enterOnboardingConfirm(from, flow)
+			flow.MeasureSettled = true
+			gotoNextOnboardingStep(from, flow)
 			return
 		}
 		if strings.Contains(lower, "whole") || isClearNo(lower) {
-			enterOnboardingConfirm(from, flow)
+			flow.MeasureSettled = true
+			gotoNextOnboardingStep(from, flow)
 			return
 		}
 		if unit, ok := unitMentioned(lower); ok {
@@ -540,13 +557,15 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 	case "measureqty":
 		if q, ok := parseQuantity(lower); ok {
 			flow.Unit, flow.BaseQty = q.Unit, q.Qty
-			enterOnboardingConfirm(from, flow)
+			flow.MeasureSettled = true
+			gotoNextOnboardingStep(from, flow)
 			return
 		}
 		if amount := parseOffer(lower); amount != nil && *amount > 0 {
 			// A bare number takes the unit she already named.
 			flow.BaseQty = *amount
-			enterOnboardingConfirm(from, flow)
+			flow.MeasureSettled = true
+			gotoNextOnboardingStep(from, flow)
 			return
 		}
 		whatsapp.SendText(from, "How much of it is the "+money.GHS(flow.ListPrice)+" price for? Give it like 6 "+unitWord(flow.Unit, 2)+".")
@@ -617,14 +636,38 @@ func gotoNextOnboardingStep(from string, flow *OnboardingFlow) {
 		return
 	case flow.FloorPrice <= 0:
 		flow.Step = "lastprice"
-	case flow.Unit == "" && flow.BaseQty <= 0:
-		// The measure question is still open. A flow that arrived
-		// with a measure in its caption carries Unit and BaseQty
-		// already and skips it; a guided flow always lands here.
+	case !flow.MeasureSettled && flow.BaseQty <= 0 && (flow.Unit == "" || divisibleUnit(flow.Unit)):
+		// How the product is sold is settled smartly before it
+		// is ever asked about. Her own words already settled it
+		// when they carried a measure (the caption flows) or a
+		// unit the draft judged certain (the photo flows). What
+		// is left gets exactly one model judgement: certain of
+		// a countable unit (a piece, a bottle) and the question
+		// never exists; certain of a divisible measure and only
+		// the piece size remains, asked in the measureqty
+		// shape; genuinely untellable, and the seller is asked
+		// the measure question, the one case that earns it.
+		if flow.Unit == "" && !flow.UnitJudged {
+			flow.UnitJudged = true
+			if unit, certain := model.JudgeUnit(flow.Name, flow.Description); certain {
+				flow.Unit = unit
+				gotoNextOnboardingStep(from, flow)
+				return
+			}
+		}
+		if flow.Unit != "" {
+			flow.Step = "measureqty"
+			whatsapp.SendText(from, "Sold by the "+flow.Unit+". How much of it is the "+money.GHS(flow.ListPrice)+" price for? For example, 6 "+flow.Unit+"s.")
+			return
+		}
 		flow.Step = "measure"
 		whatsapp.SendText(from, "Do you sell the "+flow.Name+" by measure, like by the yard, litre or kilo, or only as a whole?")
 		return
 	default:
+		if flow.PhotoCompact {
+			savePhotoCompactListing(from, flow)
+			return
+		}
 		enterOnboardingConfirm(from, flow)
 		return
 	}
@@ -642,6 +685,10 @@ func askOnboardingStep(from string, flow *OnboardingFlow) {
 	case "list":
 		whatsapp.SendText(from, "What is the list price for "+flow.Name+"? This is the price customers see first. Give it in cedis, for example 450.")
 	case "lastprice":
+		if flow.PhotoCompact {
+			whatsapp.SendText(from, "What is your last price? If non-negotiable, say 'non-negotiable'. If list price is wrong, correct like 'price is 500'.")
+			return
+		}
 		whatsapp.SendText(from, "Now, if a customer bargains, what is your last price for "+flow.Name+"? That is the lowest I can go. I will never sell below it, and the customer will never see it. If the price does not move at all, just say non-negotiable. If the list price itself is wrong, correct it like this: price is 500.")
 	case "measure":
 		whatsapp.SendText(from, "Do you sell the "+flow.Name+" by measure, like by the yard, litre or kilo, or only as a whole?")
@@ -999,4 +1046,58 @@ func openWalkFromAdvert(from string, s *Session, flow *OnboardingFlow, text stri
 	}
 	gotoNextOnboardingStep(from, flow)
 	return true
+}
+
+// divisibleUnit reports whether a unit names something that
+// is measured out of a larger whole (a yard off a piece, a
+// litre out of a drum), as against a countable unit (a piece,
+// a bottle, a pair) that is sold whole per count. It is the
+// semantics of the unit word itself, not a judgement about
+// any product: which products take which unit is the
+// model's call, or the seller's own words.
+func divisibleUnit(unit string) bool {
+	switch strings.TrimSuffix(unit, "s") {
+	case "yard", "metre", "meter", "litre", "liter", "kilo", "kilogram", "kg", "gram", "g", "tonne", "gallon", "foot", "inch":
+		return true
+	}
+	return false
+}
+
+// savePhotoCompactListing saves a photo listing the moment
+// its last price lands, and answers with the one saved line
+// and nothing after it: no summary to confirm, no allowance
+// note, no further questions. Buyers who were waiting on the
+// product are still told, as with any save.
+func savePhotoCompactListing(from string, flow *OnboardingFlow) {
+	var s *Session
+	for _, candidate := range sessions {
+		if candidate.Onboarding == flow {
+			s = candidate
+			break
+		}
+	}
+	if s == nil {
+		return
+	}
+	product, err := catalogue.AddProduct(s.MerchantID, catalogue.Product{
+		Name:        flow.Name,
+		Description: flow.Description,
+		ListPrice:   flow.ListPrice,
+		FloorPrice:  flow.FloorPrice,
+		Fixed:       flow.Fixed,
+		Stock:       1,
+		Unit:        flow.Unit,
+		BaseQty:     flow.BaseQty,
+	})
+	s.Onboarding = nil
+	if err != nil {
+		whatsapp.SendText(from, "I could not save it: "+err.Error()+". Nothing went live.")
+		return
+	}
+	unit := flow.Unit
+	if unit == "" {
+		unit = "piece"
+	}
+	whatsapp.SendText(from, "Saved ✅ "+product.Name+" | List: "+money.GHS(product.ListPrice)+" | Last: "+money.GHS(product.FloorPrice)+" | Unit: "+unit)
+	alertWaitingBuyers(s.MerchantID, product)
 }

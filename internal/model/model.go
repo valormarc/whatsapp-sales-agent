@@ -163,6 +163,53 @@ func Chat(messages []Message, opts Options) *string {
 type ListingDraft struct {
 	Name        string
 	Description string
+	// Unit is the model's judgement of how the goods are
+	// sold (piece, yard, bottle, kilo...), and UnitCertain
+	// whether that judgement can be trusted without asking
+	// the seller. The judgement is the model's, never a
+	// table in code: only the seller's own words outrank it,
+	// and a genuinely untellable case is the only one that
+	// earns a question.
+	Unit        string
+	UnitCertain bool
+}
+
+// JudgeUnit asks the model how a named, described product is
+// sold, for listings that arrive as words alone with no
+// photo to read. It returns the unit word and whether the
+// call is certain; an unavailable model or an unparsable
+// reply returns certain=false, and the seller is asked, as
+// before.
+func JudgeUnit(name, description string) (unit string, certain bool) {
+	system := "You help a market seller list her goods. Judge how the product below is sold, the way the seller herself would say it. " +
+		"Reply with exactly one JSON object, no other text: {\"unit\": \"...\", \"certain\": true}. " +
+		"The unit is one word or two: piece for clothes, shoes and bags, yard for fabric, bottle for creams and oils, kilo or bag for foodstuffs, and so on. " +
+		"certain is false only when how it is sold genuinely cannot be told from the name and description."
+	reply := Chat([]Message{{Role: "user", Content: "Product: " + name + "\nDescription: " + description}}, Options{System: &system})
+	if reply == nil {
+		return "", false
+	}
+	s := *reply
+	open := strings.Index(s, "{")
+	closeIdx := strings.LastIndex(s, "}")
+	if open == -1 || closeIdx <= open {
+		return "", false
+	}
+	var raw struct {
+		Unit    string `json:"unit"`
+		Certain *bool  `json:"certain"`
+	}
+	if err := json.Unmarshal([]byte(s[open:closeIdx+1]), &raw); err != nil {
+		return "", false
+	}
+	unit = strings.ToLower(strings.TrimSpace(raw.Unit))
+	if unit == "" {
+		return "", false
+	}
+	if raw.Certain != nil {
+		return unit, *raw.Certain
+	}
+	return unit, true
 }
 
 type visionPart struct {
@@ -238,9 +285,11 @@ func ChatVision(system, text, imageDataURI string) *string {
 // asked for and never read from the reply.
 func DraftListing(imageDataURI, caption string) *ListingDraft {
 	system := "You help a market seller turn a photo of her goods into a shop listing. " +
-		"Reply with exactly one JSON object, no other text: {\"name\": \"...\", \"description\": \"...\"}. " +
+		"Reply with exactly one JSON object, no other text: {\"name\": \"...\", \"description\": \"...\", \"unit\": \"...\", \"unit_certain\": true}. " +
 		"The name is the short name a buyer would ask for, a few words at most. " +
 		"The description is one or two short plain sentences about what the item is, its visible condition, colour, size or material, only what the photo or her words support. " +
+		"The unit is the word the seller herself would use for how one sale is measured: piece for clothes, shoes and bags, yard for fabric, bottle for creams and oils, and so on, judged from the goods in front of you. " +
+		"unit_certain is false only when how the goods are sold genuinely cannot be told from the photo, as with some loose foodstuffs. " +
 		"Never mention a price. Never invent a detail you cannot see."
 	text := "Draft the listing for the product in this photo."
 	if strings.TrimSpace(caption) != "" {
@@ -260,6 +309,8 @@ func DraftListing(imageDataURI, caption string) *ListingDraft {
 	var raw struct {
 		Name        string `json:"name"`
 		Description string `json:"description"`
+		Unit        string `json:"unit"`
+		UnitCertain *bool  `json:"unit_certain"`
 	}
 	if err := json.Unmarshal([]byte(s[open:closeIdx+1]), &raw); err != nil {
 		return nil
@@ -267,6 +318,12 @@ func DraftListing(imageDataURI, caption string) *ListingDraft {
 	d := &ListingDraft{
 		Name:        strings.TrimSpace(raw.Name),
 		Description: strings.TrimSpace(raw.Description),
+		Unit:        strings.ToLower(strings.TrimSpace(raw.Unit)),
+	}
+	if raw.UnitCertain != nil {
+		d.UnitCertain = *raw.UnitCertain
+	} else {
+		d.UnitCertain = d.Unit != ""
 	}
 	if len(d.Name) > 80 {
 		d.Name = strings.TrimSpace(d.Name[:80])

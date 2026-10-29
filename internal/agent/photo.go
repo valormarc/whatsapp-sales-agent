@@ -334,31 +334,32 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	if flow == nil {
 		flow = &OnboardingFlow{}
 	}
+	// A guided walk she started by typing ("add a product")
+	// and has not yet given a single fact to keeps its own
+	// shape when a photo joins it; every other door (a fresh
+	// photo, a photo joining her advert) takes the compact
+	// photo shape below.
+	virginGuided := s.Onboarding != nil && !flow.Photo &&
+		flow.Name == "" && flow.Description == "" && flow.ListPrice <= 0
 
 	draft := throwDraftFromCaption(caption)
-	// The same photo sent again while its listing is still open
-	// (a double tap, a redelivery, a seller checking whether it
-	// landed) changes nothing, so it is not read back all over
-	// again: she is told the agent is still on it and reminded of
-	// the one question that is waiting for her.
+	// The same photo sent again while its listing is still
+	// open (a double tap, a redelivery, a seller checking
+	// whether it landed) changes nothing: one short line says
+	// the agent is still on it, and nothing is asked again.
 	if s.Onboarding != nil && flow.Photo &&
 		(draft.Name == "" || draft.Name == flow.Name) &&
 		(draft.Description == "" || draft.Description == flow.Description) &&
 		(draft.ListPrice <= 0 || draft.ListPrice == flow.ListPrice) &&
 		(draft.Unit == "" || draft.Unit == flow.Unit) {
-		// The reminder is short: the full question was asked
-		// a moment ago and asking it again word for word
-		// reads as a glitch, not as patience. She is told the
-		// agent is still on the photo, and what it is waiting
-		// for, in one short line.
-		whatsapp.SendText(from, "I am still on that same photo. "+photoStepReminder(flow))
+		whatsapp.SendText(from, "I am still on that same photo.")
 		return
 	}
-	flow.Photo = true
-	flow.PhotoRef = imageID
-	// The model's draft from the photograph fills only the gaps
-	// her own words left. It needs the picture, so it happens
-	// only in live mode; her words never wait on it.
+	// The model's draft from the photograph fills only the
+	// gaps her own words left, including its judgement of how
+	// the goods are sold when that judgement is certain. It
+	// needs the picture, so it happens only in live mode; her
+	// words never wait on it.
 	if dataURI, ok := whatsapp.DownloadMedia(imageID); ok {
 		if md := model.DraftListing(dataURI, caption); md != nil {
 			if draft.Name == "" {
@@ -367,8 +368,23 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			if draft.Description == "" {
 				draft.Description = md.Description
 			}
+			if draft.Unit == "" && md.UnitCertain {
+				draft.Unit = md.Unit
+			}
 		}
 	}
+	// A photo of a DIFFERENT product while a photo listing is
+	// already open (the second item in an album she forwarded)
+	// does not merge into the listing under way and does not
+	// disturb it: listings are taken one at a time, and she is
+	// told what the open one is waiting for.
+	if s.Onboarding != nil && flow.Photo && flow.Name != "" && draft.Name != "" &&
+		!sameProductName(flow.Name, draft.Name) {
+		whatsapp.SendText(from, "One at a time: I am still listing "+flow.Name+". "+photoStepReminder(flow))
+		return
+	}
+	flow.Photo = true
+	flow.PhotoRef = imageID
 	if flow.Name == "" {
 		flow.Name = draft.Name
 	}
@@ -385,19 +401,85 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	if flow.Unit == "" && draft.Unit != "" {
 		flow.Unit, flow.BaseQty = draft.Unit, draft.BaseQty
 	}
-	// A drafted name she already sells cannot be saved under, so
-	// it is dropped here and the walk asks her for a name, where
-	// the duplicate is explained if she offers it again.
+	// A drafted name she already sells cannot be saved under,
+	// so it is dropped here and the walk asks her for a name,
+	// where the duplicate is explained if she offers it again.
 	if flow.Name != "" && catalogue.FindByName(shop.ID, flow.Name) != nil {
 		flow.Name = ""
 	}
 	s.Onboarding = flow
+
+	// The compact photo shape: one message carrying what was
+	// read and the single question that remains, and her
+	// answer to the last price question saves the product at
+	// once (see savePhotoCompactListing). It applies whenever
+	// the photo and her words together gave a name and a
+	// description; anything less falls back to the walk.
+	if !virginGuided && flow.Name != "" && flow.Description != "" {
+		flow.PhotoCompact = true
+		// A photo joining a listing whose last price question
+		// is already outstanding (her advert opened it a
+		// moment ago) is acknowledged, not answered with the
+		// question all over again: the question stands, and
+		// her answer to it now saves the product at once.
+		if s.Onboarding != nil && flow.Step == "lastprice" && flow.FloorPrice <= 0 {
+			whatsapp.SendText(from, "Got it ✅ Photo added to "+flow.Name+".")
+			return
+		}
+		switch {
+		case flow.PriceNeedsConfirm && !flow.PriceConfirmed:
+			flow.Step = "confirmprice"
+			whatsapp.SendText(from, "Got it ✅ "+flow.Name+" - "+money.GHS(flow.ListPrice)+"?\n"+flow.Description+"\nI read that price from your words. Is it right? Say yes, or give me the right price.")
+		case flow.ListPrice <= 0:
+			flow.Step = "list"
+			whatsapp.SendText(from, "Got it ✅ "+flow.Name+"\n"+flow.Description+"\nWhat is the list price, in cedis?")
+		default:
+			flow.Step = "lastprice"
+			whatsapp.SendText(from, "Got it ✅ "+flow.Name+" - "+money.GHS(flow.ListPrice)+"\n"+flow.Description+"\nWhat is your last price? If non-negotiable, say 'non-negotiable'. If list price is wrong, correct like 'price is 500'.")
+		}
+		return
+	}
 
 	whatsapp.SendText(from, "Got your photo.")
 	if read := throwReadBack(flow); read != "" {
 		whatsapp.SendText(from, read)
 	}
 	gotoNextOnboardingStep(from, flow)
+}
+
+// photoNameKey normalises a drafted product name for the
+// loose comparisons the photo doors make: case and spacing
+// aside, and decoration stripped the way listing names are.
+func photoNameKey(name string) string {
+	return strings.Join(strings.Fields(cleanNameText(strings.ToLower(name))), " ")
+}
+
+// sameProductName judges whether two drafted names plausibly
+// name the same goods: exactly alike, one inside the other,
+// or sharing a real word. It keeps a second angle of the same
+// product (read slightly differently) merging into its
+// listing, while a genuinely different product in the same
+// album is held for its own turn.
+func sameProductName(a, b string) bool {
+	ka, kb := photoNameKey(a), photoNameKey(b)
+	if ka == "" || kb == "" {
+		return false
+	}
+	if ka == kb || strings.Contains(ka, kb) || strings.Contains(kb, ka) {
+		return true
+	}
+	seen := map[string]bool{}
+	for _, w := range strings.Fields(ka) {
+		if len(w) > 3 {
+			seen[w] = true
+		}
+	}
+	for _, w := range strings.Fields(kb) {
+		if seen[w] {
+			return true
+		}
+	}
+	return false
 }
 
 // photoStepReminder names, shortly, the one thing a repeated

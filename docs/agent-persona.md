@@ -136,6 +136,22 @@ missing almost every time, because no group post carries it, and the
 agent never guesses it. Nothing goes live until she has seen the whole
 listing and said yes.
 
+A listing that began with a photograph runs shorter than the guided
+walk, because the photograph and her caption have already answered
+most of it. She gets one compact message: what was read, and the
+single question that remains. Her answer to the last price question
+is the save itself, answered with one saved line giving the list
+price, the last price and the unit, and nothing after it. How the
+goods are sold is judged, never asked out of habit and never read
+from a table in the code: the draft from the photograph carries the
+judgement, a words-only listing gets one judgement call of its own,
+a countable unit (a piece, a bottle) settles the matter silently,
+and only a genuinely untellable case earns the measure question.
+Goods sold by a divisible measure ask the one fact no judgement can
+supply, how much of it her price is for. A second, different product
+sent while a listing is open waits its turn; listings are taken one
+at a time.
+
 The same reading applies when she pastes the advert as text in the
 guided walk: the whole advert in one message, name on the first line,
 details under it, price at the end. Not everybody has time to answer
