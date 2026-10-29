@@ -59,6 +59,7 @@ type throwDraft struct {
 	ListPrice   float64
 	Unit        string
 	BaseQty     float64
+	Sizes       []string
 	// PriceDoubted marks a read price the harvest itself does
 	// not trust (see harvestDoubt): the walk confirms it with
 	// the seller before the listing can go any further.
@@ -386,6 +387,9 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			if draft.Unit == "" && md.UnitCertain {
 				draft.Unit = md.Unit
 			}
+			if len(draft.Sizes) == 0 {
+				draft.Sizes = md.Sizes
+			}
 		}
 	}
 	// A forwarded advert riding as a caption is raw material,
@@ -434,6 +438,9 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	}
 	if flow.Unit == "" && draft.Unit != "" {
 		flow.Unit, flow.BaseQty = draft.Unit, draft.BaseQty
+	}
+	if len(flow.Sizes) == 0 {
+		flow.Sizes = draft.Sizes
 	}
 	// The same replacement where the dump arrived earlier,
 	// as a pasted advert now joined by its photo: the model's

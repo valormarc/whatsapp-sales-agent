@@ -49,6 +49,13 @@ type Product struct {
 	// product holds many photos: the angles and colours she
 	// sent of the same goods.
 	Photos []string `json:"photos,omitempty"`
+	// Sizes are the sizes this product comes in, in the
+	// seller's own terms ("37", "UK 8", "M"), read by the
+	// model from her words or the goods at listing time and
+	// stored as facts. A product with sizes is never sold
+	// without the buyer choosing one; the choice is verified
+	// against this list and lands on the order.
+	Sizes []string `json:"sizes,omitempty"`
 }
 
 // ByMeasure reports whether the product is sold by measure: it has

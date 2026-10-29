@@ -92,6 +92,13 @@ type Order struct {
 	PackageName string `json:"packageName,omitempty"`
 	Note        string `json:"note,omitempty"`
 
+	// Size is the buyer's chosen size when the product comes
+	// in sizes, verified against the listing's own list
+	// before the order was made. It rides to the seller in
+	// her notice so the parcel that ships is the size asked
+	// for.
+	Size string `json:"size,omitempty"`
+
 	// Quantity and Unit record a sale by measure: how much of the
 	// product's measure the buyer took (3 of "yard"), against a
 	// Price that is the settled price for that quantity, scaled

@@ -112,6 +112,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		Collector:      f.Collector,
 		PackageName:    f.PackageName,
 		Note:           f.Note,
+		Size:           f.Size,
 		DeliveryPaidTo: paidTo,
 		Quantity:       s.Qty,
 		Unit:           s.Unit,
@@ -203,6 +204,9 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	// The package details she gave ride with the order, and she
 	// hears the name read back so a wrong name is caught here,
 	// not at the rider's door.
+	if f.Size != "" {
+		pieces = append(pieces, "Size: "+f.Size+".")
+	}
 	if f.PackageName != "" {
 		pieces = append(pieces, "The package will carry the name "+f.PackageName+".")
 	}
@@ -305,6 +309,9 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 			} else {
 				lines = append(lines, "Delivery: to be arranged with the buyer. No location given.")
 			}
+		}
+		if f.Size != "" {
+			lines = append(lines, "Size: "+f.Size+".")
 		}
 		if f.PackageName != "" {
 			lines = append(lines, "Package name: "+f.PackageName+".")

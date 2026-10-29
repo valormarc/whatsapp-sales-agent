@@ -172,6 +172,11 @@ type ListingDraft struct {
 	// earns a question.
 	Unit        string
 	UnitCertain bool
+	// Sizes are the sizes the goods come in, read from the
+	// seller's words or the goods themselves (a shoebox
+	// label, a size range in her caption), in her own terms.
+	// Empty when the goods do not come in sizes.
+	Sizes []string
 }
 
 // JudgeUnit asks the model how a named, described product is
@@ -210,6 +215,56 @@ func JudgeUnit(name, description string) (unit string, certain bool) {
 		return unit, *raw.Certain
 	}
 	return unit, true
+}
+
+// cleanSizes keeps a judged size list honest: trimmed,
+// deduplicated, and capped, so a runaway reply can never
+// become the product's facts.
+func cleanSizes(in []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, s := range in {
+		s = strings.TrimSpace(s)
+		if s == "" || len(s) > 12 || seen[strings.ToUpper(s)] {
+			continue
+		}
+		seen[strings.ToUpper(s)] = true
+		out = append(out, s)
+		if len(out) == 16 {
+			break
+		}
+	}
+	return out
+}
+
+// JudgeSizes asks the model which sizes a named, described
+// product comes in, for listings that arrive as words alone.
+// Only sizes the words themselves state count: a range like
+// "sizes 37 to 42" becomes each size in it; words carrying
+// no sizes return an empty list, and an unavailable model
+// returns nil, which simply leaves the product unsized.
+func JudgeSizes(name, description string) []string {
+	system := "You help a market seller list her goods. Read the product below and list the sizes it comes in. " +
+		"Reply with exactly one JSON object, no other text: {\"sizes\": [\"...\"]}. " +
+		"Only sizes the words themselves state, in the seller's own terms (shoe numbers, UK sizes, S M L, waist numbers): a stated range like 37 to 42 becomes each size in it. " +
+		"When the words state no sizes, or the goods do not come in sizes, give an empty list. Never guess sizes such goods usually come in."
+	reply := Chat([]Message{{Role: "user", Content: "Product: " + name + "\nDescription: " + description}}, Options{System: &system})
+	if reply == nil {
+		return nil
+	}
+	s := *reply
+	open := strings.Index(s, "{")
+	closeIdx := strings.LastIndex(s, "}")
+	if open == -1 || closeIdx <= open {
+		return nil
+	}
+	var raw struct {
+		Sizes []string `json:"sizes"`
+	}
+	if err := json.Unmarshal([]byte(s[open:closeIdx+1]), &raw); err != nil {
+		return nil
+	}
+	return cleanSizes(raw.Sizes)
 }
 
 type visionPart struct {
@@ -285,7 +340,8 @@ func ChatVision(system, text, imageDataURI string) *string {
 // asked for and never read from the reply.
 func DraftListing(imageDataURI, caption string) *ListingDraft {
 	system := "You help a market seller turn a photo of her goods into a shop listing. " +
-		"Reply with exactly one JSON object, no other text: {\"name\": \"...\", \"description\": \"...\", \"unit\": \"...\", \"unit_certain\": true}. " +
+		"Reply with exactly one JSON object, no other text: {\"name\": \"...\", \"description\": \"...\", \"unit\": \"...\", \"unit_certain\": true, \"sizes\": [\"...\"]}. " +
+		"\"sizes\" lists the sizes the goods come in, in the seller's own terms (shoe numbers, UK sizes, S M L, waist numbers), only when her words or the photo itself (a label, a size chart) state them; a stated range like 37 to 42 becomes each size in it. When the goods do not come in sizes, or no sizes are stated, give an empty list. Never guess sizes the goods might come in. " +
 		"The name is the short name a buyer would ask for, a few words at most. " +
 		"DESCRIPTION RULE: never copy the forwarded caption or any part of its wording wholesale. Summarise it into one short line of at most 20 words, clean enough to sit on a shop shelf, with every emoji and decoration removed. For a laptop give only the generation and processor, the RAM, the storage, the screen and the condition. For anything else give the item, its colour or material, and its condition or key detail, in the same tight shape. Only what the photo or her words support. " +
 		"The unit is the word the seller herself would use for how one sale is measured: piece for clothes, shoes and bags, yard for fabric, bottle for creams and oils, and so on, judged from the goods in front of you. " +
@@ -307,10 +363,11 @@ func DraftListing(imageDataURI, caption string) *ListingDraft {
 		return nil
 	}
 	var raw struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Unit        string `json:"unit"`
-		UnitCertain *bool  `json:"unit_certain"`
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		Unit        string   `json:"unit"`
+		UnitCertain *bool    `json:"unit_certain"`
+		Sizes       []string `json:"sizes"`
 	}
 	if err := json.Unmarshal([]byte(s[open:closeIdx+1]), &raw); err != nil {
 		return nil
@@ -319,6 +376,7 @@ func DraftListing(imageDataURI, caption string) *ListingDraft {
 		Name:        strings.TrimSpace(raw.Name),
 		Description: strings.TrimSpace(raw.Description),
 		Unit:        strings.ToLower(strings.TrimSpace(raw.Unit)),
+		Sizes:       cleanSizes(raw.Sizes),
 	}
 	if raw.UnitCertain != nil {
 		d.UnitCertain = *raw.UnitCertain

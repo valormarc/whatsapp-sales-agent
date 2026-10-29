@@ -58,6 +58,11 @@ type OnboardingFlow struct {
 	// of the name; it rides into the description when she answers
 	// that step, and it is never asked about on its own.
 	SizeNote string
+	// Sizes are the sizes the product comes in, read by the
+	// model from her words or the goods at listing time; at
+	// save, any path that produced none gets one text read of
+	// her name and description (see flowSizes).
+	Sizes []string
 	// PriceNeedsConfirm and PriceConfirmed are the intake gate.
 	// A price harvested from her words that the harvest itself
 	// doubts (see harvestDoubt) is read back to her as a question
@@ -637,6 +642,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 				Stock:       1,
 				Unit:        flow.Unit,
 				BaseQty:     flow.BaseQty,
+				Sizes:       flowSizes(flow),
 			})
 			s.Onboarding = nil
 			if err != nil {
@@ -1076,6 +1082,18 @@ var dayAskRe = regexp.MustCompile(`^(today[.!?]?|how is today|how'?s today|how i
 // advert with no walk open at all, where the paste itself is
 // the instruction to list it. It returns false when the text
 // is not an advert, and the caller carries on as before.
+// flowSizes settles a listing's sizes at save: the ones the
+// listing's own reads already produced (a photo draft's, a
+// throw-in's), or one text judgement over the seller's name
+// and description when none did. No sizes anywhere is a
+// plain outcome, not an error: most goods have none.
+func flowSizes(flow *OnboardingFlow) []string {
+	if len(flow.Sizes) > 0 {
+		return flow.Sizes
+	}
+	return model.JudgeSizes(flow.Name, strings.TrimSpace(flow.Description+" "+flow.SizeNote))
+}
+
 func openWalkFromAdvert(from string, s *Session, flow *OnboardingFlow, text string) bool {
 	draft, note, isAdvert := parsePastedAdvert(text)
 	if !isAdvert {
@@ -1092,6 +1110,9 @@ func openWalkFromAdvert(from string, s *Session, flow *OnboardingFlow, text stri
 	}
 	if draft.Unit != "" {
 		flow.Unit, flow.BaseQty = draft.Unit, draft.BaseQty
+	}
+	if len(draft.Sizes) > 0 {
+		flow.Sizes = draft.Sizes
 	}
 	if note != "" {
 		if flow.Description != "" {
@@ -1162,6 +1183,7 @@ func savePhotoCompactListing(from string, flow *OnboardingFlow) {
 		Stock:       1,
 		Unit:        flow.Unit,
 		BaseQty:     flow.BaseQty,
+		Sizes:       flowSizes(flow),
 	})
 	s.Onboarding = nil
 	if err != nil {

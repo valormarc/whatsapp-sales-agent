@@ -121,6 +121,9 @@ func orderReadback(merchant *catalogue.Merchant, o *orders.Order) []string {
 		pieces = append(pieces, line+".")
 	}
 
+	if o.Size != "" {
+		pieces = append(pieces, "Size: "+o.Size+".")
+	}
 	if o.PackageName != "" {
 		pieces = append(pieces, "The package carries the name "+o.PackageName+".")
 	}
