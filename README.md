@@ -1,8 +1,10 @@
 # Stall
 
-A WhatsApp sales agent for small shops. My entry for the Meta Global AI Developer Hackathon. Startup track, theme: Build for Your World.
+A small shop's whole business, run inside WhatsApp. My entry for the Meta Global AI Developer Hackathon. Startup track, theme: Build for Your World.
 
 I build software for small businesses. The sellers I work with run their shops on WhatsApp and on memory: prices in their heads, stock counted by eye, orders scattered across chats. They are never going to learn a dashboard, and most of them should never have to create accounts or connect anything to start selling. So Stall meets them where they already are: inside the chat they already use, on one shared number, with no app to install and nothing new to learn.
+
+Calling it a sales agent undersells it. Stall is the stall itself: it holds the goods, greets the customers, sells and haggles, takes the money and proves it landed, arranges how the goods reach the buyer, and keeps the day's records. The merchant just answers her phone.
 
 ## How buying works
 
