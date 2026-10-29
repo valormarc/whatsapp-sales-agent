@@ -7,6 +7,7 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/model"
 	"github.com/valormarc/hackathon-agent/internal/money"
+	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 	"regexp"
 	"strings"
@@ -404,7 +405,7 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 	// gate" is a note, not a new choice), so the choice readings
 	// below must never see them.
 	if detailsStep {
-		handlePackageDetails(from, s, msg, lower, stageIntent)
+		handlePackageDetails(from, s, msg, lower, reading)
 		return
 	}
 
@@ -647,6 +648,29 @@ func sizeQuestionText(s *Session) string {
 	return "What size for the " + target.Name + "? They come in " + sizesLine(target) + "."
 }
 
+// rememberedPackageName is the name this buyer last put on
+// a package at this shop: the running memory first, then the
+// order book itself, so a restart or a deploy never costs
+// her the name her last paid order already carries. A name
+// recovered from the book warms the memory for next time.
+func rememberedPackageName(shopID, from string) string {
+	key := sessionKey(shopID, from)
+	if n := packageNames[key]; n != "" {
+		return n
+	}
+	bestAt, name := "", ""
+	for _, o := range orders.Default.All() {
+		if o.MerchantID != shopID || o.From != from || o.Status != "paid" || o.PackageName == "" || o.CreatedAt < bestAt {
+			continue
+		}
+		bestAt, name = o.CreatedAt, o.PackageName
+	}
+	if name != "" {
+		packageNames[key] = name
+	}
+	return name
+}
+
 // beginPackageName opens the name question of the details:
 // a collector she sends has already given the package its
 // name, so that question is skipped for her; everyone else
@@ -663,7 +687,7 @@ func beginPackageName(from string, s *Session, f fulfilment) {
 	}
 	s.FulfilStep = "pkgname"
 	sessions[key] = s
-	if remembered := packageNames[key]; remembered != "" {
+	if remembered := rememberedPackageName(s.MerchantID, from); remembered != "" {
 		whatsapp.SendText(from, "What name should go on the package? Last time it was "+remembered+". Say same, or give me the name.")
 		return
 	}
@@ -688,6 +712,106 @@ var detailsCancelRe = regexp.MustCompile(`^(cancel|cancel it|forget it|drop it|d
 // note carrying the same words onward ("leave it at the
 // gate") must survive.
 
+// matchOneSizedLine finds the one sized line of the pending
+// order a text names a listed size for: a basket index, or
+// -1 for the pending product itself. ok is false when the
+// text fits no line, or more than one: a correction is only
+// ever applied where it can land in exactly one place.
+func matchOneSizedLine(s *Session, text string) (idx int, size string, ok bool) {
+	idx, size = -2, ""
+	for i := range s.Basket {
+		if sz := matchListedSize(s.Basket[i].Product, text); sz != "" {
+			if idx != -2 {
+				return -2, "", false
+			}
+			idx, size = i, sz
+		}
+	}
+	if s.Product != nil {
+		if sz := matchListedSize(s.Product, text); sz != "" {
+			if idx != -2 {
+				return -2, "", false
+			}
+			idx, size = -1, sz
+		}
+	}
+	if idx == -2 {
+		return -2, "", false
+	}
+	return idx, size, true
+}
+
+// applyStatedCorrection lands a correction the buyer has
+// already stated, at the confirm step, and reads the order
+// back to her again. Two roads reach it: she quoted one of
+// the sale's own questions and answered it (the quote itself
+// says which part of the order her words belong to), or the
+// stage reading named the part and the value she stated.
+// Either way the value is verified here before it lands —
+// a name must clean as a name, a place as a place, a size
+// must be one of the listed sizes on exactly one line — and
+// anything that cannot be verified is not applied: the
+// caller's ordinary correction prompts then take the turn.
+func applyStatedCorrection(from string, s *Session, f fulfilment, msg string, reading stageReading) bool {
+	key := sessionKey(s.MerchantID, from)
+	apply := func() bool {
+		s.PendingFulfil = f
+		sessions[key] = s
+		sendOrderRecap(from, s, f)
+		return true
+	}
+	// The quoted name question answered with a name: her
+	// words are the new name for the package. A stage
+	// reading that puts her turn on a different part of
+	// the order outranks the anchor.
+	quotedNameAnswer := turnQuote != nil && turnQuote.Known &&
+		strings.HasPrefix(turnQuote.Body, "What name should go on the package?")
+	if quotedNameAnswer && !(reading.Intent == stageIntentChange && reading.Field != "" && reading.Field != "name") {
+		if name := cleanPackageName(msg); name != "" {
+			f.PackageName = name
+			return apply()
+		}
+	}
+	if reading.Intent != stageIntentChange {
+		return false
+	}
+	switch reading.Field {
+	case "name":
+		name := cleanPackageName(reading.Value)
+		if name == "" {
+			name = cleanPackageName(msg)
+		}
+		if name != "" {
+			f.PackageName = name
+			return apply()
+		}
+	case "note":
+		if note := cleanNote(reading.Value); note != "" {
+			f.Note = note
+			return apply()
+		}
+	case "place":
+		if f.Mode == "delivery" || f.Mode == "arranged" {
+			if loc := cleanPlace(reading.Value); loc != "" {
+				f.Location = loc
+				return apply()
+			}
+		}
+	case "size":
+		if idx, size, ok := matchOneSizedLine(s, reading.Value); ok {
+			if idx >= 0 {
+				s.Basket[idx].Size = size
+				return apply()
+			}
+			if size != f.Size {
+				f.Size = size
+				return apply()
+			}
+		}
+	}
+	return false
+}
+
 // handlePackageDetails reads the two details answers. A name is
 // cleaned conservatively; anything that is not name-shaped is
 // asked for again, once per message, and the sale waits. The
@@ -695,12 +819,12 @@ var detailsCancelRe = regexp.MustCompile(`^(cancel|cancel it|forget it|drop it|d
 // no (in its ordinary shapes) means no message, and everything
 // else is her note, carried onto the order and into the
 // merchant's notice word for word.
-func handlePackageDetails(from string, s *Session, msg, lower, stageIntent string) {
+func handlePackageDetails(from string, s *Session, msg, lower string, reading stageReading) {
 	key := sessionKey(s.MerchantID, from)
 	// The intent layer has already ruled on this turn when
 	// it could be read; the narrow word net below only
 	// speaks for the bare forms on a day it could not.
-	if stageIntent == "" && detailsCancelRe.MatchString(lower) {
+	if reading.Intent == "" && detailsCancelRe.MatchString(lower) {
 		dropPendingSale(from, s)
 		return
 	}
@@ -734,9 +858,9 @@ func handlePackageDetails(from string, s *Session, msg, lower, stageIntent strin
 		}
 		beginPackageName(from, s, f)
 	case "pkgname":
-		remembered := packageNames[key]
+		remembered := rememberedPackageName(s.MerchantID, from)
 		switch {
-		case remembered != "" && (lower == "same" || isClearYes(lower) || strings.EqualFold(strings.TrimSpace(msg), remembered)):
+		case remembered != "" && (lower == "same" || strings.HasPrefix(lower, "same ") || isClearYes(lower) || strings.EqualFold(strings.TrimSpace(msg), remembered)):
 			f.PackageName = remembered
 		default:
 			name := cleanPackageName(msg)
@@ -771,6 +895,12 @@ func handlePackageDetails(from string, s *Session, msg, lower, stageIntent strin
 			completeSale(from, s, s.AgreedPrice, f)
 			return
 		}
+		// A correction she has already stated is applied,
+		// not asked about: the value she gave is verified
+		// here and the order is read back to her again.
+		if applyStatedCorrection(from, s, f, msg, reading) {
+			return
+		}
 		if nameRe.MatchString(lower) {
 			whatsapp.SendText(from, "No problem. Let us set the name right.")
 			beginPackageDetails(from, s, f)
@@ -787,37 +917,21 @@ func handlePackageDetails(from string, s *Session, msg, lower, stageIntent strin
 			// order, that line takes it and the recap is read
 			// again. Otherwise the pending product's size is
 			// asked for afresh, as before.
-			matched, matchedSize := -2, ""
-			for i := range s.Basket {
-				if size := matchListedSize(s.Basket[i].Product, msg); size != "" {
-					if matched != -2 {
-						matched = -3 // fits more than one line
-					} else {
-						matched, matchedSize = i, size
-					}
+			matched, matchedSize, single := matchOneSizedLine(s, msg)
+			if single {
+				switch {
+				case matched >= 0:
+					s.Basket[matched].Size = matchedSize
+					sessions[key] = s
+					sendOrderRecap(from, s, f)
+					return
+				case matchedSize != f.Size:
+					f.Size = matchedSize
+					s.PendingFulfil = f
+					sessions[key] = s
+					sendOrderRecap(from, s, f)
+					return
 				}
-			}
-			if s.Product != nil {
-				if size := matchListedSize(s.Product, msg); size != "" {
-					if matched != -2 {
-						matched = -3
-					} else {
-						matched, matchedSize = -1, size
-					}
-				}
-			}
-			switch {
-			case matched >= 0:
-				s.Basket[matched].Size = matchedSize
-				sessions[key] = s
-				sendOrderRecap(from, s, f)
-				return
-			case matched == -1 && matchedSize != f.Size:
-				f.Size = matchedSize
-				s.PendingFulfil = f
-				sessions[key] = s
-				sendOrderRecap(from, s, f)
-				return
 			}
 			if s.Product != nil && len(s.Product.Sizes) > 0 {
 				s.SizeQueue = []int{-1}

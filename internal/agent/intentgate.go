@@ -63,7 +63,7 @@ Think from the whole context, never from isolated words. The same phrase can be 
 
 Reason in this order: first, what the open question is asking for; second, what she is referring to (including anything she said earlier in this chat); third, whether her message answers that question, replaces it with another need, or ends the sale. Then give the intent. If the facts say she is replying to a quoted message, she is pointing at that message: read her reply against the quoted message (and who sent it) first. A reply that answers, accepts or corrects the quoted message is not an answer to the open question just because its words could fit it; when her words settle the quoted matter and leave the open question untouched, that is "other", unless they cancel the sale or ask to see the product, which keep their intents.
 
-Answer with strict JSON only: {"intent": "...", "item": "...", "reply": "..."} — "reply" is used only for the question intent and stays empty otherwise; "item" is used only for the add intent.
+Answer with strict JSON only: {"intent": "...", "item": "...", "reply": "...", "field": "...", "value": "..."} — "reply" is used only for the question intent and stays empty otherwise; "item" is used only for the add intent; "field" and "value" are used only for the change intent.
 
 The intents:
 - "picture": she wants to SEE the product before she goes on: asking for a photo in any words, saying she will not buy or pay until she has seen it, asking what it looks like. This overrides the open question completely: she is not answering it.
@@ -71,18 +71,21 @@ The intents:
 - "confirm": only at the final confirm question: she agrees to the order as read back, or tells the agent to go ahead and send the payment link.
 - "answer": she is answering the open question, in whatever shape the answer naturally takes (a place, a name, a choice, a note, a plain no to an optional thing).
 - "question": she is asking something about the sale (the total, delivery, the product) and expects an answer before she goes on. Draft the answer in "reply", from the facts only, short and plain; the platform verifies every figure in it before sending.
-- "change": only at the final confirm question: she wants something in the order corrected.
+- "change": only at the final confirm question: she wants something in the order corrected. When she states the correction itself (a new name for the package, a different place, a different size, a different message for the seller), also give "field" (name, place, size or note) and "value" (the new value, in her words). A reply that quotes an earlier question in this sale and answers it with a new value is a change to that part of the order: give its field and its value.
 - "add": she wants to ADD another product from this shop to this same order: "add the bag", "I will take the heels too", "and the red dress". Give the product's exact name, as it appears in the facts, in "item". An add is not an answer to the open question and not a change to what is already agreed; the agent confirms it with her before anything joins the order.
 - "other": none of these fits.`
 
 // stageReading is what the thinking made of one reply
 // inside a pending sale: the intent, and, for a question,
 // the answer it drafted from the facts; for an add, the
-// product she named.
+// product she named; for a change, the part of the order
+// she corrected and the value she stated for it.
 type stageReading struct {
 	Intent string
 	Reply  string
 	Item   string
+	Field  string
+	Value  string
 }
 
 // thinkStageIntent asks the thinking what a buyer's reply
@@ -152,13 +155,15 @@ func thinkStageIntentQ(from string, s *Session, merchant *catalogue.Merchant, ms
 		Intent string `json:"intent"`
 		Reply  string `json:"reply"`
 		Item   string `json:"item"`
+		Field  string `json:"field"`
+		Value  string `json:"value"`
 	}
 	if err := json.Unmarshal([]byte(text[open:closeIdx+1]), &raw); err != nil {
 		return stageReading{}
 	}
 	switch raw.Intent {
 	case stageIntentAnswer, stageIntentPicture, stageIntentCancel, stageIntentConfirm, stageIntentAsk, stageIntentChange, stageIntentAdd, stageIntentOther:
-		return stageReading{Intent: raw.Intent, Reply: strings.TrimSpace(raw.Reply), Item: strings.TrimSpace(raw.Item)}
+		return stageReading{Intent: raw.Intent, Reply: strings.TrimSpace(raw.Reply), Item: strings.TrimSpace(raw.Item), Field: strings.TrimSpace(raw.Field), Value: strings.TrimSpace(raw.Value)}
 	}
 	return stageReading{}
 }

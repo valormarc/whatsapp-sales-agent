@@ -42,7 +42,7 @@ Read her message and decide:
 - intent "offtopic": her message is not about buying or shops at all.
 - intent "unclear": none of the above fits.
 
-"reply" is your answer to her in your own words for no_shop, browse, offtopic and unclear: short, warm, correct English, never a title (no Sir, Madam, Ma or Boss), steering her toward naming a shop or a thing she wants. For search and shop leave reply empty; the agent lists the verified results itself. Never invent a product, a shop or a price, and never repeat a greeting she has already had.
+"reply" is your answer to her in your own words for no_shop, browse, offtopic and unclear: short, warm, correct English, never a title (no Sir, Madam, Ma or Boss), steering her toward naming a shop or a thing she wants. For search and shop leave reply empty; the agent lists the verified results itself. Never invent a product, a shop or a price, and never repeat a greeting she has already had. When results are standing and her message neither picks one nor starts something new — a greeting, small talk — the pick is still open: greet her back in one short line and hold the question up again, naming the shown results and asking which one she wants. A greeting never closes a question that is still open.
 
 Reply with exactly one JSON object:
 {"intent": "search", "shop": "", "item": "", "matches": [{"shop": "LUXE", "product": "HP EliteBook 1030 G8 x360"}], "reply": ""}`
@@ -106,7 +106,7 @@ func understandDiscovery(from, text string) *discoveryUnderstanding {
 			}
 		}
 		if len(shown) > 0 {
-			facts += "\nYou just showed her these results: " + strings.Join(shown, "; ") + ". If she now names one of them, or says the first or the second, that is a pick: intent shop. If she asks to see a picture, in any words, that is intent picture, with the shown result she means in matches. When she does both in one message — names or describes one of them AND asks for its picture, like \"the strappy ones, can I see a picture?\" — that is intent picture with that result in matches."
+			facts += "\nYou just showed her these results: " + strings.Join(shown, "; ") + ". If she now names one of them, or says the first or the second, that is a pick: intent shop. If only one result was shown and she points at it without naming it — \"this\", \"that one\", \"I will take it\" — that is a pick of that one result: intent shop, with it in matches. If she asks to see a picture, in any words, that is intent picture, with the shown result she means in matches. When she does both in one message — names or describes one of them AND asks for its picture, like \"the strappy ones, can I see a picture?\" — that is intent picture with that result in matches."
 		}
 	}
 	if pre, ok := sessions[sessionKey("", from)]; ok {
@@ -432,8 +432,17 @@ func actOnDiscovery(from string, u *discoveryUnderstanding) bool {
 				item = "that"
 			}
 			whatsapp.SendText(from, "I do not have "+item+" in any shop just now.")
-			if taste := discoveryTaste(); taste != "" {
+			if taste, shown := discoveryTaste(); taste != "" {
 				whatsapp.SendText(from, taste)
+				// The goods the taste names were shown to
+				// her, so they are recorded as shown: her
+				// next words may point at one, and a greeting
+				// after them has something to hold up.
+				if pre, ok := sessions[sessionKey("", from)]; ok {
+					pre.DiscoveryShown = shown
+				} else {
+					sessions[sessionKey("", from)] = &Session{Stage: "unbound", DiscoveryShown: shown}
+				}
 			}
 			return true
 		}
@@ -508,23 +517,27 @@ func actOnDiscovery(from string, u *discoveryUnderstanding) bool {
 }
 
 // discoveryTaste names a few real goods across the shops, so
-// a buyer whose want is not stocked hears what there is.
-func discoveryTaste() string {
+// a buyer whose want is not stocked hears what there is. It
+// also returns the goods it named, in the shown shape, so
+// the caller can record them as results she was shown.
+func discoveryTaste() (string, []ShownProduct) {
 	var bits []string
+	var shown []ShownProduct
 	for _, m := range catalogue.ListMerchants() {
 		products := catalogue.ListProducts(m.ID)
 		if len(products) == 0 {
 			continue
 		}
 		bits = append(bits, products[0].Name+" at "+m.Name)
+		shown = append(shown, ShownProduct{ShopID: m.ID, ProductID: products[0].ID})
 		if len(bits) >= 3 {
 			break
 		}
 	}
 	if len(bits) == 0 {
-		return ""
+		return "", nil
 	}
-	return "Here is some of what the shops have: " + strings.Join(bits, "; ") + ". What else are you looking for?"
+	return "Here is some of what the shops have: " + strings.Join(bits, "; ") + ". What else are you looking for?", shown
 }
 
 // discoveryNet is the no-model net for the unbound buyer: a

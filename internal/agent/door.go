@@ -37,6 +37,18 @@ func doorText() string {
 	return doorTextAt(time.Now().In(accra).Hour())
 }
 
+// midDiscovery reports whether an unbound buyer is already
+// in a conversation on the shared number: results standing,
+// a search already asked, or words already exchanged. The
+// front door is for a cold arrival only; a greeting in the
+// middle of a search belongs to that search and is answered
+// there, with its open question held up, never by opening
+// the door over it.
+func midDiscovery(from string) bool {
+	pre, ok := sessions[sessionKey("", from)]
+	return ok && pre != nil && (len(pre.DiscoveryShown) > 0 || pre.DiscoveryAsked || len(pre.History) > 0)
+}
+
 // bareGreetingRe matches a message that is only a greeting, the
 // knock the door answers: the plain hellos, the time-of-day
 // greetings people actually open with (good morning through good
