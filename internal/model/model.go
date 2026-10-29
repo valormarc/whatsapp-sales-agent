@@ -232,6 +232,14 @@ type ListingDraft struct {
 	// earns a question.
 	Unit        string
 	UnitCertain bool
+	// Colour is the main colour of the goods in THIS photo,
+	// as a buyer would name it ("white", "rose gold"), or
+	// empty when no single colour dominates. It is the
+	// model's reading of the picture, per photo: a listing
+	// whose photos report several colours is one item in
+	// several colours, and its name and description are
+	// shaped accordingly at save (see applyColourRule).
+	Colour string
 	// Sizes are the sizes the goods come in, read from the
 	// seller's words or the goods themselves (a shoebox
 	// label, a size range in her caption), in her own terms.
@@ -383,7 +391,8 @@ func ChatVision(system, text, imageDataURI string) *string {
 // asked for and never read from the reply.
 func DraftListing(imageDataURI, caption string) *ListingDraft {
 	system := "You help a market seller turn a photo of her goods into a shop listing. " +
-		"Reply with exactly one JSON object, no other text: {\"name\": \"...\", \"description\": \"...\", \"unit\": \"...\", \"unit_certain\": true, \"sizes\": [\"...\"]}. " +
+		"Reply with exactly one JSON object, no other text: {\"name\": \"...\", \"description\": \"...\", \"unit\": \"...\", \"unit_certain\": true, \"sizes\": [\"...\"], \"colour\": \"...\"}. " +
+		"\"colour\" is the main colour of the goods in this one photo, as a buyer would name it (white, black, rose gold); give an empty string when no single colour dominates, as with a multicoloured print. " +
 		"\"sizes\" lists the sizes the goods come in, in the seller's own terms (shoe numbers, UK sizes, S M L, waist numbers), only when her words or the photo itself (a label, a size chart) state them; a stated range like 37 to 42 becomes each size in it. When the goods do not come in sizes, or no sizes are stated, give an empty list. Never guess sizes the goods might come in. " +
 		"The name is the short name a buyer would ask for, a few words at most. " +
 		"DESCRIPTION RULE: never copy the forwarded caption or any part of its wording wholesale. Summarise it into one short line of at most 20 words, clean enough to sit on a shop shelf, with every emoji and decoration removed. For a laptop give only the generation and processor, the RAM, the storage, the screen and the condition. For anything else give the item, its colour or material, and its condition or key detail, in the same tight shape. Only what the photo or her words support. " +
@@ -411,6 +420,7 @@ func DraftListing(imageDataURI, caption string) *ListingDraft {
 		Unit        string   `json:"unit"`
 		UnitCertain *bool    `json:"unit_certain"`
 		Sizes       []string `json:"sizes"`
+		Colour      string   `json:"colour"`
 	}
 	if err := json.Unmarshal([]byte(s[open:closeIdx+1]), &raw); err != nil {
 		return nil
@@ -420,6 +430,7 @@ func DraftListing(imageDataURI, caption string) *ListingDraft {
 		Description: strings.TrimSpace(raw.Description),
 		Unit:        strings.ToLower(strings.TrimSpace(raw.Unit)),
 		Sizes:       cleanSizes(raw.Sizes),
+		Colour:      strings.ToLower(strings.TrimSpace(raw.Colour)),
 	}
 	if raw.UnitCertain != nil {
 		d.UnitCertain = *raw.UnitCertain

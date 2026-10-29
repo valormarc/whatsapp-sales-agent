@@ -120,3 +120,36 @@ func TestAProductWithoutPhotosAsksTheOwner(t *testing.T) {
 		t.Fatalf("the owner should have been asked for the picture, got %q", ownerGot)
 	}
 }
+
+// The colour rule: a listing whose photos showed one item
+// in several colours saves under a colour-free name with
+// the colours listed in the description; a single colour
+// leaves the name and description exactly as they were.
+func TestColourRule(t *testing.T) {
+	flow := &OnboardingFlow{ColoursSeen: []string{"white", "black", "brown"}}
+	name, desc := applyColourRule(flow, "White Maxi Dress", "White ribbed off-shoulder bodycon maxi dress")
+	if name != "Maxi Dress" {
+		t.Fatalf("the colour should come out of the name, got %q", name)
+	}
+	if !strings.Contains(desc, "Comes in white, black and brown.") {
+		t.Fatalf("the colours should be listed in the description, got %q", desc)
+	}
+
+	one := &OnboardingFlow{ColoursSeen: []string{"black"}}
+	name, desc = applyColourRule(one, "Black Stiletto Heels", "Plain black leather heels")
+	if name != "Black Stiletto Heels" || desc != "Plain black leather heels" {
+		t.Fatalf("one colour must leave the listing untouched, got %q / %q", name, desc)
+	}
+
+	two := &OnboardingFlow{ColoursSeen: []string{"rose gold", "silver"}}
+	name, desc = applyColourRule(two, "Rose Gold Clutch", "Metallic clutch bag")
+	if name != "Clutch" || !strings.Contains(desc, "Comes in rose gold and silver.") {
+		t.Fatalf("a two-word colour should strip as a phrase, got %q / %q", name, desc)
+	}
+
+	none := &OnboardingFlow{ColoursSeen: []string{"red", "blue"}}
+	name, _ = applyColourRule(none, "Ankara Fabric", "Bold print fabric")
+	if name != "Ankara Fabric" {
+		t.Fatalf("colours absent from the name change nothing, got %q", name)
+	}
+}

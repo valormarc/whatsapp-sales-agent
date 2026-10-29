@@ -382,6 +382,18 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	if dataURI, ok := whatsapp.DownloadMedia(imageID); ok {
 		if md := model.DraftListing(dataURI, caption); md != nil {
 			visionDesc = md.Description
+			if md.Colour != "" {
+				seen := false
+				for _, c := range flow.ColoursSeen {
+					if c == md.Colour {
+						seen = true
+						break
+					}
+				}
+				if !seen {
+					flow.ColoursSeen = append(flow.ColoursSeen, md.Colour)
+				}
+			}
 			if draft.Name == "" {
 				draft.Name = md.Name
 			}

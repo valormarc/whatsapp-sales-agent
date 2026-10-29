@@ -54,6 +54,12 @@ type OnboardingFlow struct {
 	// photo.go). A guided flow leaves both unset.
 	Photo    bool
 	PhotoRef string
+	// ColoursSeen are the distinct main colours the photo
+	// reads reported across this listing's photos, in the
+	// order they were seen. Two or more means the listing is
+	// one item in several colours, and the colour rule
+	// shapes its name and description at save.
+	ColoursSeen []string
 	// PhotoOpened records that this listing was opened BY a
 	// photo, as opposed to a photo joining a listing the
 	// seller opened with her own words (a typed walk or a
@@ -703,9 +709,10 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 	case "confirm":
 		switch {
 		case isClearYes(lower):
+			saveName, saveDesc := applyColourRule(flow, flow.Name, flow.Description)
 			product, err := catalogue.AddProduct(s.MerchantID, catalogue.Product{
-				Name:        flow.Name,
-				Description: flow.Description,
+				Name:        saveName,
+				Description: saveDesc,
 				ListPrice:   flow.ListPrice,
 				FloorPrice:  flow.FloorPrice,
 				Fixed:       flow.Fixed,
@@ -1363,9 +1370,10 @@ func savePhotoCompactListing(from string, flow *OnboardingFlow) {
 	if s == nil {
 		return
 	}
+	saveName, saveDesc := applyColourRule(flow, flow.Name, flow.Description)
 	product, err := catalogue.AddProduct(s.MerchantID, catalogue.Product{
-		Name:        flow.Name,
-		Description: flow.Description,
+		Name:        saveName,
+		Description: saveDesc,
 		ListPrice:   flow.ListPrice,
 		FloorPrice:  flow.FloorPrice,
 		Fixed:       flow.Fixed,
