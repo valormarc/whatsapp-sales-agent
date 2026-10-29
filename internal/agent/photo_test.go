@@ -339,3 +339,86 @@ func TestBuyerPhotoDoesNotOpenOnboarding(t *testing.T) {
 		t.Fatalf("the shelf changed behind a buyer's photo: %+v", p)
 	}
 }
+
+
+// Different media ids must be inspected before being attached to
+// an open listing. With no caption and no model available, the
+// agent cannot know the new image is another angle and must not
+// silently merge it into the current product.
+func TestDifferentUncaptionedPhotoIsNotMerged(t *testing.T) {
+	owner := "233550001120"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+
+	c.photo(t, owner, "Corner Rack")
+	_ = c.replies(t, owner)
+	s := sessions[sessionKey(MerchantID, owner)]
+	if s == nil || s.Onboarding == nil || !s.Onboarding.Photo || s.Onboarding.Name != "Corner Rack" {
+		t.Fatalf("first photo should have an open listing, session = %+v", s)
+	}
+	if len(s.Onboarding.PhotoRefs) != 1 {
+		t.Fatalf("first listing should have one photo, refs = %v", s.Onboarding.PhotoRefs)
+	}
+
+	c.photo(t, owner, "")
+	got := strings.Join(c.replies(t, owner), "\n")
+	s = sessions[sessionKey(MerchantID, owner)]
+	if s == nil || s.Onboarding == nil || len(s.Onboarding.PhotoRefs) != 1 {
+		t.Fatalf("a different uncaptioned photo must not join the open listing, session = %+v", s)
+	}
+	if strings.Contains(got, "Photo added to Corner Rack") || !strings.Contains(got, "have not attached it") {
+		t.Fatalf("ambiguous new photo should be held clearly, got %q", got)
+	}
+}
+
+// A forwarded Status image carries a useful caption containing the
+// product, price and description. Even if the vision draft cannot
+// name the product, the caption's advert name and price should win.
+func TestPhotoStatusCaptionSuppliesNameAndPrice(t *testing.T) {
+	owner := "233550001121"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+	caption := "Double Clothes Rack — GH₵270\nBlack metal double clothes hanging rack with bottom storage shelf\nOrder here: https://wa.me/233209450786?text=SHOP-LUXE"
+
+	HandleInbound(Inbound{From: owner, ImageID: "clothes-rack-status", Caption: caption})
+	got := strings.Join(c.replies(t, owner), "\n")
+	s := sessions[sessionKey(MerchantID, owner)]
+	if s == nil || s.Onboarding == nil {
+		t.Fatalf("the forwarded product should open onboarding, got %q", got)
+	}
+	if s.Onboarding.Name != "Double Clothes Rack" || s.Onboarding.ListPrice != 270 {
+		t.Fatalf("caption should supply the correct name and price, flow = %+v; replies = %q", s.Onboarding, got)
+	}
+	if strings.Contains(got, "What is it called?") || strings.Contains(got, "What is the product called?") {
+		t.Fatalf("the caption already names the product, so it must not ask for the name: %q", got)
+	}
+}
+
+// If the merchant replies with the last price before the photo
+// analysis response has reached her, the amount must not become a
+// product name. Carry the number on the listing and ask for its name.
+func TestPhotoBarePriceArrivingBeforeNameIsNotSavedAsName(t *testing.T) {
+	owner := "233550001122"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+
+	c.photo(t, owner, "Black metal double clothes rack with lower shelf GH₵270")
+	_ = c.replies(t, owner)
+	s := sessions[sessionKey(MerchantID, owner)]
+	if s == nil || s.Onboarding == nil || s.Onboarding.Name != "" || s.Onboarding.ListPrice != 270 {
+		t.Fatalf("expected a photo listing with price but no extracted name, flow = %+v", s)
+	}
+
+	c.say(t, owner, "250")
+	got := strings.Join(c.replies(t, owner), "\n")
+	s = sessions[sessionKey(MerchantID, owner)]
+	if s == nil || s.Onboarding == nil || s.Onboarding.Name != "" {
+		t.Fatalf("the price must not be accepted as a product name, session = %+v", s)
+	}
+	if s.Onboarding.ListPrice != 270 || s.Onboarding.FloorPrice != 250 {
+		t.Fatalf("the list and last prices should both be retained, flow = %+v", s.Onboarding)
+	}
+	if !strings.Contains(got, "last price") || !strings.Contains(got, "product's name") {
+		t.Fatalf("the reply should explain the carried last price and ask for a name, got %q", got)
+	}
+}
