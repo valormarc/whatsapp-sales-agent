@@ -60,27 +60,41 @@ const stageIntentCharter = `You are the intent reader for a pending sale in a Wh
 
 Think from the whole context, never from isolated words. The same phrase can be an answer, an instruction for the order, or the end of the sale, depending on what was asked. Judge what she is trying to accomplish with this message.
 
-Answer with strict JSON only: {"intent": "..."}
+Answer with strict JSON only: {"intent": "...", "reply": "..."} — "reply" is used only for the question intent and stays empty otherwise.
 
 The intents:
 - "picture": she wants to SEE the product before she goes on: asking for a photo in any words, saying she will not buy or pay until she has seen it, asking what it looks like. This overrides the open question completely: she is not answering it.
 - "cancel": she is ending this pending purchase: calling it off, dropping the whole thing, changing her mind about buying. Judge by the situation: at the seller-message question, declining the optional message ("I don't want a message", "no note") is an ANSWER, not a cancel; a note telling the seller where to leave the goods ("leave it with the security man") is an ANSWER, not a cancel.
 - "confirm": only at the final confirm question: she agrees to the order as read back, or tells the agent to go ahead and send the payment link.
 - "answer": she is answering the open question, in whatever shape the answer naturally takes (a place, a name, a choice, a note, a plain no to an optional thing).
-- "question": she is asking something about the sale (the total, delivery, the product) and expects an answer before she goes on.
+- "question": she is asking something about the sale (the total, delivery, the product) and expects an answer before she goes on. Draft the answer in "reply", from the facts only, short and plain; the platform verifies every figure in it before sending.
 - "change": only at the final confirm question: she wants something in the order corrected.
 - "other": none of these fits.`
 
+// stageReading is what the thinking made of one reply
+// inside a pending sale: the intent, and, for a question,
+// the answer it drafted from the facts.
+type stageReading struct {
+	Intent string
+	Reply  string
+}
+
 // thinkStageIntent asks the thinking what a buyer's reply
 // inside a pending sale means, against the open question
-// she was asked. It returns "" when no model can be read,
-// and the caller then keeps its older behaviour.
-func thinkStageIntent(from string, s *Session, merchant *catalogue.Merchant, msg string) string {
+// she was asked. It returns an empty reading when no model
+// can be read, and the caller then keeps its older
+// behaviour.
+func thinkStageIntent(from string, s *Session, merchant *catalogue.Merchant, msg string) stageReading {
 	if s == nil || s.Product == nil || merchant == nil {
-		return ""
+		return stageReading{}
 	}
 	var b strings.Builder
-	b.WriteString("The shop is " + merchant.Name + ". The pending sale is the " + s.Product.Name + " at " + money.GHS(s.AgreedPrice) + ".\n")
+	b.WriteString("The shop is " + merchant.Name + ". The pending sale is the " + s.Product.Name + " (" + s.Product.Description + ") at " + money.GHS(s.AgreedPrice) + "; its list price is " + money.GHS(s.Product.ListPrice) + ".\n")
+	if merchant.DeliveryFee > 0 {
+		b.WriteString("Delivery costs " + money.GHS(merchant.DeliveryFee) + ". " + merchant.DeliveryNote + "\n")
+	} else {
+		b.WriteString("The shop has no set delivery fee; delivery is arranged with the seller.\n")
+	}
 	b.WriteString("The open question she was just asked: \"" + fulfilPrompt(s) + "\"\n")
 	if s.FulfilStep == "confirm" {
 		f := s.PendingFulfil
@@ -91,25 +105,26 @@ func thinkStageIntent(from string, s *Session, merchant *catalogue.Merchant, msg
 	timeout := 10000
 	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, TimeoutMs: &timeout})
 	if out == nil {
-		return ""
+		return stageReading{}
 	}
 	text := *out
 	open := strings.Index(text, "{")
 	closeIdx := strings.LastIndex(text, "}")
 	if open == -1 || closeIdx <= open {
-		return ""
+		return stageReading{}
 	}
 	var raw struct {
 		Intent string `json:"intent"`
+		Reply  string `json:"reply"`
 	}
 	if err := json.Unmarshal([]byte(text[open:closeIdx+1]), &raw); err != nil {
-		return ""
+		return stageReading{}
 	}
 	switch raw.Intent {
 	case stageIntentAnswer, stageIntentPicture, stageIntentCancel, stageIntentConfirm, stageIntentAsk, stageIntentChange, stageIntentOther:
-		return raw.Intent
+		return stageReading{Intent: raw.Intent, Reply: strings.TrimSpace(raw.Reply)}
 	}
-	return ""
+	return stageReading{}
 }
 
 // picRequest is one buyer waiting on one product photo the

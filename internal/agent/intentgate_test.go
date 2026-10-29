@@ -43,6 +43,10 @@ func stubStageModel(t *testing.T) {
 				content = `{"intent":"picture"}`
 			case strings.Contains(her, "forget it"), strings.Contains(her, "drop the whole thing"):
 				content = `{"intent":"cancel"}`
+			case strings.Contains(her, "in all"):
+				content = `{"intent":"question","reply":"Your total is GH₵875: GH₵850 for the bag and GH₵25 for delivery."}`
+			case strings.Contains(her, "cover delivery"):
+				content = `{"intent":"question","reply":"No. The bag is GH₵850 and delivery is GH₵25, so GH₵875 in all."}`
 			}
 		}
 		w.Header().Set("content-type", "application/json")
@@ -243,5 +247,43 @@ func TestStageIntentReadsMeaningNotWords(t *testing.T) {
 	}
 	if got := ordersCount(t, dir); got != 0 {
 		t.Fatalf("orders after the call-off = %d, want none", got)
+	}
+}
+
+// A question inside a pending sale is answered from the
+// sale's facts before the open question is held up again:
+// understanding the intention is only half the work.
+func TestStageQuestionIsAnsweredNotSwallowed(t *testing.T) {
+	_, c := setupTwitterShops(t)
+	stubStageModel(t)
+
+	// At the fulfilment choice.
+	buyer := "233550009109"
+	agreeBagAtList(t, c, buyer)
+	c.say(t, buyer, "How much will I pay in all?")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "GH₵875") {
+		t.Fatalf("her total question should be answered from the facts, got %q", got)
+	}
+	if !strings.Contains(got, "how do you want to get it") {
+		t.Fatalf("the open question should be held up again after the answer, got %q", got)
+	}
+
+	// At the package name question: the question is not
+	// taken as her name, and her real name still lands after.
+	buyer2 := "233550009110"
+	agreeBagAtList(t, c, buyer2)
+	tap(t, buyer2, "ff_self")
+	c.say(t, buyer2, "Wait, does the price cover delivery?")
+	got = strings.Join(c.replies(t, buyer2), "\n")
+	if !strings.Contains(got, "GH₵875 in all") {
+		t.Fatalf("her delivery question at the name step should be answered, got %q", got)
+	}
+	if !strings.Contains(got, "What name should go on the package?") {
+		t.Fatalf("the name question should be asked again, got %q", got)
+	}
+	c.say(t, buyer2, "Akosua Mensah")
+	if got := c.last(t, buyer2); !strings.Contains(got, "Any message for the seller") {
+		t.Fatalf("after the answer her name should land as the name, got %q", got)
 	}
 }

@@ -243,7 +243,8 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 	// words are never taken as a name, a place or a note when
 	// she meant something else, and the sale does not advance
 	// while she waits to see the goods.
-	stageIntent := thinkStageIntent(from, s, merchant, msg)
+	reading := thinkStageIntent(from, s, merchant, msg)
+	stageIntent := reading.Intent
 	switch stageIntent {
 	case stageIntentPicture:
 		whole := p
@@ -262,6 +263,19 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 			s.PendingFulfil = fulfilment{}
 			sessions[key] = s
 			completeSale(from, s, s.AgreedPrice, f)
+			return
+		}
+	case stageIntentAsk:
+		// She asked something about the sale: the thinking
+		// answers it from the facts, every figure verified
+		// against the sale's own numbers, and the open
+		// question is held up again. A draft that cannot be
+		// verified is not sent; the step machine below then
+		// does what it can with her words, as before.
+		if reading.Reply != "" && voiceClean(reading.Reply) &&
+			figuresClean(reading.Reply, s.Product.ListPrice, s.AgreedPrice, merchant.DeliveryFee, s.AgreedPrice+merchant.DeliveryFee) {
+			whatsapp.SendText(from, reading.Reply)
+			reaskFulfilStep(from, s)
 			return
 		}
 	}
