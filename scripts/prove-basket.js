@@ -97,7 +97,7 @@ function orders() { const f = path.join(dir, "data", "orders.json"); return fs.e
     check("the items sum to the order price", o.items && Math.abs(o.items.reduce((a, i) => a + i.price, 0) - o.price) < 0.001);
     check("the heels carry her size on the order", o.items && o.items[0].size === "40");
     const notes = outboxTo(OWNER).map((r) => r.body || "").join("\n");
-    check("the seller's notice lists both items", notes.includes("*Ankle Strap Heels*") && notes.includes("*Leather Bag*"));
+    check("the seller's notice lists both items", notes.includes("Item: Ankle Strap Heels") && notes.includes("Item: Leather Bag") && notes.includes("Agreed price:"));
   } catch (e) {
     console.log("ERROR " + e.message); fail++;
   } finally {
