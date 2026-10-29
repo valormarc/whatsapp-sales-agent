@@ -106,3 +106,21 @@ func TestTypedNameLineCountIsNotAPrice(t *testing.T) {
 		t.Fatalf("nothing should be saved mid-flow, got %+v", p)
 	}
 }
+
+
+// An explicitly marked list price in the first line of a forwarded
+// Status must not become part of the product name, even though the
+// price has already been read from the full caption.
+func TestTypedNameStripsMarkedPriceWhenPriceAlreadySettled(t *testing.T) {
+	name, price, _ := parseTypedNameLine("Double Clothes Rack — GH₵270", 270)
+	if name != "Double Clothes Rack" {
+		t.Fatalf("name = %q, want product name without marked price", name)
+	}
+	if price != 0 {
+		t.Fatalf("settled price must remain authoritative, parsed new price = %v", price)
+	}
+	name, _, _ = parseTypedNameLine("HP EliteBook 840", 4500)
+	if name != "HP EliteBook 840" {
+		t.Fatalf("model number should remain in name, got %q", name)
+	}
+}
