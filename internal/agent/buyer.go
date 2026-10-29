@@ -118,6 +118,13 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		return
 	}
 
+	// A budget she states is carried from her words before
+	// anything else reads them: it is context for the whole
+	// conversation, not an answer to any one question.
+	if b := netBudget(lower); b > 0 {
+		carryBudget(from, s, b)
+	}
+
 	// Thinking first. On an open turn (not inside a guided
 	// flow: no haggle running, no fulfilment, no pending close,
 	// no onboarding), the agent thinks before it answers: the
@@ -131,7 +138,30 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// blank. What the thinking declines falls through to the
 	// branches below, the net, unchanged.
 	if (s.Stage == "browsing" || s.Stage == "agreed" || s.Stage == "") && !s.PendingClose && s.Onboarding == nil && s.Signup == nil && parseOffer(lower) == nil {
-		if u := thinkBuyerMessage(from, s, merchant, shopID, msg); u != nil && actOnBuyerUnderstanding(from, s, merchant, shopID, u) {
+		if u := thinkBuyerMessage(from, s, merchant, shopID, msg); u != nil {
+			// A budget the thinking read off her words is
+			// carried once the figure is verified against
+			// the words themselves.
+			if u.Budget > 0 && budgetFigureIn(msg, u.Budget) {
+				carryBudget(from, s, u.Budget)
+			}
+			if actOnBuyerUnderstanding(from, s, merchant, shopID, u) {
+				return
+			}
+		}
+	}
+
+	// A balk at a price, on plain words alone: the cheaper
+	// suitable thing goes in front of her before any haggle
+	// is invited (see sales.go). Inside a haggle the engine
+	// owns her objections; at the pending close her answer
+	// belongs to that question.
+	if s.Stage == "browsing" && !s.PendingClose && parseOffer(lower) == nil && tooExpensiveRe.MatchString(lower) {
+		current := s.LastViewed
+		if current == nil {
+			current = s.Product
+		}
+		if offerCheaperAlternative(from, s, merchant, shopID, current, msg) {
 			return
 		}
 	}

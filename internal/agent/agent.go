@@ -137,6 +137,12 @@ type Session struct {
 	// waits at the feewait step (see deliveryfees.go).
 	FeeQuotePlace string
 
+	// Budget is what this buyer said she can spend, carried
+	// for this conversation only (see sales.go): a stated
+	// context her recommendations and alternatives respect,
+	// never a profile that outlives the chat.
+	Budget float64
+
 	// FeePark holds a repeat order's settled fulfilment
 	// details across the wait for a fresh delivery fee quote,
 	// so the fee is the only thing the repeat ever waits for
@@ -555,9 +561,20 @@ func HandleInbound(in Inbound) {
 					whatsapp.SendText(from, noOrderPaymentText(shop))
 					return
 				}
+				// A buyer's photo with no payment behind it
+				// is a reference: the thing she likes, shown
+				// instead of described. It is read against
+				// this shop's shelf and the closest match is
+				// put in front of her (see photomatch.go).
+				if handleBuyerPhotoMatch(from, shopID, in.ImageID, in.Caption) {
+					return
+				}
 				whatsapp.SendText(from, "Got your photo. I sell in text here at "+shop.Name+", and I cannot price or list goods from a photo yet. Tell me the name of the item you are asking about and I will help.")
 				return
 			}
+		}
+		if handleBuyerPhotoMatch(from, "", in.ImageID, in.Caption) {
+			return
 		}
 		whatsapp.SendText(from, askShopText)
 		return

@@ -33,14 +33,17 @@ Reason in this order before you decide: first, what she is referring to (includi
 
 Read her message and decide:
 - intent "shop": she names a shop (by name or code), or picks a shop or a product from results she was shown. Give "shop" as the shop code, and when she picked a product give it in matches too.
-- intent "search": she wants a kind of thing, whether or not she has a shop in mind, and whether she asks it as a question ("which shop has laptops?"), a need ("I am looking for a laptop"), or a statement. Give "item" as the thing in her own words, and "matches": every product in the facts that genuinely fits it BY MEANING, not by wording. A laptop is a notebook computer under any brand name; slides and sandals are the same family; a phone is not a laptop. Name each match by its shop code and its exact product name from the facts. Only products in the facts, never an invention. When she asks by price (the cheapest, the most affordable), she still means the thing itself; order your matches by list price, cheapest first.
+- intent "search": she wants a kind of thing, whether or not she has a shop in mind, and whether she asks it as a question ("which shop has laptops?"), a need ("I am looking for a laptop"), or a statement. Give "item" as the thing in her own words, and "matches": every product in the facts that genuinely fits it BY MEANING, not by wording. A laptop is a notebook computer under any brand name; slides and sandals are the same family; a phone is not a laptop. Name each match by its shop code and its exact product name from the facts. Only products in the facts, never an invention. When she asks by price (the cheapest, the most affordable), she still means the thing itself; order your matches by list price, cheapest first. When her ask is a need described by occasion, purpose or purse rather than a named kind of thing (a gift for someone, something for an event, something nice within what she can spend), set "recommend" true and order the matches with the strongest fit first: the agent will present the first as its recommendation, with a reason. When she states what she can spend, in this message or as her settled budget in the facts, give that figure in "budget" exactly as stated; otherwise leave it 0.
 - intent "picture": she is asking to SEE a picture of a thing: "show me picture", "send pic", and also "I am not buying without pic", which means the same thing: the picture comes before any buying. Give "item" as the thing she wants to see and "matches" for it exactly as a search. A price wish inside the picture ask ("send pic of the cheapest heel") orders those matches by list price, cheapest first, so the first match is the one she means. A pick that carries a picture ask in the same breath is this intent, not a pick: "the strappy ones, can I see a picture?" said about a shown result is her choosing that result BY asking to see it — the picture is what she wants, so answer the picture ask rather than only landing her in the shop.
+- intent "cheaper": she is balking at the price of what she was just shown or recommended: too expensive, still expensive, more than she can do, without naming a figure she would pay. Give "matches": suitable products that cost LESS than the thing she is balking at, across the shops, strongest fit first; her budget in the facts is her ceiling.
 - intent "order_received": she is telling you that an order she already PAID for has arrived and she has the goods now. The facts name her paid orders when she has any; give "shop" as that order's shop code. This is about an order she already made, never a new purchase.
 - intent "order_missing": she is telling you that an order she already paid for has NOT arrived: it never came, it is lost, she is still waiting and it is overdue. The facts name her paid orders when she has any; give "shop" as that order's shop code. Merely asking where an order stands is a search of another kind, not this.
 - intent "browse": she asks what shops or goods there are.
 - intent "no_shop": she says she has no particular shop, without naming a thing she wants. If she names a thing as well, it is a search.
 - intent "offtopic": her message is not about buying or shops at all.
 - intent "unclear": none of the above fits.
+
+Judge the shape of her ask as well: when she describes a situation rather than naming a kind of thing — a gift for someone, something for an occasion, a purpose she names, what she can spend — she is asking the shops to choose for her, and a bare list is not an answer to that. For a search in that shape, set "recommend" true and put the strongest fit first among the matches.
 
 "reply" is your answer to her in your own words for no_shop, browse, offtopic and unclear: short, warm, correct English, never a title (no Sir, Madam, Ma or Boss), steering her toward naming a shop or a thing she wants. For search and shop leave reply empty; the agent lists the verified results itself. Never invent a product, a shop or a price, and never repeat a greeting she has already had. When results are standing and her message neither picks one nor starts something new — a greeting, small talk — the pick is still open: greet her back in one short line and hold the question up again, naming the shown results and asking which one she wants. A greeting never closes a question that is still open.
 
@@ -60,11 +63,13 @@ type discoveryMatch struct {
 }
 
 type discoveryUnderstanding struct {
-	Intent  string           `json:"intent"`
-	Shop    string           `json:"shop"`
-	Item    string           `json:"item"`
-	Matches []discoveryMatch `json:"matches"`
-	Reply   string           `json:"reply"`
+	Intent    string           `json:"intent"`
+	Shop      string           `json:"shop"`
+	Item      string           `json:"item"`
+	Matches   []discoveryMatch `json:"matches"`
+	Reply     string           `json:"reply"`
+	Budget    float64          `json:"budget"`
+	Recommend bool             `json:"recommend"`
 }
 
 // discoveryDirectory renders the public facts: every shop,
@@ -112,6 +117,9 @@ func understandDiscovery(from, text string) *discoveryUnderstanding {
 	if pre, ok := sessions[sessionKey("", from)]; ok {
 		if w := recentSpeakerWords(pre, 4); w != "" {
 			facts += "\nWhat she said earlier in this chat, oldest first: " + w + "."
+		}
+		if pre.Budget > 0 {
+			facts += "\nHer budget for this conversation: " + money.GHS(pre.Budget) + "."
 		}
 	}
 	if qf := quoteFactLine(); qf != "" {
@@ -222,6 +230,9 @@ func bindDiscoveryShop(from string, shop *catalogue.Merchant, focus *catalogue.P
 			s = &Session{Stage: "browsing", MerchantID: shop.ID}
 			sessions[key] = s
 		}
+		if pre, ok := sessions[sessionKey("", from)]; ok && pre.Budget > 0 {
+			s.Budget = pre.Budget
+		}
 		s.Product = focus
 		s.Ask = focus.ListPrice
 		s.LastViewed = focus
@@ -251,6 +262,51 @@ func presentSingleDiscoveryMatch(from string, shop *catalogue.Merchant, p *catal
 	pre.DiscoveryShown = []ShownProduct{{ShopID: shop.ID, ProductID: p.ID}}
 }
 
+// presentDiscoveryRecommendation answers a judged ask
+// across shops: the strongest verified match is put in
+// front of her as a recommendation, with its photo when it
+// has one and one alternative named. She stays unbound,
+// exactly as with a list of results: every match is
+// recorded as shown, and her pick of one is what takes her
+// into its shop.
+func presentDiscoveryRecommendation(from, ask string, matches []struct {
+	Shop    catalogue.Merchant
+	Product catalogue.Product
+}) {
+	candidates := make([]salesCandidate, 0, len(matches))
+	for i := range matches {
+		shop := matches[i].Shop
+		p := matches[i].Product
+		candidates = append(candidates, salesCandidate{Shop: &shop, Product: &p})
+	}
+	pre, ok := sessions[sessionKey("", from)]
+	if !ok || pre == nil {
+		pre = &Session{Stage: "unbound"}
+		sessions[sessionKey("", from)] = pre
+	}
+	budget := pre.Budget
+	pick, alt, reply, drafted := draftSalesPick(recommendSystem, ask, budget, candidates)
+	if !drafted {
+		pick, alt = codeSalesPick(candidates, budget)
+		if pick == nil {
+			return
+		}
+		reply = "At " + pick.Shop.Name + ", the strongest fit is the " + pick.Product.Name + " at " + money.GHS(pick.Product.ListPrice) + "."
+		if budget > 0 && pick.Product.ListPrice > budget {
+			reply = "Nothing in any shop lands inside " + money.GHS(budget) + ". The closest is the " + pick.Product.Name + " at " + money.GHS(pick.Product.ListPrice) + ", at " + pick.Shop.Name + "."
+		}
+		if alt != nil {
+			reply += " There is also the " + alt.Product.Name + " at " + money.GHS(alt.Product.ListPrice) + ", at " + alt.Shop.Name + "."
+		}
+	}
+	sendProductPhotos(from, pick.Product)
+	whatsapp.SendText(from, reply)
+	pre.DiscoveryShown = pre.DiscoveryShown[:0]
+	for _, v := range matches {
+		pre.DiscoveryShown = append(pre.DiscoveryShown, ShownProduct{ShopID: v.Shop.ID, ProductID: v.Product.ID})
+	}
+}
+
 // discoveryReplyOr answers with the model's drafted words
 // when they are clean and figure-free, and with the given
 // factual line otherwise.
@@ -274,19 +330,58 @@ func handleUnboundBuyer(from, text string) {
 		sessions[sessionKey("", from)] = pre
 	}
 	noteSpeakerWords(pre, text)
+	if b := netBudget(strings.ToLower(text)); b > 0 {
+		pre.Budget = b
+	}
 	// The thinking leads, here as everywhere: a pick that
 	// carries a picture ask in the same breath is a picture
 	// ask, and only the thinking can tell the two apart. The
 	// word net below speaks only when no model can be read,
 	// the standing rule for every fallback in the agent.
-	if u := understandDiscovery(from, text); u != nil && actOnDiscovery(from, u) {
-		return
+	if u := understandDiscovery(from, text); u != nil {
+		if u.Budget > 0 && budgetFigureIn(text, u.Budget) {
+			pre.Budget = u.Budget
+		}
+		if actOnDiscovery(from, u) {
+			return
+		}
 	}
 	if quotedPick(from, text) {
 		return
 	}
 	if pickFromShown(from, text) {
 		return
+	}
+	// A balk at a shown price, on plain words: the cheapest
+	// thing she was shown is offered as the alternative.
+	// The lead of the shown set (the pick she is balking
+	// at) is never offered back to her as its own cheaper
+	// alternative, and nothing dearer than it is either.
+	if tooExpensiveRe.MatchString(strings.ToLower(text)) && len(pre.DiscoveryShown) > 0 {
+		var cheapest *catalogue.Product
+		var cheapestShop *catalogue.Merchant
+		leadPrice := -1.0
+		for i, sp := range pre.DiscoveryShown {
+			p := catalogue.FindByID(sp.ShopID, sp.ProductID)
+			if p == nil {
+				continue
+			}
+			if i == 0 {
+				leadPrice = p.ListPrice
+				continue
+			}
+			if leadPrice >= 0 && p.ListPrice >= leadPrice {
+				continue
+			}
+			if cheapest == nil || p.ListPrice < cheapest.ListPrice {
+				cheapest, cheapestShop = p, catalogue.GetMerchant(sp.ShopID)
+			}
+		}
+		if cheapest != nil && cheapestShop != nil {
+			sendProductPhotos(from, cheapest)
+			whatsapp.SendText(from, "A cheaper one: the "+cheapest.Name+" at "+money.GHS(cheapest.ListPrice)+", at "+cheapestShop.Name+".")
+			return
+		}
 	}
 	discoveryNet(from, text)
 }
@@ -360,6 +455,49 @@ func newestPaidOrderAnywhere(from, shopHint string) *orders.Order {
 
 func actOnDiscovery(from string, u *discoveryUnderstanding) bool {
 	switch u.Intent {
+	case "cheaper":
+		// A balk at a shown price: the cheapest suitable
+		// thing across the shops goes in front of her, and
+		// the shown set becomes the alternatives she was
+		// offered, so her pick of one still binds her. A
+		// "cheaper" answer must be cheaper than the thing
+		// that led what she was shown (the pick she is
+		// balking at): code enforces that relation, since a
+		// reading can mistake the merely-mentioned
+		// alternative for the thing being pressed on her.
+		matches := verifiedMatches(u)
+		if pre, ok := sessions[sessionKey("", from)]; ok && len(pre.DiscoveryShown) > 0 {
+			if lead := catalogue.FindByID(pre.DiscoveryShown[0].ShopID, pre.DiscoveryShown[0].ProductID); lead != nil {
+				var under []struct {
+					Shop    catalogue.Merchant
+					Product catalogue.Product
+				}
+				for _, v := range matches {
+					if v.Product.ListPrice < lead.ListPrice {
+						under = append(under, v)
+					}
+				}
+				matches = under
+			}
+		}
+		if len(matches) == 0 {
+			return false
+		}
+		cheapest := matches[0]
+		for _, v := range matches[1:] {
+			if v.Product.ListPrice < cheapest.Product.ListPrice {
+				cheapest = v
+			}
+		}
+		sendProductPhotos(from, &cheapest.Product)
+		whatsapp.SendText(from, "A cheaper one: the "+cheapest.Product.Name+" at "+money.GHS(cheapest.Product.ListPrice)+", at "+cheapest.Shop.Name+".")
+		if pre, ok := sessions[sessionKey("", from)]; ok {
+			pre.DiscoveryShown = pre.DiscoveryShown[:0]
+			for _, v := range matches {
+				pre.DiscoveryShown = append(pre.DiscoveryShown, ShownProduct{ShopID: v.Shop.ID, ProductID: v.Product.ID})
+			}
+		}
+		return true
 	case "order_received", "order_missing":
 		// A delivery report from a buyer with no live shop
 		// session: her order pins the shop, she is bound to
@@ -426,6 +564,20 @@ func actOnDiscovery(from string, u *discoveryUnderstanding) bool {
 		return true
 	case "search":
 		matches := verifiedMatches(u)
+		// A judged ask (an occasion, a gift, a purse) is
+		// answered with a recommendation, not a catalogue
+		// dump: the strongest fit first, with its reason
+		// (see sales.go). The thinking flags the shape; a
+		// budget in force is the same signal in the
+		// platform's own facts, and either one is enough.
+		budgetHeld := false
+		if pre, ok := sessions[sessionKey("", from)]; ok && pre.Budget > 0 {
+			budgetHeld = true
+		}
+		if len(matches) > 0 && (u.Recommend || budgetHeld) {
+			presentDiscoveryRecommendation(from, u.Item, matches)
+			return true
+		}
 		if len(matches) == 0 {
 			item := strings.TrimSpace(u.Item)
 			if item == "" {
@@ -583,6 +735,31 @@ func discoveryNet(from, text string) {
 	// first one") must land on the closest thing she asked
 	// for, not on whichever shop sorts first.
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
+	// With a budget in force, even the net's answer is a
+	// recommendation: she stated what she can spend, and a
+	// bare list that ignores it is a worse answer than the
+	// platform's own floor pick under her budget.
+	if len(hits) > 0 {
+		if pre, ok := sessions[sessionKey("", from)]; ok && pre.Budget > 0 {
+			var matches []struct {
+				Shop    catalogue.Merchant
+				Product catalogue.Product
+			}
+			seenHit := map[string]bool{}
+			for _, h := range hits {
+				if seenHit[h.shop.ID+"|"+h.product.ID] {
+					continue
+				}
+				seenHit[h.shop.ID+"|"+h.product.ID] = true
+				matches = append(matches, struct {
+					Shop    catalogue.Merchant
+					Product catalogue.Product
+				}{Shop: h.shop, Product: h.product})
+			}
+			presentDiscoveryRecommendation(from, text, matches)
+			return
+		}
+	}
 	if len(hits) == 1 {
 		presentSingleDiscoveryMatch(from, &hits[0].shop, &hits[0].product)
 		return

@@ -68,6 +68,8 @@ const (
 	intentOrderMissing   = "order_missing"   // the buyer reports her paid order has not arrived
 	intentOrderDispute   = "order_dispute"   // the buyer opens a dispute on a paid order: cheated, scammed, refund demanded
 	intentReorder        = "reorder"         // the buyer wants a past order again, the same items with the same details
+	intentRecommend      = "recommend"       // the buyer describes a need and asks the shop to choose: a gift, an occasion, a purpose
+	intentTooExpensive   = "too_expensive"   // the buyer balks at a price without naming a figure: a cheaper suitable thing goes in front of her
 	intentOrderPayment   = "order_payment"   // the owner asks about the payment on an order
 	intentAskBuyer       = "ask_buyer"       // the owner tells the agent to ask her buyer
 	intentNewListing     = "new_listing"     // the owner is giving the agent a product to list
@@ -79,9 +81,10 @@ const (
 )
 
 type understood struct {
-	Intent string `json:"intent"`
-	Item   string `json:"item"`
-	Reply  string `json:"reply"`
+	Intent string  `json:"intent"`
+	Item   string  `json:"item"`
+	Reply  string  `json:"reply"`
+	Budget float64 `json:"budget"`
 
 	// DirectRoute is read by code from her words: she said the
 	// money went somewhere other than the payment link, so it
@@ -96,7 +99,10 @@ type understood struct {
 	Words string `json:"-"`
 }
 
-var figureTokenRe = regexp.MustCompile(`\d+(?:\.\d+)?`)
+// figureTokenRe reads a money figure as it is written,
+// thousands comma and all: GH₵1,800 is one figure of 1800,
+// never a 1 and an 800.
+var figureTokenRe = regexp.MustCompile(`\d[\d,]*(?:\.\d+)?`)
 
 // figuresClean reports whether every figure in a drafted reply
 // is one of the facts it was allowed to use. A draft that
@@ -117,7 +123,7 @@ func voiceClean(text string) bool {
 
 func figuresClean(text string, allowed ...float64) bool {
 	for _, tok := range figureTokenRe.FindAllString(text, -1) {
-		v, err := strconv.ParseFloat(tok, 64)
+		v, err := strconv.ParseFloat(strings.ReplaceAll(tok, ",", ""), 64)
 		if err != nil {
 			return false
 		}
@@ -157,7 +163,8 @@ Three laws govern every reply the shop sends. First, think and answer: when the 
 Reason in this order before you answer: first, what she is referring to (a product, an order, a price already named, something she was just shown or told); second, what she wants to happen; third, what the facts allow. Most wrong answers come from skipping the first step. When the facts say she is replying to a quoted message, that message — and who sent it, her or the shop — is what she is referring to: judge her words against the quoted message first, and against the current conversation second.
 
 Answer with strict JSON only, no other text:
-{"intent": "...", "item": "...", "reply": "..."}
+{"intent": "...", "item": "...", "reply": "...", "budget": 0}
+"budget" is a number, not words: when she states what she can spend (her budget, an amount she has for this, a ceiling she names), give that figure there exactly as she stated it; otherwise 0.
 
 The acts you can name:
 - "payment_blocked": she tried to pay, or is trying, and could not: network trouble, the payment service not working, the bank or MoMo failing, no reception. Not a refusal to pay.
@@ -173,6 +180,8 @@ The acts you can name:
 - "order_missing": the buyer is reporting that the goods from her paid order have NOT arrived: they never came, she is still waiting and it is overdue, the parcel is lost. Asking where an order is, without saying it has failed to arrive, is "order_status", not this.
 - "order_dispute": the buyer is opening a dispute on a paid order: she says she was cheated or scammed, that the seller took her money and sent nothing, or she demands her money back through the platform for goods that never came. Stronger than "order_missing": not a delay being reported, a sale being called dishonest.
 - "reorder": the buyer wants a past order AGAIN: the same items, the same details, bought once more. "Can I buy this again", "reorder the same", "I want the same thing I bought last time", quoting a completed order and asking to repeat it. She is not asking where that order stands (that is "order_status") and not starting a fresh browse; she is repeating a purchase.
+- "recommend": she is asking the shop to CHOOSE for her: she describes a need, an occasion, a gift for someone, a purpose, a kind of thing she cannot name, and wants the shop's judgment on what fits. "I need something nice for my girlfriend", "what would you suggest for a wedding", "I am looking for a gift". She has not named the product she wants; when she names a product she wants, that is "item". Do not draft the recommendation yourself; the platform composes it from the shelf.
+- "too_expensive": she is balking at the price of the thing she is looking at: it is too much for her, still expensive, more than she can do, WITHOUT naming a figure she would pay (a figure she names is an offer, handled by the haggle, not this act). The platform will put a cheaper suitable thing in front of her; do not draft it yourself.
 - "order_payment": the shop owner is asking about the payment on an order: whether it has been paid, what is happening with it. When an open order is in the facts and she asks about "the payment" or "this order" without naming another, that is the order she means.
 - "ask_buyer": the shop owner is telling you to ask her buyer something, or to find something out from the buyer: "ask the buyer", "ask her", "find out from her". You carry the question to the buyer yourself; never ask the owner what to ask when the facts show the open matter.
 - "new_listing": the shop owner is giving you a product to sell: describing goods she stocks, pasting an advert for a product, naming a product with its price or description so it can be listed. Goods copy meant for the shelf is this act, never a question; a statement about her shop, her orders or her day is not.
@@ -200,6 +209,9 @@ func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, sh
 	}
 	if s != nil && s.LastViewed != nil {
 		b.WriteString("She was last looking at: " + s.LastViewed.Name + ".\n")
+	}
+	if budget := budgetOf(from, s); budget > 0 {
+		b.WriteString("Her budget for this conversation: " + money.GHS(budget) + ". Recommendations and alternatives respect it.\n")
 	}
 	if w := recentSpeakerWords(s, 4); w != "" {
 		b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
@@ -335,7 +347,7 @@ func parseUnderstood(out *string) *understood {
 	}
 	switch u.Intent {
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
-		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentOrderPayment, intentAskBuyer, intentNewListing, intentShelf, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
+		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentRecommend, intentTooExpensive, intentOrderPayment, intentAskBuyer, intentNewListing, intentShelf, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
 		return &u
 	}
 	return nil
@@ -402,6 +414,14 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		return true
 	case intentReorder:
 		return startReorder(from, s, merchant, shopID, u.Words)
+	case intentRecommend:
+		return recommendInShop(from, s, merchant, shopID, u.Words)
+	case intentTooExpensive:
+		current := s.LastViewed
+		if current == nil {
+			current = s.Product
+		}
+		return offerCheaperAlternative(from, s, merchant, shopID, current, u.Words)
 	case intentItem:
 		p := catalogue.FindProduct(shopID, strings.ToLower(u.Item))
 		if p == nil {
