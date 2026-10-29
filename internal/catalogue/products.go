@@ -367,3 +367,30 @@ func SetDeliveryPaidTo(merchantID, who string) error {
 		return nil
 	})
 }
+
+// SetProductPhotos records the kept photo paths on a saved
+// product, after the product exists to hold them.
+func SetProductPhotos(merchantID, productID string, photos []string) error {
+	return updateMerchant(merchantID, func(m *Merchant) error {
+		for i := range m.Products {
+			if m.Products[i].ID == productID {
+				m.Products[i].Photos = photos
+				return nil
+			}
+		}
+		return ErrProductNotFound
+	})
+}
+
+// FindByID returns the product with this exact id inside a
+// shop, or nil. Ids are how a shown discovery result is
+// picked back up without re-reading names.
+func FindByID(merchantID, productID string) *Product {
+	for _, p := range ListProducts(merchantID) {
+		if p.ID == productID {
+			found := p
+			return &found
+		}
+	}
+	return nil
+}

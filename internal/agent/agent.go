@@ -63,6 +63,16 @@ type Session struct {
 	AgreedPrice float64
 	PaymentURL  string
 
+	// DiscoveryShown holds the results discovery last showed
+	// this buyer (shop and product ids), so her next message
+	// can be read as the pick it usually is.
+	DiscoveryShown []ShownProduct
+
+	// DiscoveryAsked marks that the unbound buyer has already
+	// been offered the search once, so the no-model net varies
+	// its line instead of repeating itself.
+	DiscoveryAsked bool
+
 	// LastViewed is the item the buyer last asked about while
 	// browsing, before any haggle opened. Real buyers jump straight
 	// from looking at an item to "can you do it for 150", naming
@@ -443,7 +453,7 @@ func HandleInbound(in Inbound) {
 			startSignup(from)
 			return
 		case in.ButtonID == "door_buy":
-			whatsapp.SendText(from, askShopText)
+			whatsapp.SendText(from, "Welcome in. If you have a shop code, send it, like SHOP-EFUA. If not, tell me what you are looking to buy and I will check every shop for it.")
 			return
 		case strings.HasPrefix(in.ButtonID, "ff_"):
 			// A fulfilment tap (see fulfilment.go). Some taps are
@@ -535,7 +545,7 @@ func HandleInbound(in Inbound) {
 			})
 			return
 		}
-		whatsapp.SendText(from, askShopText)
+		handleUnboundBuyer(from, strings.TrimSpace(in.Text))
 		return
 	}
 

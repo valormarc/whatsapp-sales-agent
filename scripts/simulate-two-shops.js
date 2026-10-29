@@ -6,7 +6,8 @@
 // with its own owner number, payout phone, products, prices and
 // floors, so the repository's seeded catalogue is never disturbed.
 // Two buyers enter by their different shop links and haggle in
-// parallel; a third arrives with no code and is sold nothing. The
+// parallel; a third arrives with no code and is helped to a
+// shop by discovery, but sold nothing until she picks one. The
 // run asserts there is no cross talk anywhere: not in the products
 // or prices a buyer sees, not in the day books, not in the orders,
 // and not in which owner each merchant notice was addressed to. A
@@ -186,14 +187,16 @@ const child = spawn(BIN, [], {
 try {
   await waitForHealth();
 
-  console.log('\n===== A BUYER WITH NO SHOP CODE IS SOLD NOTHING =====');
+  console.log('\n===== A BUYER WITH NO SHOP CODE IS HELPED, NOT SOLD TO =====');
   let r = await say(BUYER_NOCODE, 'buyer (no code)', 'How much is the beaded bag?');
-  check('she is asked for the shop code', r.join(' ').includes('shop code'), r.join(' '));
   check(
-    'no product, price or catalogue reaches her',
-    !/Beaded|Tilapia|GH₵850|GH₵180|Here is what we have/.test(r.join(' ')),
+    'discovery answers with the attributed public result',
+    r.join(' ').includes('EFUA has: Handmade Beaded Bag - GH₵850'),
     r.join(' '),
   );
+  check('no other shop\'s goods mix into her result', !/Tilapia|GH₵180/.test(r.join(' ')), r.join(' '));
+  r = await say(BUYER_NOCODE, 'buyer (no code)', 'I can offer 800');
+  check('an unbound offer opens no sale', !/deal|payment link|pay here/i.test(r.join(' ')), r.join(' '));
 
   console.log('\n===== TWO BUYERS ENTER BY THEIR OWN SHOP LINKS =====');
   r = await say(BUYER_EFUA, 'buyer (Efua)', 'SHOP-EFUA');

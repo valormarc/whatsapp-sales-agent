@@ -353,6 +353,9 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		(draft.Description == "" || draft.Description == flow.Description) &&
 		(draft.ListPrice <= 0 || draft.ListPrice == flow.ListPrice) &&
 		(draft.Unit == "" || draft.Unit == flow.Unit) {
+		// Another angle of the same goods: it joins the
+		// listing's kept photos even though it earns no reply.
+		collectFlowPhoto(flow, imageID)
 		if photoAckCovered(flow.RepeatAckAt) {
 			return
 		}
@@ -410,6 +413,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	}
 	flow.Photo = true
 	flow.PhotoRef = imageID
+	collectFlowPhoto(flow, imageID)
 	if flow.Name == "" {
 		flow.Name = draft.Name
 	}

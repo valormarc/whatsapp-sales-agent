@@ -103,12 +103,20 @@ func TestStrangerGreetingGetsTheDoorOnce(t *testing.T) {
 		t.Fatalf("door buttons = %v, want the Buy and Sell pair", titles)
 	}
 
-	// A real question after the door gets the plain ask, with no
-	// buttons attached, and nothing leaks from either shelf.
+	// A real question after the door gets discovery, not the
+	// welcome wall again: no buttons, and the answer is the
+	// attributed public result.
 	c.say(t, stranger, "How much is the beaded bag?")
 	recs = doorRecords(t, dir, stranger)
-	if got := recs[len(recs)-1]; got.Kind == "buttons" || !strings.Contains(got.Body, "shop code") {
-		t.Fatalf("post-door ask = %+v, want the plain shop code ask", got)
+	joined := ""
+	for _, r := range recs {
+		joined += r.Body + "\n"
+		if r.Kind == "buttons" && strings.Contains(r.Body, "Handmade Beaded Bag") {
+			t.Fatalf("the result arrived as buttons: %+v", r)
+		}
+	}
+	if !strings.Contains(joined, "Handmade Beaded Bag") {
+		t.Fatalf("post-door answers should carry the discovery result, got %q", joined)
 	}
 	// And a second greeting does not bring the buttons back.
 	c.say(t, stranger, "Hi")

@@ -27,7 +27,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	merchant := catalogue.GetMerchant(boundID)
 	if merchant == nil {
 		delete(bindings, from)
-		whatsapp.SendText(from, askShopText)
+		handleUnboundBuyer(from, msg)
 		return
 	}
 	shopID := merchant.ID
@@ -241,6 +241,10 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				if p.Fixed {
 					tail = " That price is fixed."
 				}
+				if sendProductPhotos(from, p) {
+					whatsapp.SendText(from, p.Description+" The price stands at "+money.GHS(s.Ask)+"."+tail)
+					return
+				}
 				whatsapp.SendText(from, "I cannot send a photo of the "+p.Name+" from here, but it is this: "+p.Description+" The price stands at "+money.GHS(s.Ask)+"."+tail)
 				return
 			}
@@ -403,6 +407,10 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		}
 		if target != nil {
 			s.LastViewed = target
+			if sendProductPhotos(from, target) {
+				whatsapp.SendText(from, target.Name+": "+target.Description+" It goes for "+money.GHS(target.ListPrice)+"."+offerInvite(target, " Make me an offer and let us see."))
+				return
+			}
 			whatsapp.SendText(from, "I cannot send a photo of the "+target.Name+" from here, but it is this: "+target.Description+" It goes for "+money.GHS(target.ListPrice)+"."+offerInvite(target, " Make me an offer and let us see."))
 			return
 		}

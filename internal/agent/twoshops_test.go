@@ -100,24 +100,30 @@ func TestShopCodeEntryBindsBuyerToThatShopOnly(t *testing.T) {
 	}
 }
 
-func TestBuyerWithNoCodeIsSoldNothing(t *testing.T) {
-	_, c := setupTwoShops(t)
+// A buyer with no code is helped to a shop, never blocked
+// and never sold to across shops: she may be shown the
+// public facts (which shop has the thing, at its list price,
+// attributed to that shop), but nothing is haggled, ordered
+// or promised until she picks a shop and is inside it.
+func TestBuyerWithNoCodeIsHelpedButNotSold(t *testing.T) {
+	dir, c := setupTwoShops(t)
 	buyer := "233550004010"
 
 	c.say(t, buyer, "How much is the beaded bag?")
-	got := c.last(t, buyer)
-	if !strings.Contains(got, "shop code") {
-		t.Fatalf("no-code reply should ask for the shop code, got %q", got)
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "Handmade Beaded Bag") || !strings.Contains(got, "GH₵850") || !strings.Contains(got, "EFUA") {
+		t.Fatalf("no-code question should be answered with the attributed result, got %q", got)
 	}
-	for _, banned := range []string{"Beaded Bag", "Tilapia", "GH₵850", "GH₵180", "Here is what we have"} {
-		if strings.Contains(got, banned) {
-			t.Fatalf("no-code reply leaked %q: %q", banned, got)
-		}
-	}
-	// Her bare offers buy nothing either.
+	// Her bare offers buy nothing: no haggle opens, no order
+	// is written, nothing binds.
 	c.say(t, buyer, "I can offer 800")
-	if got := c.last(t, buyer); !strings.Contains(got, "shop code") {
-		t.Fatalf("no-code offer should still ask, got %q", got)
+	if got := c.last(t, buyer); strings.Contains(got, "Deal") || strings.Contains(got, "payment") {
+		t.Fatalf("no-code offer opened a sale: %q", got)
+	}
+	if _, err := os.Stat(dir + "/orders.json"); err == nil {
+		if placed := ordersOnDisk(t, dir); len(placed) != 0 {
+			t.Fatalf("an unbound offer wrote orders: %v", placed)
+		}
 	}
 
 	// The shop name is the fallback door, and only then is she sold to.

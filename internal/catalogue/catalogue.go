@@ -43,6 +43,12 @@ type Product struct {
 	Stock       int     `json:"stock"`
 	Unit        string  `json:"unit,omitempty"`
 	BaseQty     float64 `json:"baseQty,omitempty"`
+	// Photos are the seller's own pictures of this product,
+	// kept on the listing (paths under the data directory)
+	// so a buyer who asks for the pic can be sent them. One
+	// product holds many photos: the angles and colours she
+	// sent of the same goods.
+	Photos []string `json:"photos,omitempty"`
 }
 
 // ByMeasure reports whether the product is sold by measure: it has

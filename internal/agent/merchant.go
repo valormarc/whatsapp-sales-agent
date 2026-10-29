@@ -98,6 +98,11 @@ type OnboardingFlow struct {
 	// product held during this listing, so a burst of held
 	// products earns it once between them.
 	HeldAckAt time.Time
+	// PhotoRefs are the media ids of the photos collected for
+	// this listing: the first she sent and the further angles
+	// that arrived with it. At the save they are downloaded
+	// and kept on the product (see photos.go).
+	PhotoRefs []string
 }
 
 var (
@@ -607,6 +612,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			} else {
 				whatsapp.SendText(from, "Saved. "+product.Name+" is live at "+money.GHS(product.ListPrice)+", and I can sell it straight away. Your last price of "+money.GHS(product.FloorPrice)+" stays between us.")
 			}
+			attachFlowPhotos(s.MerchantID, product, flow)
 			// Buyers who asked for this before it existed are told
 			// now, in this moment, not left waiting on an alert
 			// that never comes.
@@ -1108,6 +1114,7 @@ func savePhotoCompactListing(from string, flow *OnboardingFlow) {
 		whatsapp.SendText(from, "I could not save it: "+err.Error()+". Nothing went live.")
 		return
 	}
+	attachFlowPhotos(s.MerchantID, product, flow)
 	unit := flow.Unit
 	if unit == "" {
 		unit = "piece"

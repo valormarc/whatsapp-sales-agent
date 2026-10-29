@@ -166,3 +166,16 @@ func CreateMerchant(name, ownerWhatsApp string) (Merchant, error) {
 	SaveCatalogue(c)
 	return m, nil
 }
+
+// ListMerchants returns every shop in the catalogue, in the
+// catalogue's stable order. It serves the shared number's
+// directory: the public facts (names, codes, goods, list
+// prices) a buyer with no shop of her own is helped from.
+func ListMerchants() []Merchant {
+	c := LoadCatalogue()
+	out := make([]Merchant, 0, len(c.Merchants))
+	for _, id := range sortedIDs(c) {
+		out = append(out, c.Merchants[id])
+	}
+	return out
+}

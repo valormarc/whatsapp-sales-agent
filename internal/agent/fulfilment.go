@@ -329,7 +329,11 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		// held up again: the pending sale survives the drift.
 		if strings.HasSuffix(lower, "?") && (totalRe.MatchString(lower) || deliveryRe.MatchString(lower) || picRe.MatchString(lower)) {
 			if picRe.MatchString(lower) && !totalRe.MatchString(lower) && !deliveryRe.MatchString(lower) {
-				whatsapp.SendText(from, "I cannot send a photo of the "+p.Name+" from here, but it is this: "+p.Description+" It goes for "+money.GHS(p.ListPrice)+".")
+				if sendProductPhotos(from, p) {
+					whatsapp.SendText(from, p.Description+" It goes for "+money.GHS(p.ListPrice)+".")
+				} else {
+					whatsapp.SendText(from, "I cannot send a photo of the "+p.Name+" from here, but it is this: "+p.Description+" It goes for "+money.GHS(p.ListPrice)+".")
+				}
 			} else {
 				answerDeliveryOrTotal(from, s, merchant, lower)
 			}
