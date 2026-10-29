@@ -56,7 +56,7 @@ func TestPastedAdvertIsReadInOneGo(t *testing.T) {
 	c.say(t, merchant, laptopAdvert)
 	batch := c.replies(t, merchant)
 	replies := strings.Join(batch, "\n")
-	if !strings.Contains(replies, "I took the price from your message: GH₵1500") {
+	if !strings.Contains(replies, "I took the price from your message: GH₵1,500") {
 		t.Fatalf("the advert's price should be read whole and told back, got %q", replies)
 	}
 	if !strings.Contains(replies, "I have read it as") {
@@ -73,7 +73,7 @@ func TestPastedAdvertIsReadInOneGo(t *testing.T) {
 	}
 	c.say(t, merchant, "whole")
 	summary := c.last(t, merchant)
-	for _, want := range []string{"HP EliteBook 1030 G8 x360", "GH₵1500", "GH₵1200"} {
+	for _, want := range []string{"HP EliteBook 1030 G8 x360", "GH₵1,500", "GH₵1,200"} {
 		if !strings.Contains(summary, want) {
 			t.Fatalf("summary %q missing %q", summary, want)
 		}
@@ -99,7 +99,7 @@ func TestPastedWriteUpSingleLineAsksOnlyTheName(t *testing.T) {
 	c.say(t, merchant, "HP EliteBook 840 laptop, Intel Core i7, 16GB RAM, 512GB SSD, brand new sealed with warranty, GHS 4500")
 	batch := c.replies(t, merchant)
 	replies := strings.Join(batch, "\n")
-	if !strings.Contains(replies, "GH₵4500") || !strings.Contains(replies, "description") {
+	if !strings.Contains(replies, "GH₵4,500") || !strings.Contains(replies, "description") {
 		t.Fatalf("the write-up should be read as description and price, got %q", replies)
 	}
 	if got := batch[len(batch)-1]; !strings.Contains(got, "What is it called?") {

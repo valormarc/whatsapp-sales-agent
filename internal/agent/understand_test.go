@@ -191,7 +191,7 @@ func TestMerchantUnderstandingAnswersAndRefuses(t *testing.T) {
 		t.Fatal("a clean answer to the owner must be sent")
 	}
 	c.replies(t, merchant)
-	if actOnMerchantUnderstanding(merchant, shop, MerchantID, "", &understood{Intent: intentAsk, Reply: "You have made GH₵5000 today."}) {
+	if actOnMerchantUnderstanding(merchant, shop, MerchantID, "", &understood{Intent: intentAsk, Reply: "You have made GH₵5,000 today."}) {
 		t.Fatal("an invented day figure must be refused for the owner too")
 	}
 	if got := c.replies(t, merchant); len(got) != 0 {

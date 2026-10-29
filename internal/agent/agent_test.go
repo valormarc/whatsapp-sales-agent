@@ -53,7 +53,7 @@ func TestMerchantPromptCarriesDayFiguresAndHonestyLimit(t *testing.T) {
 	for _, pattern := range []string{
 		`Efua's Store`,
 		`merchant herself`,
-		`2 sale\(s\), GH₵1150 in, GH₵150 given away`,
+		`2 sale\(s\), GH₵1,150 in, GH₵150 given away`,
 		`GH₵150 of the GH₵300 giveaway allowance left, 1 walk-away`,
 		// The limit is stated in the prompt itself: side sales are invisible.
 		`outside this chat are invisible`,

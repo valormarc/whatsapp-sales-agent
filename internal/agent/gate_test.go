@@ -27,14 +27,14 @@ func TestSpecLinePriceIsConfirmedBeforeItIsTrusted(t *testing.T) {
 	c.say(t, merchant, "Dell Laptop 5550 4GB")
 	batch := c.replies(t, merchant)
 	joined := strings.Join(batch, "\n")
-	if !strings.Contains(joined, "I took the price from your line: GH₵5550") {
+	if !strings.Contains(joined, "I took the price from your line: GH₵5,550") {
 		t.Fatalf("the spec figure should be read and told back, got %q", joined)
 	}
 	if got := batch[len(batch)-1]; !strings.Contains(got, "Tell me about") {
 		t.Fatalf("after the name line, want the description question, got %q", got)
 	}
 	c.say(t, merchant, "A fast laptop for work.")
-	if got := c.last(t, merchant); !strings.Contains(got, "I read the price for Dell Laptop 4GB as GH₵5550") || !strings.Contains(got, "Is that the right price?") {
+	if got := c.last(t, merchant); !strings.Contains(got, "I read the price for Dell Laptop 4GB as GH₵5,550") || !strings.Contains(got, "Is that the right price?") {
 		t.Fatalf("a figure harvested from a spec line must be confirmed, got %q", got)
 	}
 	c.say(t, merchant, "4500")

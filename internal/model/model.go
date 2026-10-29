@@ -287,7 +287,7 @@ func DraftListing(imageDataURI, caption string) *ListingDraft {
 	system := "You help a market seller turn a photo of her goods into a shop listing. " +
 		"Reply with exactly one JSON object, no other text: {\"name\": \"...\", \"description\": \"...\", \"unit\": \"...\", \"unit_certain\": true}. " +
 		"The name is the short name a buyer would ask for, a few words at most. " +
-		"The description is one or two short plain sentences about what the item is, its visible condition, colour, size or material, only what the photo or her words support. " +
+		"DESCRIPTION RULE: never copy the forwarded caption or any part of its wording wholesale. Summarise it into one short line of at most 20 words, clean enough to sit on a shop shelf, with every emoji and decoration removed. For a laptop give only the generation and processor, the RAM, the storage, the screen and the condition. For anything else give the item, its colour or material, and its condition or key detail, in the same tight shape. Only what the photo or her words support. " +
 		"The unit is the word the seller herself would use for how one sale is measured: piece for clothes, shoes and bags, yard for fabric, bottle for creams and oils, and so on, judged from the goods in front of you. " +
 		"unit_certain is false only when how the goods are sold genuinely cannot be told from the photo, as with some loose foodstuffs. " +
 		"Never mention a price. Never invent a detail you cannot see."

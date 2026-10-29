@@ -109,7 +109,7 @@ func TestThrowInLongWriteUp(t *testing.T) {
 	c.photo(t, merchant, "HP EliteBook 840 laptop, Intel Core i7, 16GB RAM, 512GB SSD. Brand new sealed with manufacturer warranty. GHS 4500")
 	replies := c.replies(t, merchant)
 	joined := strings.Join(replies, "\n")
-	if !strings.Contains(joined, "List price GH₵4500") || !strings.Contains(joined, "Brand new sealed") {
+	if !strings.Contains(joined, "List price GH₵4,500") || !strings.Contains(joined, "Brand new sealed") {
 		t.Fatalf("readback = %q", replies)
 	}
 	if strings.Contains(joined, "Tell me about") || strings.Contains(joined, "What is the list price") {
@@ -280,7 +280,7 @@ func TestThrowInPriceCorrectionInsideTheFlow(t *testing.T) {
 	}
 	c.say(t, merchant, "price is 2500")
 	replies := c.replies(t, merchant)
-	if !strings.Contains(replies[0], "Corrected") || !strings.Contains(replies[0], "GH₵2500") {
+	if !strings.Contains(replies[0], "Corrected") || !strings.Contains(replies[0], "GH₵2,500") {
 		t.Fatalf("correction reply = %q", replies)
 	}
 	if !strings.Contains(replies[len(replies)-1], "last price") {

@@ -8,6 +8,7 @@ package money
 import (
 	"math"
 	"strconv"
+	"strings"
 )
 
 // JSNumber renders n the way JavaScript renders a number in a template
@@ -20,9 +21,29 @@ func JSNumber(n float64) string {
 	return strconv.FormatFloat(n, 'f', -1, 64)
 }
 
-// GHS renders a cedi amount, for example GH₵850 or GH₵10.95.
+// GHS renders a cedi amount, for example GH₵850, GH₵6,800
+// or GH₵10.95: the whole part is grouped in thousands with
+// commas, the way sellers themselves write their figures.
 func GHS(n float64) string {
-	return "GH₵" + JSNumber(n)
+	s := JSNumber(n)
+	intPart, frac := s, ""
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		intPart, frac = s[:i], s[i:]
+	}
+	sign := ""
+	if strings.HasPrefix(intPart, "-") {
+		sign, intPart = "-", intPart[1:]
+	}
+	if len(intPart) >= 4 {
+		var groups []string
+		for len(intPart) > 3 {
+			groups = append([]string{intPart[len(intPart)-3:]}, groups...)
+			intPart = intPart[:len(intPart)-3]
+		}
+		groups = append([]string{intPart}, groups...)
+		intPart = strings.Join(groups, ",")
+	}
+	return "GH₵" + sign + intPart + frac
 }
 
 // Round rounds half toward positive infinity, exactly like

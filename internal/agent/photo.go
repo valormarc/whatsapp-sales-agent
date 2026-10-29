@@ -360,8 +360,10 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	// the goods are sold when that judgement is certain. It
 	// needs the picture, so it happens only in live mode; her
 	// words never wait on it.
+	var visionDesc string
 	if dataURI, ok := whatsapp.DownloadMedia(imageID); ok {
 		if md := model.DraftListing(dataURI, caption); md != nil {
+			visionDesc = md.Description
 			if draft.Name == "" {
 				draft.Name = md.Name
 			}
@@ -371,6 +373,20 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			if draft.Unit == "" && md.UnitCertain {
 				draft.Unit = md.Unit
 			}
+		}
+	}
+	// A forwarded advert riding as a caption is raw material,
+	// not a description: copied whole onto the shelf it reads
+	// as the emoji-littered spec dump it is, and no buyer
+	// reads it. The model's summarised line replaces it; with
+	// no model to summarise, the dump is not carried at all
+	// and the walk asks her for a description in her own
+	// words instead.
+	if isAdvertDump(caption) {
+		if visionDesc != "" {
+			draft.Description = visionDesc
+		} else {
+			draft.Description = ""
 		}
 	}
 	// A photo of a DIFFERENT product while a photo listing is
@@ -400,6 +416,12 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	}
 	if flow.Unit == "" && draft.Unit != "" {
 		flow.Unit, flow.BaseQty = draft.Unit, draft.BaseQty
+	}
+	// The same replacement where the dump arrived earlier,
+	// as a pasted advert now joined by its photo: the model's
+	// clean line takes the dump's place on the listing.
+	if visionDesc != "" && isAdvertDump(flow.Description) {
+		flow.Description = visionDesc
 	}
 	// A drafted name she already sells cannot be saved under,
 	// so it is dropped here and the walk asks her for a name,
@@ -502,4 +524,12 @@ func photoStepReminder(flow *OnboardingFlow) string {
 	default:
 		return "Say yes to save it whenever you are ready, or tell me what to change."
 	}
+}
+
+// isAdvertDump reports whether a text has the shape of a
+// forwarded advert rather than a person's own short words:
+// many lines, or a long unbroken run of them. It judges the
+// shape only, never the content.
+func isAdvertDump(text string) bool {
+	return strings.Count(text, "\n") >= 3 || len(strings.Fields(text)) > 25
 }

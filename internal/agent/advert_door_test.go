@@ -118,3 +118,23 @@ func TestPhotoCompactFlow(t *testing.T) {
 		t.Fatalf("a summary confirmation survived into the photo flow: %q", got)
 	}
 }
+
+// A forwarded advert riding as a photo caption is raw
+// material, not a description: with no model to summarise
+// it, the dump is not carried onto the listing at all, and
+// no reply ever shows the seller or a buyer the emoji spec
+// block she forwarded.
+func TestAForwardedCaptionDumpIsNotTheDescription(t *testing.T) {
+	owner := "233550002404"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+	dump := "HP EliteBook 1030 G8 x360\nIntel Core i5 Processor\n11TH GENERATION\n2.6~4.4GHz Speed. (8CPUs)\n✅16GB RAM\n✅512GB SSD\n13.3\" FLIP TOUCHSCREEN\n✅x360 Convertible FHD IPS\n✅Facial ID Recognition\nKeyboard light, USB-C\nFew months Used in UK like new\nwith all accessories and box 📦\n\nGhc 6,800"
+	HandleInbound(Inbound{From: owner, ImageID: "elite-1", Caption: dump})
+	got := strings.Join(c.replies(t, owner), "\n")
+	if strings.Contains(got, "✅") || strings.Contains(got, "FLIP TOUCHSCREEN") || strings.Contains(got, "8CPUs") {
+		t.Fatalf("the forwarded dump reached the listing conversation: %q", got)
+	}
+	if !strings.Contains(got, "GH₵6,800") {
+		t.Fatalf("her price should still be read from the dump's marked figure: %q", got)
+	}
+}

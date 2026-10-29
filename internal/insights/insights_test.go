@@ -24,7 +24,7 @@ func TestWalkAwaysCountedInDayBook(t *testing.T) {
 
 func TestDayReportSpeaksInDayLanguage(t *testing.T) {
 	text := DayReportText(daybook.State{Sales: 2, Revenue: 1130, GivenAway: 170, WalkAways: 1, Allowance: 300})
-	if !regexp.MustCompile(`2 sale\(s\) today, GH₵1130 in`).MatchString(text) {
+	if !regexp.MustCompile(`2 sale\(s\) today, GH₵1,130 in`).MatchString(text) {
 		t.Fatalf("report %q missing sales line", text)
 	}
 	if !regexp.MustCompile(`GH₵170 of your GH₵300 allowance, GH₵130 left`).MatchString(text) {
