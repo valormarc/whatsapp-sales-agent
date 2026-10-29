@@ -107,7 +107,17 @@ func parsePastedAdvert(text string) (draft throwDraft, sizeNote string, ok bool)
 	draft.Name = name
 	sizeNote = note
 	for _, line := range restLines[1:] {
-		descLines = append(descLines, trimDecorEdges(line))
+		line = trimDecorEdges(line)
+		lowerLine := strings.ToLower(strings.TrimSpace(line))
+		// A copied Stall Status includes an ordering link as its
+		// final line. That is distribution copy, not product
+		// description, and must not be shown to buyers as a feature.
+		if strings.HasPrefix(lowerLine, "order here:") ||
+			strings.HasPrefix(lowerLine, "to order,") ||
+			strings.HasPrefix(lowerLine, "order here ") {
+			continue
+		}
+		descLines = append(descLines, line)
 	}
 	if len(descLines) > 0 {
 		draft.Description = strings.Join(descLines, "\n")
