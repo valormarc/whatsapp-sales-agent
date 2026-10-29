@@ -202,7 +202,7 @@ Leave "item" and "reply" empty where the act does not use them.`
 func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, shopID, msg string) *understood {
 	shelf, _ := shelfFacts(shopID)
 	var b strings.Builder
-	b.WriteString("The shop is " + merchant.Name + ".\n")
+	b.WriteString("The shop is " + merchant.Name + ". Your name is Stall: when she asks your name or what to call you, the answer is Stall.\n")
 	b.WriteString("On the shelf: " + shelf + ".\n")
 	if merchant.DeliveryFee > 0 {
 		b.WriteString("Delivery costs " + money.GHS(merchant.DeliveryFee) + ". " + merchant.DeliveryNote + "\n")
@@ -266,6 +266,7 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	dayText, _ := merchantDayFigures(merchant, shopID)
 	var b strings.Builder
 	b.WriteString("The person writing is the OWNER of the shop " + merchant.Name + ", talking to her own sales agent.\n")
+	b.WriteString("Your name is Stall. When she asks your name or what to call you, the answer is Stall.\n")
 	b.WriteString("On her shelf: " + shelf + ".\n")
 	if ms, ok := sessions[sessionKey(shopID, from)]; ok {
 		if w := recentSpeakerWords(ms, 4); w != "" {
@@ -275,8 +276,10 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	b.WriteString(quoteFactLine())
 	b.WriteString("Her day so far: " + dayText + "\n")
 	b.WriteString("Her daily giveaway allowance is the amount she allows the agent to give away in discounts across a day; every discount agreed comes out of it, and the agent haggles firmer as it runs down. It stands at " + money.GHS(merchant.DailyGiveawayAllowance) + ".\n")
-	if merchant.DailyGiveawayAllowance <= 0 {
+	if !merchant.AllowanceSet {
 		b.WriteString("She has not set an allowance yet, so the agent has nothing to give away when buyers bargain. Setting one is done by saying: set allowance 300.\n")
+	} else if merchant.DailyGiveawayAllowance <= 0 {
+		b.WriteString("Her allowance is GH₵0 by her own choice: she gives nothing away when buyers bargain, and it is settled — never raise it with her as if it were missing.\n")
 	}
 	for _, o := range paidOrdersOf(shopID) {
 		switch o.DeliveryState {
@@ -625,6 +628,18 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 		return merchantOrderPayment(from, merchant, shopID, msg)
 	case intentAskBuyer:
 		return merchantAskBuyer(from, merchant, shopID, u)
+	case intentCourtesy:
+		// A courtesy from the owner — thanks, a laugh, a
+		// goodbye — is answered the way the buyer's is: her
+		// drafted reply, figure- and voice-guarded. Without
+		// this case her pleasantry fell through every door
+		// into the day answer, and a laugh got a financial
+		// report for an answer.
+		if strings.TrimSpace(u.Reply) == "" || !figuresClean(u.Reply) || !voiceClean(u.Reply) {
+			return false
+		}
+		sendPieces(from, u.Reply)
+		return true
 	case intentAttention:
 		whatsapp.SendText(from, merchantAttentionText(merchant, sessions[sessionKey(shopID, from)]))
 		return true

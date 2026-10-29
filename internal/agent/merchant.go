@@ -156,10 +156,10 @@ var (
 	// Measure commands: a product gains a measure ("set measure of
 	// <item> to <qty> <unit>") or loses it ("sell <item> whole
 	// only", "<item> whole only"), in her own words.
-	setMeasureRe = regexp.MustCompile(`^set measure of (.+?) to (.+)$`)
-	wholeOnlyRe  = regexp.MustCompile(`^(?:sell )?(.+?) whole only$`)
-	setStockRe   = regexp.MustCompile(`^(?:set|update) stock of (.+?) to (\d+)$`)
-	myOrdersRe   = regexp.MustCompile(`^(my )?orders[.!?]?$`)
+	setMeasureRe  = regexp.MustCompile(`^set measure of (.+?) to (.+)$`)
+	wholeOnlyRe   = regexp.MustCompile(`^(?:sell )?(.+?) whole only$`)
+	setStockRe    = regexp.MustCompile(`^(?:set|update) stock of (.+?) to (\d+)$`)
+	myOrdersRe    = regexp.MustCompile(`^(my )?orders[.!?]?$`)
 	cancelOrderRe = regexp.MustCompile(`^cancel order ([a-z0-9-]+)[.!?]?$`)
 	// The wants list: what her buyers asked for that she does not
 	// stock, kept for her in the want book.
@@ -192,6 +192,83 @@ func isClearNo(lower string) bool {
 		return true
 	}
 	return false
+}
+
+// noteSetItRe reads a set-shaped answer to the allowance
+// note: a set verb, an optional "it" or "to", and a figure
+// on its way ("set it 0", "make it 300", "put 200").
+var noteSetItRe = regexp.MustCompile(`^(set|make|change|put)\s+(it\s+)?(to\s+)?\d`)
+
+// noteAllowanceAmount reads the amount in an answer to the
+// allowance note, or nil when the answer carries none in a
+// set shape: the command's own shape ("set allowance 300"),
+// a set verb against the note ("set it 0"), or a bare figure
+// and nothing else ("300", "GH₵300") — against the note, a
+// bare figure can only be the amount she is setting.
+func noteAllowanceAmount(text, lower string) *float64 {
+	if setAllowanceRe.MatchString(lower) {
+		amount := parseOffer(text)
+		if idx := strings.LastIndex(lower, "allowance"); idx >= 0 {
+			if after := parseOffer(text[idx:]); after != nil {
+				amount = after
+			}
+		}
+		return amount
+	}
+	if noteSetItRe.MatchString(lower) {
+		return parseOffer(text)
+	}
+	if burstAnswerShape(text) {
+		return parseOffer(text)
+	}
+	return nil
+}
+
+// merchantAckRe reads a bare acknowledgement or pleasantry
+// as the WHOLE of a merchant message: an ok, a thanks, a
+// laugh in words. Anything carrying more — a figure, a
+// product, a question — is not a bare ack and never matches.
+var merchantAckRe = regexp.MustCompile(`^(ok|okay|k|kk|alright|got it|understood|sure|fine|nice|cool|great|perfect|thanks|thank you|thx|lol|haha|hehe|yes please|no thanks)[.! ]*$`)
+
+// merchantAck reports whether the merchant's whole message
+// is a bare acknowledgement, a pleasantry, or emoji alone —
+// the turns a person answers with a nod, which in merchant
+// chat used to fall through every door into the day answer.
+func merchantAck(text string) bool {
+	stripped := strings.TrimSpace(stripEmoji(strings.ToLower(text)))
+	if stripped == "" {
+		// Nothing but emoji (or nothing): an emoji alone is
+		// an acknowledgement in modern chat.
+		return strings.TrimSpace(text) != ""
+	}
+	return merchantAckRe.MatchString(stripped)
+}
+
+// stripEmoji removes pictographs and their joiners and
+// selectors, leaving the words of a message behind.
+func stripEmoji(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r >= 0x1F000 && r <= 0x1FAFF, // pictographs, emoticons, symbols
+			r >= 0x2600 && r <= 0x27BF, // misc symbols and dingbats
+			r >= 0x2B00 && r <= 0x2BFF, // stars, arrows and marks
+			r == 0xFE0F,                // variation selector
+			r == 0x200D,                // zero-width joiner
+			r == 0x2764, r == 0x2763,   // hearts and their kin
+			r == 0x203C, r == 0x2049: // double exclamation and friends
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// answerMerchantAck answers a bare acknowledgement the way
+// a person does: briefly, warmly, and with nothing else
+// attached — no figures, no report, no reminder.
+func answerMerchantAck(from string, s *Session) {
+	variants := []string{"Alright.", "Okay.", "Got it.", "Alright, I am here when you need me."}
+	whatsapp.SendText(from, variants[s.Acks%len(variants)])
+	s.Acks++
 }
 
 // handleMerchantMessage is the merchant-mode dispatcher for one
@@ -315,6 +392,36 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 		quotingNote = true
 	}
 
+	// An answer to the allowance note sets the allowance.
+	// The note itself invites the reply ("to set it, say:
+	// set allowance 300"), and the most natural answer is a
+	// quote of the note with the amount in her own shape:
+	// "set it 0", "make it 300", a bare "300". Commands are
+	// skipped for quotes (a quoted figure was once read as
+	// an instruction she never gave), so without this door
+	// her answer was only ever drafted about, never done —
+	// the agent once confirmed an allowance it had not set.
+	// A set shape against the note is unambiguous, and it is
+	// the only quote that acts.
+	if quotingNote && s.Onboarding == nil && !explainRe.MatchString(lower) && !strings.Contains(lower, "you have not set") && !strings.Contains(lower, "to set it, say") {
+		// The note's own clauses in her message mean she is
+		// quoting the note itself back — showing the agent
+		// its own line, most likely to ask about it — which
+		// is never an instruction, however its figures read.
+		if amount := noteAllowanceAmount(text, lower); amount != nil {
+			if err := catalogue.SetAllowance(merchantID, *amount); err != nil {
+				whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
+				return
+			}
+			if *amount <= 0 {
+				whatsapp.SendText(from, "Done. Your daily giveaway allowance is now "+money.GHS(*amount)+": I will give nothing away when buyers bargain, and I will not raise it with you again.")
+			} else {
+				whatsapp.SendText(from, "Done. Your daily giveaway allowance is now "+money.GHS(*amount)+". Every discount I agree comes out of it, and I haggle firmer as it runs down.")
+			}
+			return
+		}
+	}
+
 	// Her words are understood once, lazily: the doors below
 	// ask the mind only when they reach the point of needing
 	// it, so a turn her commands serve never spends the call.
@@ -375,6 +482,17 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	// anchored, so an advert can never be mistaken for one.
 	if dayAskRe.MatchString(lower) {
 		answerMerchantDayQuestion(from, text, merchantID)
+		return
+	}
+
+	// A bare acknowledgement, a pleasantry, or an emoji
+	// alone is answered like one, before any thinking is
+	// spent on it: it has no question in it, and the day
+	// answer is not a reply to a laugh. (A pending yes/no
+	// of hers — a removal, an in-hand wait — has already
+	// been served above and never reaches here.)
+	if merchantAck(text) {
+		answerMerchantAck(from, s)
 		return
 	}
 

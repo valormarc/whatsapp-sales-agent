@@ -137,20 +137,26 @@ func (p Product) UnitPrice() float64 {
 //     other place pays the standard DeliveryFee. She sets them
 //     one message at a time, never sixteen questions.
 type Merchant struct {
-	ID                     string    `json:"id"`
-	Name                   string    `json:"name"`
-	DailyGiveawayAllowance float64   `json:"dailyGiveawayAllowance"`
-	Products               []Product `json:"products"`
-	OwnerWhatsApp          string    `json:"ownerWhatsApp,omitempty"`
-	ShopCode               string    `json:"shopCode,omitempty"`
-	PayoutPhone            string    `json:"payoutPhone,omitempty"`
-	SubaccountCode         string    `json:"subaccountCode,omitempty"`
-	PayoutHolderName       string    `json:"payoutHolderName,omitempty"`
-	DeliveryFee            float64   `json:"deliveryFee,omitempty"`
-	DeliveryNote           string    `json:"deliveryNote,omitempty"`
-	DeliveryPaidTo         string    `json:"deliveryPaidTo,omitempty"`
-	DeliveryStyle          string    `json:"deliveryStyle,omitempty"`
-	DeliveryAreas          []AreaFee `json:"deliveryAreas,omitempty"`
+	ID                     string  `json:"id"`
+	Name                   string  `json:"name"`
+	DailyGiveawayAllowance float64 `json:"dailyGiveawayAllowance"`
+	// AllowanceSet records that the merchant chose the
+	// allowance herself, through the set command. Zero is a
+	// real choice — a shop that gives nothing away — and
+	// must read differently from never having chosen: only
+	// a shop that never chose is ever reminded to choose.
+	AllowanceSet     bool      `json:"allowanceSet,omitempty"`
+	Products         []Product `json:"products"`
+	OwnerWhatsApp    string    `json:"ownerWhatsApp,omitempty"`
+	ShopCode         string    `json:"shopCode,omitempty"`
+	PayoutPhone      string    `json:"payoutPhone,omitempty"`
+	SubaccountCode   string    `json:"subaccountCode,omitempty"`
+	PayoutHolderName string    `json:"payoutHolderName,omitempty"`
+	DeliveryFee      float64   `json:"deliveryFee,omitempty"`
+	DeliveryNote     string    `json:"deliveryNote,omitempty"`
+	DeliveryPaidTo   string    `json:"deliveryPaidTo,omitempty"`
+	DeliveryStyle    string    `json:"deliveryStyle,omitempty"`
+	DeliveryAreas    []AreaFee `json:"deliveryAreas,omitempty"`
 }
 
 // AreaFee is one named area's own delivery fee in a "set"

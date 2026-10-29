@@ -248,13 +248,16 @@ func RemoveProduct(merchantID, name string) (Product, error) {
 
 // SetAllowance sets the merchant's daily giveaway allowance: the pool
 // every haggle draws from. The day book reads it from the shop, so a
-// change here is what new negotiations firm up against.
+// change here is what new negotiations firm up against. Setting it —
+// zero included — marks the choice as hers, so the agent stops
+// reminding her to make it.
 func SetAllowance(merchantID string, amount float64) error {
 	if amount < 0 {
 		return ErrNegativeAllowance
 	}
 	return updateMerchant(merchantID, func(m *Merchant) error {
 		m.DailyGiveawayAllowance = amount
+		m.AllowanceSet = true
 		return nil
 	})
 }

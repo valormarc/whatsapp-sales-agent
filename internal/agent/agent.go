@@ -206,7 +206,7 @@ type Session struct {
 	// Merchant-only chat state: an in-progress onboarding flow, or a
 	// removal waiting for her yes. Only ever set on the merchant's own
 	// session; customers never reach the code that reads them.
-	Onboarding    *OnboardingFlow
+	Onboarding *OnboardingFlow
 	// BurstBatch holds the products a seller forwarded while
 	// one listing was open, each read with its details and
 	// waiting to be priced together (see burst.go).
@@ -218,7 +218,7 @@ type Session struct {
 	// harvest itself doubted: they are never priced from
 	// the batch, and open afterwards as ordinary gated
 	// listings where she confirms the price herself.
-	BurstHeld []burstItem
+	BurstHeld     []burstItem
 	PendingRemove string
 
 	// LastMerchantNote is the last substantive thing the agent
@@ -232,6 +232,13 @@ type Session struct {
 	// carried LastMerchantNote, so a reply quoting that exact
 	// message is recognised as pointing at it.
 	LastNoteMsgID string
+
+	// AllowanceNagDate is the day the allowance reminder
+	// last rode the day answer for this merchant. The
+	// reminder is worth hearing once; after that it is
+	// noise, so it fires at most once a day, and never at
+	// all once she has set an allowance herself.
+	AllowanceNagDate string
 
 	// Signup is a new merchant's open-a-shop flow, held on the
 	// pre-shop session until her shop exists; then she gets a normal
@@ -437,18 +444,27 @@ func answerMerchantDayQuestion(from, text, merchantID string) {
 	if !answered {
 		whatsapp.SendText(from, "Here is today so far. "+insights.DayReportText(day)+" Ask me any time and I will pull the same figures for you.")
 	}
-	// A shop that never set its daily giveaway allowance hears
-	// its own figures back as GH₵0 of GH₵0, and its agent has
-	// nothing to give away when buyers bargain. The day answer
-	// is where she meets those figures, so the prompt rides
-	// here, in plain words with the command itself spelled out,
-	// until the day she sets one.
-	if merchant.DailyGiveawayAllowance <= 0 {
-		note := "One thing: you have not set a daily giveaway allowance, so it stands at GH₵0 and I have nothing to give away when buyers bargain. To set it, say: set allowance 300."
-		res := whatsapp.SendText(from, note)
-		if s, ok := sessions[sessionKey(merchantID, from)]; ok {
-			s.LastMerchantNote = note
-			s.LastNoteMsgID = res.MessageID
+	// A shop that never chose its daily giveaway allowance
+	// hears its own figures back as GH₵0 of GH₵0, and its
+	// agent has nothing to give away when buyers bargain.
+	// The day answer is where she meets those figures, so
+	// the reminder rides here, in plain words with the
+	// command itself spelled out — under two disciplines:
+	// it fires at most once a day (a reminder repeated on
+	// every answer is noise, and she heard it the first
+	// time), and it never fires at all once she has set an
+	// allowance herself, zero included, because zero can be
+	// her choice and a choice is settled.
+	if !merchant.AllowanceSet && merchant.DailyGiveawayAllowance <= 0 {
+		s, hasSession := sessions[sessionKey(merchantID, from)]
+		if !hasSession || s.AllowanceNagDate != daybook.TodayString() {
+			note := "One thing: you have not set a daily giveaway allowance, so it stands at GH₵0 and I have nothing to give away when buyers bargain. To set it, say: set allowance 300."
+			res := whatsapp.SendText(from, note)
+			if hasSession {
+				s.AllowanceNagDate = daybook.TodayString()
+				s.LastMerchantNote = note
+				s.LastNoteMsgID = res.MessageID
+			}
 		}
 	}
 }
