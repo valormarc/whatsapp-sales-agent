@@ -556,3 +556,50 @@ func TestLinkFailedOrderCanStillBePaid(t *testing.T) {
 		t.Fatalf("asking to pay on a link_failed order should mint the link it never had, got %q", got)
 	}
 }
+
+// The confirm recap carries its answer on buttons: Yes
+// closes the sale, Change opens the correction, and a tap
+// rides the same road as typing the word.
+func TestConfirmRecapButtons(t *testing.T) {
+	dir, c := setupTwitterShops(t)
+	stubStageModel(t)
+	buyer := "233550009133"
+	agreeBagAtList(t, c, buyer)
+	tap(t, buyer, "ff_self")
+	c.say(t, buyer, "Akosua Mensah")
+	c.say(t, buyer, "no")
+	c.last(t, buyer) // the recap
+
+	raw, err := os.ReadFile(filepath.Join(dir, "data", "outbox.jsonl"))
+	if err != nil {
+		t.Fatalf("outbox: %v", err)
+	}
+	if !strings.Contains(string(raw), `"buttons":["Yes","Change"]`) {
+		t.Fatalf("the recap should carry Yes and Change buttons, outbox: %s", raw)
+	}
+
+	// Change first: she is asked what to change, corrects
+	// the name, and lands on a fresh recap.
+	tap(t, buyer, "ff_change")
+	if got := c.last(t, buyer); !strings.Contains(got, "Tell me what to change") {
+		t.Fatalf("the Change tap should open the correction, got %q", got)
+	}
+	c.say(t, buyer, "the name")
+	c.last(t, buyer)
+	c.say(t, buyer, "Serwaa Mensah")
+	c.last(t, buyer)
+	c.say(t, buyer, "no")
+	if got := c.last(t, buyer); !strings.Contains(got, "Serwaa Mensah") {
+		t.Fatalf("the fresh recap should carry the corrected name, got %q", got)
+	}
+
+	// Then Yes on the buttons closes the sale.
+	tap(t, buyer, "ff_yes")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "Pay here to complete your order") {
+		t.Fatalf("the Yes tap should send the payment link, got %q", got)
+	}
+	if n := ordersCount(t, dir); n != 1 {
+		t.Fatalf("exactly one order should stand, got %d", n)
+	}
+}

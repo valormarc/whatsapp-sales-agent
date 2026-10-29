@@ -148,6 +148,16 @@ func routeFulfilmentTap(from, buttonID string) (text string, handled bool) {
 		return "", true
 	}
 	switch buttonID {
+	case "ff_yes":
+		if s.FulfilStep != "confirm" {
+			return "", true
+		}
+		return "yes", false
+	case "ff_change":
+		if s.FulfilStep != "confirm" {
+			return "", true
+		}
+		return "change", false
 	case "ff_pickup":
 		if s.FulfilStep != "choice" {
 			return "", true
@@ -570,7 +580,15 @@ var (
 // it, and the voice laws hold. Without a sound draft, the
 // facts are read back plainly.
 func sendOrderRecap(from string, s *Session, f fulfilment) {
-	whatsapp.SendText(from, composeOrderRecap(s, f))
+	// The recap carries its answer on buttons, the way the
+	// fulfilment choice does: Yes closes, Change opens the
+	// correction, and typing either word works exactly as
+	// before, because a tap is translated into the word and
+	// the one road reads both.
+	whatsapp.SendButtons(from, composeOrderRecap(s, f), []whatsapp.Button{
+		{ID: "ff_yes", Title: "Yes"},
+		{ID: "ff_change", Title: "Change"},
+	})
 }
 
 func composeOrderRecap(s *Session, f fulfilment) string {
