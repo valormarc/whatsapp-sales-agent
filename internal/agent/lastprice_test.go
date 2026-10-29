@@ -43,7 +43,7 @@ func TestOnboardingNonNegotiableWordMeansFixed(t *testing.T) {
 		t.Fatalf("fixed summary = %q", summary)
 	}
 	c.say(t, merchant, "yes")
-	if got := c.last(t, merchant); !strings.Contains(got, "fixed price") {
+	if got := c.joined(t, merchant); !strings.Contains(got, "fixed price") {
 		t.Fatalf("save confirmation = %q", got)
 	}
 	p := catalogue.FindByName(MerchantID, "Rice Cooker")

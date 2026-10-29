@@ -31,7 +31,7 @@ func finishWhole(t *testing.T, c *chat, merchant string) {
 		t.Fatalf("confirm = %q", got)
 	}
 	c.say(t, merchant, "yes")
-	if got := c.last(t, merchant); !strings.Contains(got, "Saved") {
+	if got := c.joined(t, merchant); !strings.Contains(got, "Saved") {
 		t.Fatalf("saved reply = %q", got)
 	}
 }
@@ -214,7 +214,7 @@ func TestThrowInMeasureCaption(t *testing.T) {
 		t.Fatalf("confirm = %q", got)
 	}
 	c.say(t, merchant, "yes")
-	if got := c.last(t, merchant); !strings.Contains(got, "Saved") {
+	if got := c.joined(t, merchant); !strings.Contains(got, "Saved") {
 		t.Fatalf("saved reply = %q", got)
 	}
 

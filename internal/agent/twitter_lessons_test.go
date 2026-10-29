@@ -395,7 +395,7 @@ func onboardForTest(t *testing.T, c *chat, owner, name, description, list, floor
 	c.say(t, owner, "only as a whole")
 	c.last(t, owner)
 	c.say(t, owner, "yes")
-	if got := c.last(t, owner); !strings.Contains(got, "Saved") {
+	if got := c.joined(t, owner); !strings.Contains(got, "Saved") {
 		t.Fatalf("onboarding %s = %q, want it saved", name, got)
 	}
 }

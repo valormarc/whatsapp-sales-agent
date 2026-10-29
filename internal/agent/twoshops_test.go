@@ -409,7 +409,7 @@ func TestMerchantSignupCreatesShopABuyerCanEnter(t *testing.T) {
 	c.say(t, newOwner, "only as a whole")
 	c.last(t, newOwner)
 	c.say(t, newOwner, "yes")
-	if got := c.last(t, newOwner); !strings.Contains(got, "Saved") {
+	if got := c.joined(t, newOwner); !strings.Contains(got, "Saved") {
 		t.Fatalf("first product save = %q", got)
 	}
 

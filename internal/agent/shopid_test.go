@@ -44,7 +44,7 @@ func TestSecondSameNameShopGetsHyphenNumberCode(t *testing.T) {
 	c.say(t, secondOwner, "only as a whole")
 	c.last(t, secondOwner)
 	c.say(t, secondOwner, "yes")
-	if got := c.last(t, secondOwner); !strings.Contains(got, "Saved") {
+	if got := c.joined(t, secondOwner); !strings.Contains(got, "Saved") {
 		t.Fatalf("second shop product save = %q", got)
 	}
 

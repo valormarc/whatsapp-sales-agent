@@ -120,6 +120,15 @@ func (c *chat) finishNote(t *testing.T, from string) {
 	c.say(t, from, "yes")
 }
 
+// joined returns every reply to a person since the last
+// read, as one string: for turns that answer with more than
+// one message (a save now brings its announcements with
+// it), where a check cares about the whole batch.
+func (c *chat) joined(t *testing.T, to string) string {
+	t.Helper()
+	return strings.Join(c.replies(t, to), "\n")
+}
+
 func (c *chat) last(t *testing.T, to string) string {
 	t.Helper()
 	replies := c.replies(t, to)
@@ -188,7 +197,7 @@ func TestMerchantOnboardsProductAndCustomerBuysIt(t *testing.T) {
 		t.Fatalf("products %d before confirmation, want 0", got)
 	}
 	c.say(t, merchant, "yes")
-	if got := c.last(t, merchant); !strings.Contains(got, "Saved") || !strings.Contains(got, "live") {
+	if got := c.joined(t, merchant); !strings.Contains(got, "Saved") || !strings.Contains(got, "live") {
 		t.Fatalf("save confirmation = %q", got)
 	}
 	p := catalogue.FindByName(MerchantID, "Kente Cloth")
@@ -289,7 +298,7 @@ func TestOnboardingLastPriceAboveListAndEqualMeansFixed(t *testing.T) {
 		t.Fatalf("fixed summary = %q", summary)
 	}
 	c.say(t, merchant, "yes")
-	if got := c.last(t, merchant); !strings.Contains(got, "fixed price") {
+	if got := c.joined(t, merchant); !strings.Contains(got, "fixed price") {
 		t.Fatalf("save confirmation for a fixed product = %q", got)
 	}
 	p := catalogue.FindByName(MerchantID, "Test Basket")

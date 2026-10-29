@@ -178,7 +178,7 @@ try {
   check('nothing is saved before she confirms', before.products.length === 0);
 
   r = await say(MERCHANT, 'merchant', 'yes');
-  check('her yes saves it', last(r).includes('Saved'), last(r));
+  check('her yes saves it', r.some((m) => m.includes('Saved')), last(r));
   const after = JSON.parse(readFileSync(CATALOGUE, 'utf8')).merchants.demo;
   check(
     'the product is on disk with her prices and her words',

@@ -659,6 +659,10 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			// now, in this moment, not left waiting on an alert
 			// that never comes.
 			alertWaitingBuyers(s.MerchantID, product)
+			// And she gets the words to bring more of them in:
+			// a Status caption and a forwardable broadcast,
+			// ready the moment the listing is live.
+			announceListing(from, s.MerchantID, product)
 		case isClearNo(lower):
 			s.Onboarding = nil
 			whatsapp.SendText(from, "Dropped it. Nothing was saved. Say \"add a product\" whenever you are ready.")
@@ -1197,4 +1201,5 @@ func savePhotoCompactListing(from string, flow *OnboardingFlow) {
 	}
 	whatsapp.SendText(from, "Saved ✅ "+product.Name+" | List: "+money.GHS(product.ListPrice)+" | Last: "+money.GHS(product.FloorPrice)+" | Unit: "+unit)
 	alertWaitingBuyers(s.MerchantID, product)
+	announceListing(from, s.MerchantID, product)
 }
