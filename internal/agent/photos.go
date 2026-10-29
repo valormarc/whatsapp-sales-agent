@@ -24,8 +24,9 @@ var (
 )
 
 // maxProductPhotos caps how many pictures one listing keeps
-// and sends: enough to show the goods, never an album dump.
-const maxProductPhotos = 4
+// and sends: enough to show the goods in every colour a
+// seller forwards, never an album dump.
+const maxProductPhotos = 6
 
 // applyColourRule shapes a photo listing's name and
 // description at save when its photos showed one item in
@@ -95,19 +96,23 @@ func joinColourList(colours []string) string {
 }
 
 // collectFlowPhoto records a photo's media id on the open
-// listing, once, up to the cap.
-func collectFlowPhoto(flow *OnboardingFlow, imageID string) {
+// listing, once, up to the cap. It reports whether the photo
+// is on the listing afterwards: an acknowledgement may only
+// say a photo was added when this says it was.
+func collectFlowPhoto(flow *OnboardingFlow, imageID string) bool {
 	if imageID == "" {
-		return
+		return false
 	}
 	for _, id := range flow.PhotoRefs {
 		if id == imageID {
-			return
+			return true
 		}
 	}
 	if len(flow.PhotoRefs) < maxProductPhotos {
 		flow.PhotoRefs = append(flow.PhotoRefs, imageID)
+		return true
 	}
+	return false
 }
 
 // attachFlowPhotos downloads the listing's collected photos

@@ -153,3 +153,28 @@ func TestColourRule(t *testing.T) {
 		t.Fatalf("colours absent from the name change nothing, got %q", name)
 	}
 }
+
+// The kept-photo cap: six photos are kept, a duplicate is
+// already on the listing, and a seventh new photo is NOT
+// kept — collectFlowPhoto says so, so no acknowledgement
+// can claim an addition that did not happen.
+func TestCollectFlowPhotoCap(t *testing.T) {
+	flow := &OnboardingFlow{}
+	for i := 1; i <= maxProductPhotos; i++ {
+		if !collectFlowPhoto(flow, "img-"+string(rune('a'+i))) {
+			t.Fatalf("photo %d should be kept", i)
+		}
+	}
+	if len(flow.PhotoRefs) != maxProductPhotos {
+		t.Fatalf("the listing should hold the cap, got %d", len(flow.PhotoRefs))
+	}
+	if collectFlowPhoto(flow, "img-overflow") {
+		t.Fatalf("a photo past the cap must report not kept")
+	}
+	if len(flow.PhotoRefs) != maxProductPhotos {
+		t.Fatalf("the overflow photo must not be recorded, got %d", len(flow.PhotoRefs))
+	}
+	if !collectFlowPhoto(flow, flow.PhotoRefs[0]) {
+		t.Fatalf("a photo already on the listing reports kept")
+	}
+}

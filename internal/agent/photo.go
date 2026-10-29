@@ -510,7 +510,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	}
 	flow.Photo = true
 	flow.PhotoRef = imageID
-	collectFlowPhoto(flow, imageID)
+	photoKept := collectFlowPhoto(flow, imageID)
 	if flow.Name == "" {
 		flow.Name = draft.Name
 	}
@@ -560,7 +560,14 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		// her answer to it now saves the product at once.
 		if s.Onboarding != nil && flow.Step == "lastprice" && flow.FloorPrice <= 0 {
 			flow.RepeatAckAt = time.Now()
-			whatsapp.SendText(from, "Got it ✅ Photo added to "+flow.Name+".")
+			if photoKept {
+				whatsapp.SendText(from, "Got it ✅ Photo added to "+flow.Name+".")
+			} else {
+				// The listing already holds the most photos
+				// it can show: say so, never claim an
+				// addition that did not happen.
+				whatsapp.SendText(from, "I could not add that one: "+flow.Name+" already holds "+strconv.Itoa(maxProductPhotos)+" photos, the most a listing shows.")
+			}
 			return
 		}
 		switch {
