@@ -20,6 +20,7 @@ package agent
 import (
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/checkout"
@@ -84,6 +85,12 @@ type OnboardingFlow struct {
 	// answered (including "only as a whole"), so the walk can
 	// move past it for good.
 	MeasureSettled bool
+	// PhotoAckAt stamps the last acknowledgement sent for a
+	// burst of photos against this listing. An album arrives
+	// as one message after another, seconds apart, and one
+	// acknowledgement covers the whole burst: the rest of the
+	// items are taken in silently.
+	PhotoAckAt time.Time
 }
 
 var (

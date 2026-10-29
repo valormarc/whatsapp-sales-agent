@@ -43,6 +43,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/model"
@@ -352,6 +353,10 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		(draft.Description == "" || draft.Description == flow.Description) &&
 		(draft.ListPrice <= 0 || draft.ListPrice == flow.ListPrice) &&
 		(draft.Unit == "" || draft.Unit == flow.Unit) {
+		if photoAckCovered(flow) {
+			return
+		}
+		flow.PhotoAckAt = time.Now()
 		whatsapp.SendText(from, "I am still on that same photo.")
 		return
 	}
@@ -396,6 +401,10 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	// told what the open one is waiting for.
 	if s.Onboarding != nil && flow.Photo && flow.Name != "" && draft.Name != "" &&
 		!sameProductName(flow.Name, draft.Name) {
+		if photoAckCovered(flow) {
+			return
+		}
+		flow.PhotoAckAt = time.Now()
 		whatsapp.SendText(from, "One at a time: I am still listing "+flow.Name+". "+photoStepReminder(flow))
 		return
 	}
@@ -532,4 +541,17 @@ func photoStepReminder(flow *OnboardingFlow) string {
 // shape only, never the content.
 func isAdvertDump(text string) bool {
 	return strings.Count(text, "\n") >= 3 || len(strings.Fields(text)) > 25
+}
+
+// photoAckWindow is the span one photo acknowledgement
+// covers: an album's items land seconds apart, and a seller
+// re-sending a photo to check it landed does so at once too.
+// Past the window, a fresh photo earns a fresh line.
+const photoAckWindow = 90 * time.Second
+
+// photoAckCovered reports whether an acknowledgement for
+// this listing's photo burst has already gone out inside the
+// window, in which case the item is taken in silently.
+func photoAckCovered(flow *OnboardingFlow) bool {
+	return !flow.PhotoAckAt.IsZero() && time.Since(flow.PhotoAckAt) < photoAckWindow
 }

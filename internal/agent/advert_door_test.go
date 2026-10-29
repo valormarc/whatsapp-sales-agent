@@ -138,3 +138,51 @@ func TestAForwardedCaptionDumpIsNotTheDescription(t *testing.T) {
 		t.Fatalf("her price should still be read from the dump's marked figure: %q", got)
 	}
 }
+
+// An album is one act of sending: four photos of the same
+// slides land seconds apart, the listing opens on the first,
+// the second earns the one acknowledgement, and the rest are
+// taken in silently. Four identical lines is spam, not
+// acknowledgement.
+func TestAnAlbumBurstIsAcknowledgedOnce(t *testing.T) {
+	owner := "233550002405"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+	HandleInbound(Inbound{From: owner, ImageID: "slides-1", Caption: "B buckle slides, 75gh each. Sizes from 37 to 42"})
+	c.replies(t, owner)
+	var rest []string
+	for _, id := range []string{"slides-2", "slides-3", "slides-4", "slides-5"} {
+		HandleInbound(Inbound{From: owner, ImageID: id, Caption: "B buckle slides, 75gh each. Sizes from 37 to 42"})
+		rest = append(rest, c.replies(t, owner)...)
+	}
+	if len(rest) != 1 || rest[0] != "I am still on that same photo." {
+		t.Fatalf("the burst should earn exactly one acknowledgement line, got %q", rest)
+	}
+}
+
+// A different product held during an open listing is also
+// acknowledged once per burst, not once per photo.
+func TestADifferentProductBurstIsAcknowledgedOnce(t *testing.T) {
+	owner := "233550002406"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+	HandleInbound(Inbound{From: owner, ImageID: "heels-9", Caption: "Red heels 100 cedis"})
+	c.replies(t, owner)
+	var rest []string
+	for _, p := range []struct{ id, caption string }{
+		{"bag-1", "Blue bag 200 cedis"},
+		{"hat-1", "Green hat 50 cedis"},
+	} {
+		HandleInbound(Inbound{From: owner, ImageID: p.id, Caption: p.caption})
+		rest = append(rest, c.replies(t, owner)...)
+	}
+	count := 0
+	for _, r := range rest {
+		if strings.Contains(r, "One at a time") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("the held products should earn one line between them, got %q", rest)
+	}
+}
