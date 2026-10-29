@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -77,8 +79,11 @@ func TestDiscoveryFindsTheLaptopAcrossShops(t *testing.T) {
 
 	c.say(t, buyer, "Do you have any shop that sells laptop?")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "LUXE has: HP EliteBook 1030 G8 x360 - GH₵6,800") {
-		t.Fatalf("the laptop should be found and attributed, got %q", got)
+	if !strings.Contains(got, "HP EliteBook 1030 G8 x360") || !strings.Contains(got, "It goes for GH₵6,800") {
+		t.Fatalf("the one laptop anywhere should be presented directly, got %q", got)
+	}
+	if strings.Contains(got, "Which one do you want to look at?") {
+		t.Fatalf("a single result is not a choice, got %q", got)
 	}
 	if strings.Contains(got, "I need to know whose shop") {
 		t.Fatalf("the welcome wall came back: %q", got)
@@ -119,11 +124,11 @@ func TestDiscoveryPickBindsHerToThatShop(t *testing.T) {
 	buyer := "233550007003"
 
 	c.say(t, buyer, "Do you have any shop that sells laptop?")
-	c.replies(t, buyer)
-	c.say(t, buyer, "The EliteBook")
 	got := strings.Join(c.replies(t, buyer), "\n")
+	c.say(t, buyer, "The EliteBook")
+	got += "\n" + strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "Welcome to LUXE.") || !strings.Contains(got, "It goes for GH₵6,800") {
-		t.Fatalf("the pick should bind her to LUXE and focus the laptop, got %q", got)
+		t.Fatalf("she should land in LUXE with the laptop in focus, got %q", got)
 	}
 	if bindings[buyer] != "luxe" {
 		t.Fatalf("the buyer should be bound to luxe, got %q", bindings[buyer])
@@ -150,10 +155,44 @@ func TestDiscoveryNetSearchesWithoutTheModel(t *testing.T) {
 	c := &chat{dir: dir}
 	buyer := "233550007005"
 
-	c.say(t, buyer, "I am looking for beaded sandals")
+	c.say(t, buyer, "I am looking for sandals")
 	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "Beaded Sandals") || !strings.Contains(got, "It goes for GH₵80") {
+		t.Fatalf("the net's one match should be presented directly, got %q", got)
+	}
+	if strings.Contains(got, "Which one do you want to look at?") {
+		t.Fatalf("a single result is not a choice, got %q", got)
+	}
+}
+
+// A search that finds exactly one product anywhere takes
+// her straight to it: no "which one" over a choice of one,
+// and she lands inside the shop, able to haggle at once.
+func TestDiscoverySingleMatchPresentsDirectly(t *testing.T) {
+	dir := setupChat(t, "233265993567", discoveryCatalogue)
+	c := &chat{dir: dir}
+	buyer := "233550007009"
+
+	c.say(t, buyer, "I am looking for sandals")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if strings.Contains(got, "Which one do you want to look at?") {
+		t.Fatalf("one match anywhere is not a choice, got %q", got)
+	}
 	if !strings.Contains(got, "LUXE has: Beaded Sandals - GH₵80") {
-		t.Fatalf("the net should find the sandals, got %q", got)
+		t.Fatalf("the one match should be put in front of her, got %q", got)
+	}
+	if bindings[buyer] == "luxe" {
+		t.Fatalf("presenting the match must not bind her before her pick, got %q", got)
+	}
+	c.say(t, buyer, "The sandals")
+	got = strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "Welcome to LUXE") {
+		t.Fatalf("her pick should take her into the shop, got %q", got)
+	}
+	c.say(t, buyer, "I can pay 70")
+	got = strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "Beaded Sandals") || !strings.Contains(got, "GH₵") {
+		t.Fatalf("her offer should be haggled inside the shop, got %q", got)
 	}
 }
 
@@ -164,7 +203,7 @@ func TestDiscoveryPickFromShownResultsBindsWithoutTheModel(t *testing.T) {
 	c := &chat{dir: dir}
 	buyer := "233550007006"
 
-	c.say(t, buyer, "I am looking for beaded sandals")
+	c.say(t, buyer, "I am looking for sandals")
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "Beaded Sandals") {
 		t.Fatalf("the search should show the sandals, got %q", got)
@@ -181,5 +220,36 @@ func TestDiscoveryPickFromShownResultsBindsWithoutTheModel(t *testing.T) {
 	c.say(t, buyer2, "The first one")
 	if bindings[buyer2] != "luxe" {
 		t.Fatalf("the ordinal pick should bind her to LUXE, got %q", bindings[buyer2])
+	}
+}
+
+// The single match is presented with its photo when the
+// product has one: the card she would have picked, shown
+// instead of listed.
+func TestDiscoverySingleMatchShowsThePhoto(t *testing.T) {
+	stubPhotoMedia(t)
+	cat := `{"merchants":{"luxe":{"id":"luxe","name":"LUXE","shopCode":"LUXE","ownerWhatsApp":"233265993567","payoutPhone":"233265993567","dailyGiveawayAllowance":0,"products":[{"id":"sandals","name":"Beaded Sandals","description":"Sizes 37 to 42","listPrice":80,"floorPrice":70,"stock":4,"photos":["photos/sandals-0.jpg"]}]}}}`
+	dir := setupChat(t, "233265993567", cat)
+	if err := os.MkdirAll(filepath.Join(dir, "data", "photos"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "data", "photos", "sandals-0.jpg"), []byte("fake-jpeg"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := &chat{dir: dir}
+	buyer := "233550007011"
+	c.say(t, buyer, "I am looking for sandals")
+	recs := doorRecords(t, dir, buyer)
+	images := 0
+	for _, rec := range recs {
+		if rec.Kind == "image" {
+			images++
+		}
+		if strings.Contains(rec.Body, "Which one do you want to look at?") {
+			t.Fatalf("a single match must not be offered as a choice: %+v", recs)
+		}
+	}
+	if images != 1 {
+		t.Fatalf("the single match should arrive with its photo, got %d image sends in %+v", images, recs)
 	}
 }

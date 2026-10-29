@@ -32,7 +32,7 @@ Reason in this order before you decide: first, what she is referring to (includi
 
 Read her message and decide:
 - intent "shop": she names a shop (by name or code), or picks a shop or a product from results she was shown. Give "shop" as the shop code, and when she picked a product give it in matches too.
-- intent "search": she wants a kind of thing, whether or not she has a shop in mind, and whether she asks it as a question ("which shop has laptops?"), a need ("I am looking for a laptop"), or a statement. Give "item" as the thing in her own words, and "matches": every product in the facts that genuinely fits it BY MEANING, not by wording. A laptop is a notebook computer under any brand name; slides and sandals are the same family; a phone is not a laptop. Name each match by its shop code and its exact product name from the facts. Only products in the facts, never an invention.
+- intent "search": she wants a kind of thing, whether or not she has a shop in mind, and whether she asks it as a question ("which shop has laptops?"), a need ("I am looking for a laptop"), or a statement. Give "item" as the thing in her own words, and "matches": every product in the facts that genuinely fits it BY MEANING, not by wording. A laptop is a notebook computer under any brand name; slides and sandals are the same family; a phone is not a laptop. Name each match by its shop code and its exact product name from the facts. Only products in the facts, never an invention. When she asks by price (the cheapest, the most affordable), she still means the thing itself; order your matches by list price, cheapest first.
 - intent "picture": she is asking to SEE a picture of a thing: "show me picture", "send pic", and also "I am not buying without pic", which means the same thing: the picture comes before any buying. Give "item" as the thing she wants to see and "matches" for it exactly as a search. A pick that carries a picture ask in the same breath is this intent, not a pick: "the strappy ones, can I see a picture?" said about a shown result is her choosing that result BY asking to see it — the picture is what she wants, so answer the picture ask rather than only landing her in the shop.
 - intent "browse": she asks what shops or goods there are.
 - intent "no_shop": she says she has no particular shop, without naming a thing she wants. If she names a thing as well, it is a search.
@@ -199,6 +199,28 @@ func bindDiscoveryShop(from string, shop *catalogue.Merchant, focus *catalogue.P
 	}
 }
 
+// presentSingleDiscoveryMatch answers a search that found
+// exactly one product in any shop: there is no choice to
+// offer her, so asking "which one" would be a question with
+// one possible answer. The product itself is put in front of
+// her instead: which shop has it, what it is, its photo when
+// it has one. She stays unbound, exactly as with a list of
+// results: the shown result is remembered, and her pick of
+// it, by name or by an offer that names it, is what takes
+// her into the shop. Nothing is sold before that pick, as
+// discovery has always held.
+func presentSingleDiscoveryMatch(from string, shop *catalogue.Merchant, p *catalogue.Product) {
+	whatsapp.SendText(from, shop.ShopCode+" has: "+p.Name+" - "+money.GHS(p.ListPrice))
+	sendProductPhotos(from, p)
+	whatsapp.SendText(from, p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Want to make an offer?"))
+	pre, ok := sessions[sessionKey("", from)]
+	if !ok {
+		pre = &Session{Stage: "unbound"}
+		sessions[sessionKey("", from)] = pre
+	}
+	pre.DiscoveryShown = []ShownProduct{{ShopID: shop.ID, ProductID: p.ID}}
+}
+
 // discoveryReplyOr answers with the model's drafted words
 // when they are clean and figure-free, and with the given
 // factual line otherwise.
@@ -296,6 +318,10 @@ func actOnDiscovery(from string, u *discoveryUnderstanding) bool {
 			if taste := discoveryTaste(); taste != "" {
 				whatsapp.SendText(from, taste)
 			}
+			return true
+		}
+		if len(matches) == 1 {
+			presentSingleDiscoveryMatch(from, &matches[0].Shop, &matches[0].Product)
 			return true
 		}
 		var lines []string
@@ -427,6 +453,10 @@ func discoveryNet(from, text string) {
 	// first one") must land on the closest thing she asked
 	// for, not on whichever shop sorts first.
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
+	if len(hits) == 1 {
+		presentSingleDiscoveryMatch(from, &hits[0].shop, &hits[0].product)
+		return
+	}
 	if len(hits) > 0 {
 		var lines []string
 		pre, ok := sessions[sessionKey("", from)]
