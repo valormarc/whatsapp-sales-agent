@@ -177,9 +177,19 @@ func trimDecorEdges(line string) string {
 // price: it is kept in the name and the settled price stands.
 func parseTypedNameLine(text string, settled float64) (name string, price float64, sizeNote string) {
 	rest := strings.TrimSpace(text)
-	if settled <= 0 {
-		if p, span, ok := throwPrice(rest); ok {
-			price = p
+	if p, span, ok := throwPrice(rest); ok {
+		// When the flow already has a list price, preserve bare
+		// figures in the name ("EliteBook 840"), but still remove
+		// an explicitly marked price ("Rack — GH₵270") from the
+		// product name. The settled price remains authoritative.
+		marked := span != nil && span[0] >= 0 && span[1] <= len(rest) &&
+			(strings.ContainsAny(rest[span[0]:span[1]], "@₵") ||
+				strings.Contains(strings.ToLower(rest[span[0]:span[1]]), "gh") ||
+				strings.Contains(strings.ToLower(rest[span[0]:span[1]]), "cedi"))
+		if settled <= 0 || marked {
+			if settled <= 0 {
+				price = p
+			}
 			rest = rest[:span[0]] + " " + rest[span[1]:]
 		}
 	}
