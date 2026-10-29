@@ -79,9 +79,9 @@ func TestSendPicAfterViewingAnItem(t *testing.T) {
 	c.say(t, buyer, "SHOP-AMA")
 	c.say(t, buyer, "Tilapia smoked")
 	c.say(t, buyer, "send pic")
-	got := c.last(t, buyer)
-	if !strings.Contains(got, "cannot send a photo") || !strings.Contains(got, "Smoked Tilapia") || !strings.Contains(got, "GH₵180") {
-		t.Fatalf("send pic reply = %q, want the plain no-photo answer with the item and price", got)
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "I don't have the pic of the Smoked Tilapia") || !strings.Contains(got, "GH₵180") {
+		t.Fatalf("send pic reply = %q, want the no-photo line with the item and price", got)
 	}
 }
 
@@ -92,8 +92,8 @@ func TestSendPicMidHaggle(t *testing.T) {
 	c.say(t, buyer, "SHOP-AMA")
 	c.say(t, buyer, "How much is the smoked tilapia?")
 	c.say(t, buyer, "send pic")
-	got := c.last(t, buyer)
-	if !strings.Contains(got, "cannot send a photo") || !strings.Contains(got, "stands at GH₵180") {
-		t.Fatalf("mid-haggle send pic = %q, want the no-photo answer holding the standing price", got)
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "I don't have the pic") || !strings.Contains(got, "stands at GH₵180") {
+		t.Fatalf("mid-haggle send pic = %q, want the no-photo line holding the standing price", got)
 	}
 }

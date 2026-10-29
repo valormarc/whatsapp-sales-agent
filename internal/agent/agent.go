@@ -493,6 +493,7 @@ func HandleInbound(in Inbound) {
 	// stands. Unbound, the reference's shop code still brings her
 	// to the right shop's door, as any code does.
 	quotingRef := boundID != "" && orderRefRe.MatchString(msg)
+	wasBound := boundID
 	if shop, rest := parseShopEntry(lower, boundID == ""); shop != nil && !quotingRef {
 		switch {
 		case boundID == "":
@@ -516,6 +517,20 @@ func HandleInbound(in Inbound) {
 			whatsapp.SendText(from, "You have left "+oldName+". You are now at "+shop.Name+".")
 		default:
 			lower = rest
+		}
+		// Entry text that quotes the shop's own line back
+		// (her discovery answer, pasted or quoted) selects
+		// the product it names; it is not an offer, and no
+		// deal is closed on the entry turn.
+		if rest != "" {
+			if p := entrySelection(shop, rest); p != nil {
+				sessions[sessionKey(shop.ID, from)] = &Session{Stage: "browsing", MerchantID: shop.ID, Product: p, Ask: p.ListPrice, LastViewed: p}
+				if wasBound == "" {
+					whatsapp.SendText(from, "Welcome to "+shop.Name+".")
+				}
+				whatsapp.SendText(from, p.Name+": "+p.Description+" It goes for "+money.GHS(p.ListPrice)+"."+offerInvite(p, " Want to make an offer?"))
+				return
+			}
 		}
 	}
 

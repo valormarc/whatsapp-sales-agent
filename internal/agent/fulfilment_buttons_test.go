@@ -204,7 +204,7 @@ func TestDetailsDeclineAndCancel(t *testing.T) {
 	agreeBagAtList(t, c, buyer2)
 	tap(t, buyer2, "ff_self")
 	c.say(t, buyer2, "cancel")
-	if got := c.last(t, buyer2); !strings.Contains(got, "dropped that sale") {
+	if got := c.last(t, buyer2); !strings.Contains(got, "Okay, cancelled") {
 		t.Fatalf("cancel at the name question = %q, want the sale dropped", got)
 	}
 	if got := len(ordersOnDisk(t, dir)); got != 1 {

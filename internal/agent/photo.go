@@ -325,6 +325,11 @@ func throwReadBack(flow *OnboardingFlow) string {
 // answered are merged over anything an earlier in-progress flow
 // had collected, so sending a photo mid-walk loses nothing.
 func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, caption string) {
+	// A buyer is waiting on a picture from this shop: the
+	// owner's next photo is that picture, not a new listing.
+	if servePendingPicRequest(from, shop, imageID) {
+		return
+	}
 	key := sessionKey(shop.ID, from)
 	s, ok := sessions[key]
 	if !ok {

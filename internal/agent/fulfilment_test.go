@@ -322,7 +322,7 @@ func TestFulfilmentCancelDropsTheSaleCleanly(t *testing.T) {
 	c.say(t, buyer, "120")
 	c.replies(t, buyer)
 	c.say(t, buyer, "cancel")
-	if got := c.last(t, buyer); !strings.Contains(got, "dropped that sale") {
+	if got := c.last(t, buyer); !strings.Contains(got, "Okay, cancelled") {
 		t.Fatalf("cancel at fulfilment = %q", got)
 	}
 	if ordersCount(t, dir) != 0 {

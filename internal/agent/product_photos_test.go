@@ -102,17 +102,21 @@ func TestListingKeepsItsPhotosAndTheBuyerIsSentThem(t *testing.T) {
 
 // A product listed in words alone has no photos, and the
 // buyer hears the plain words answer, exactly as before.
-func TestAProductWithoutPhotosAnswersInWords(t *testing.T) {
+func TestAProductWithoutPhotosAsksTheOwner(t *testing.T) {
 	stubPhotoMedia(t)
-	owner := "233550003011"
-	dir := setupChat(t, owner, shopWithBag)
-	c := &chat{dir: dir}
+	_, c := setupTwitterShops(t)
 	buyer := "233550003012"
-	HandleInbound(Inbound{From: buyer, Text: "SHOP-TEST"})
+	HandleInbound(Inbound{From: buyer, Text: "SHOP-EFUA"})
 	c.replies(t, buyer)
-	HandleInbound(Inbound{From: buyer, Text: "Send pic of the beaded bag"})
+	HandleInbound(Inbound{From: buyer, Text: "Handmade Beaded Bag"})
+	c.replies(t, buyer)
+	HandleInbound(Inbound{From: buyer, Text: "Send pic"})
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "I cannot send a photo") {
-		t.Fatalf("a photoless product should answer in words, got %q", got)
+	if !strings.Contains(got, "I don't have the pic of the Handmade Beaded Bag in this chat. Let me get it from the shop owner for you.") {
+		t.Fatalf("a photoless product should tell her plainly and promise the owner's pic, got %q", got)
+	}
+	ownerGot := strings.Join(c.replies(t, ownerEfua), "\n")
+	if !strings.Contains(ownerGot, "A buyer is asking for a picture of Handmade Beaded Bag") {
+		t.Fatalf("the owner should have been asked for the picture, got %q", ownerGot)
 	}
 }

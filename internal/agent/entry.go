@@ -75,6 +75,42 @@ func parseShopEntry(lower string, allowName bool) (*catalogue.Merchant, string) 
 	return nil, lower
 }
 
+// entrySelection reads entry text that quotes one of the
+// shop's own lines back at it ("LUXE has: Ankle Strap
+// Heels - GH₵120", the discovery answer pasted or quoted
+// into the chat): it names one of the shop's products at
+// exactly its list price, which is a selection, not an
+// offer. The buyer is shown the product; she buys with
+// her next words, in her own turn.
+func entrySelection(shop *catalogue.Merchant, rest string) *catalogue.Product {
+	amt := parseOffer(rest)
+	if amt == nil {
+		return nil
+	}
+	for _, p := range catalogue.ListProducts(shop.ID) {
+		pp := p
+		if pp.ListPrice != *amt {
+			continue
+		}
+		named, seen := true, false
+		for _, w := range strings.FieldsFunc(strings.ToLower(pp.Name), func(r rune) bool {
+			return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+		}) {
+			if len(w) <= 2 {
+				continue
+			}
+			seen = true
+			if !strings.Contains(rest, w) {
+				named = false
+			}
+		}
+		if seen && named {
+			return &pp
+		}
+	}
+	return nil
+}
+
 // recoverBuyerFromOrders rebuilds a buyer's place from the
 // order book when her session is gone. Sessions live in
 // memory, so an agent restart (a deploy, a crash) used to

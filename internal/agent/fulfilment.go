@@ -210,6 +210,18 @@ func fulfilPrompt(s *Session) string {
 	}
 }
 
+// reaskFulfilStep puts the stage's open question to her
+// again after the intent gate has served a turn that was
+// not an answer to it. At the confirm step the question is
+// the recap itself.
+func reaskFulfilStep(from string, s *Session) {
+	if s.FulfilStep == "confirm" {
+		sendOrderRecap(from, s, s.PendingFulfil)
+		return
+	}
+	whatsapp.SendText(from, fulfilPrompt(s))
+}
+
 // handleFulfilment runs the fulfilment stage: one open question at
 // a time, answered in the buyer's own shapes (delivery with the
 // place in the same breath, pickup, a meet-up, a collector), with
@@ -222,6 +234,21 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 	key := sessionKey(shopID, from)
 	p := s.Product
 	fee := deliveryFeeOf(merchant)
+
+	// The intent gate runs before any step reads her words: a
+	// picture ask is served as a picture ask and the open
+	// question is asked again, so her ask is never taken as a
+	// name, a place or a note, and the sale does not advance
+	// while she waits to see the goods.
+	if picRe.MatchString(lower) {
+		whole := p
+		if s.Qty > 0 {
+			whole = wholeProductOf(shopID, p)
+		}
+		answerPictureAsk(from, merchant, whole)
+		reaskFulfilStep(from, s)
+		return
+	}
 
 	// The package details are collected in words, never buttons,
 	// and they are read before anything else in this stage: a
@@ -324,19 +351,13 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		}
 		complete(fulfilment{Mode: "pickup"})
 	default: // "choice"
-		// A question about the sale itself (the total, delivery,
-		// a picture) is answered, and the fulfilment question is
-		// held up again: the pending sale survives the drift.
-		if strings.HasSuffix(lower, "?") && (totalRe.MatchString(lower) || deliveryRe.MatchString(lower) || picRe.MatchString(lower)) {
-			if picRe.MatchString(lower) && !totalRe.MatchString(lower) && !deliveryRe.MatchString(lower) {
-				if sendProductPhotos(from, p) {
-					whatsapp.SendText(from, p.Description+" It goes for "+money.GHS(p.ListPrice)+".")
-				} else {
-					whatsapp.SendText(from, "I cannot send a photo of the "+p.Name+" from here, but it is this: "+p.Description+" It goes for "+money.GHS(p.ListPrice)+".")
-				}
-			} else {
-				answerDeliveryOrTotal(from, s, merchant, lower)
-			}
+		// A question about the sale itself (the total, delivery)
+		// is answered, and the fulfilment question is held up
+		// again: the pending sale survives the drift. A picture
+		// ask never reaches here; the intent gate serves it
+		// above, with or without a question mark.
+		if strings.HasSuffix(lower, "?") && (totalRe.MatchString(lower) || deliveryRe.MatchString(lower)) {
+			answerDeliveryOrTotal(from, s, merchant, lower)
 			whatsapp.SendText(from, fulfilPrompt(s))
 			return
 		}
@@ -383,7 +404,7 @@ func dropPendingSale(from string, s *Session) {
 		view = wholeProductOf(shopID, p)
 	}
 	sessions[sessionKey(shopID, from)] = &Session{Stage: "browsing", MerchantID: shopID, LastViewed: view, Location: s.Location}
-	whatsapp.SendText(from, "No problem, I have dropped that sale. The "+p.Name+" is here whenever you are ready.")
+	whatsapp.SendText(from, "Okay, cancelled. Tell me what else you need.")
 }
 
 // beginPackageDetails is where every settled fulfilment now goes
@@ -425,6 +446,12 @@ func askPackageMessage(from string, s *Session) {
 // don't want a message" must decline the note, not kill the sale.
 var detailsCancelRe = regexp.MustCompile(`^(cancel|cancel it|forget it|drop it|drop the sale|leave it|leave the sale)[.!]?$`)
 
+// saleCancelRe is the same call-off wearing its natural
+// lead-ins ("What? Just forget it"): still the whole
+// message, so a note that merely carries the words onward
+// ("leave it at the gate") is never read as one.
+var saleCancelRe = regexp.MustCompile(`^(what[?!. ]*)?(oh[,. ]*)?(just )?(cancel|cancel it|forget it|drop it|drop the sale|leave it|leave the sale|i don'?t want it|do not want it)[.!]?$`)
+
 // handlePackageDetails reads the two details answers. A name is
 // cleaned conservatively; anything that is not name-shaped is
 // asked for again, once per message, and the sale waits. The
@@ -434,7 +461,7 @@ var detailsCancelRe = regexp.MustCompile(`^(cancel|cancel it|forget it|drop it|d
 // merchant's notice word for word.
 func handlePackageDetails(from string, s *Session, msg, lower string) {
 	key := sessionKey(s.MerchantID, from)
-	if detailsCancelRe.MatchString(lower) {
+	if detailsCancelRe.MatchString(lower) || saleCancelRe.MatchString(lower) {
 		dropPendingSale(from, s)
 		return
 	}

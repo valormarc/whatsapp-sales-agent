@@ -245,7 +245,8 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 					whatsapp.SendText(from, p.Description+" The price stands at "+money.GHS(s.Ask)+"."+tail)
 					return
 				}
-				whatsapp.SendText(from, "I cannot send a photo of the "+p.Name+" from here, but it is this: "+p.Description+" The price stands at "+money.GHS(s.Ask)+"."+tail)
+				answerPictureAsk(from, merchant, wholeProductOf(shopID, p))
+				whatsapp.SendText(from, "It is this: "+p.Description+" The price stands at "+money.GHS(s.Ask)+"."+tail)
 				return
 			}
 			if p.Fixed {
@@ -411,7 +412,8 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				whatsapp.SendText(from, target.Name+": "+target.Description+" It goes for "+money.GHS(target.ListPrice)+"."+offerInvite(target, " Make me an offer and let us see."))
 				return
 			}
-			whatsapp.SendText(from, "I cannot send a photo of the "+target.Name+" from here, but it is this: "+target.Description+" It goes for "+money.GHS(target.ListPrice)+"."+offerInvite(target, " Make me an offer and let us see."))
+			answerPictureAsk(from, merchant, target)
+			whatsapp.SendText(from, "It is this: "+target.Description+" It goes for "+money.GHS(target.ListPrice)+"."+offerInvite(target, " Make me an offer and let us see."))
 			return
 		}
 	}

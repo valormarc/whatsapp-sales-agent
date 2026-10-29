@@ -31,6 +31,7 @@ const discoveryCharter = `You are the thinking of a sales agent who sells for ma
 Read her message and decide:
 - intent "shop": she names a shop (by name or code), or picks a shop or a product from results she was shown. Give "shop" as the shop code, and when she picked a product give it in matches too.
 - intent "search": she wants a kind of thing, whether or not she has a shop in mind, and whether she asks it as a question ("which shop has laptops?"), a need ("I am looking for a laptop"), or a statement. Give "item" as the thing in her own words, and "matches": every product in the facts that genuinely fits it BY MEANING, not by wording. A laptop is a notebook computer under any brand name; slides and sandals are the same family; a phone is not a laptop. Name each match by its shop code and its exact product name from the facts. Only products in the facts, never an invention.
+- intent "picture": she is asking to SEE a picture of a thing: "show me picture", "send pic", and also "I am not buying without pic", which means the same thing: the picture comes before any buying. Give "item" as the thing she wants to see and "matches" for it exactly as a search.
 - intent "browse": she asks what shops or goods there are.
 - intent "no_shop": she says she has no particular shop, without naming a thing she wants. If she names a thing as well, it is a search.
 - intent "offtopic": her message is not about buying or shops at all.
@@ -211,14 +212,79 @@ func handleUnboundBuyer(from, text string) {
 	if pickFromShown(from, text) {
 		return
 	}
+	if serveDiscoveryPictureAsk(from, text) {
+		return
+	}
 	if u := understandDiscovery(from, text); u != nil && actOnDiscovery(from, u) {
 		return
 	}
 	discoveryNet(from, text)
 }
 
+// serveDiscoveryPictureAsk is the intent gate for the
+// unbound buyer: a picture ask over results she has just
+// been shown is served as a picture ask. She is put inside
+// that product's shop and shown the picture (or told
+// plainly, with the owner asked for it); nothing is sold on
+// this turn, and no stage of any sale sees her words.
+func serveDiscoveryPictureAsk(from, text string) bool {
+	if !picRe.MatchString(strings.ToLower(text)) {
+		return false
+	}
+	pre, ok := sessions[sessionKey("", from)]
+	if !ok || pre == nil || len(pre.DiscoveryShown) == 0 {
+		return false
+	}
+	lower := strings.ToLower(text)
+	target := pre.DiscoveryShown[0]
+	for _, sh := range pre.DiscoveryShown {
+		pp := catalogue.FindByID(sh.ShopID, sh.ProductID)
+		if pp == nil {
+			continue
+		}
+		named := false
+		for _, w := range strings.FieldsFunc(strings.ToLower(pp.Name), func(r rune) bool {
+			return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+		}) {
+			if len(w) > 2 && strings.Contains(lower, w) {
+				named = true
+			}
+		}
+		if named {
+			target = sh
+			break
+		}
+	}
+	shop := catalogue.GetMerchant(target.ShopID)
+	pp := catalogue.FindByID(target.ShopID, target.ProductID)
+	if shop == nil || pp == nil {
+		return false
+	}
+	bindings[from] = shop.ID
+	delete(sessions, sessionKey("", from))
+	sessions[sessionKey(shop.ID, from)] = &Session{Stage: "browsing", MerchantID: shop.ID, LastViewed: pp}
+	answerPictureAsk(from, shop, pp)
+	return true
+}
+
 func actOnDiscovery(from string, u *discoveryUnderstanding) bool {
 	switch u.Intent {
+	case "picture":
+		// The picture comes first: she is put inside the
+		// matched product's shop and served the picture
+		// ask. Nothing is sold on this turn.
+		matches := verifiedMatches(u)
+		if len(matches) == 0 {
+			return false
+		}
+		v := matches[0]
+		shop := v.Shop
+		p := v.Product
+		bindings[from] = shop.ID
+		delete(sessions, sessionKey("", from))
+		sessions[sessionKey(shop.ID, from)] = &Session{Stage: "browsing", MerchantID: shop.ID, LastViewed: &p}
+		answerPictureAsk(from, &shop, &p)
+		return true
 	case "shop":
 		shop := resolveDiscoveryShop(u.Shop)
 		if shop == nil {
@@ -336,6 +402,18 @@ func discoveryTaste() string {
 // discoveryNet is the no-model net for the unbound buyer: a
 // literal word search over names and descriptions, and a
 // short search offer that never repeats the welcome wall.
+// discoveryStop is the filler of a search sentence, never
+// the goods: wanting, looking and having say nothing about
+// what a product is.
+var discoveryStop = map[string]bool{
+	"looking": true, "look": true, "want": true, "wants": true,
+	"need": true, "needs": true, "buy": true, "sell": true,
+	"sells": true, "have": true, "has": true, "the": true,
+	"for": true, "and": true, "you": true, "your": true,
+	"any": true, "that": true, "this": true, "shop": true,
+	"shops": true, "please": true, "get": true, "got": true,
+}
+
 func discoveryNet(from, text string) {
 	lower := strings.ToLower(text)
 	type hit struct {
@@ -351,7 +429,11 @@ func discoveryNet(from, text string) {
 			for _, w := range strings.FieldsFunc(lower, func(r rune) bool {
 				return (r < 'a' || r > 'z') && (r < '0' || r > '9')
 			}) {
-				if len(w) > 2 && strings.Contains(hay, w) {
+				// The filler of the asking ("looking for",
+				// "I want", "do you have") is not the goods:
+				// it matches every description ever written
+				// and drowns the word that names the thing.
+				if len(w) > 2 && !discoveryStop[w] && strings.Contains(hay, w) {
 					score++
 				}
 			}
