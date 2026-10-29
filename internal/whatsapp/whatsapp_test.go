@@ -58,6 +58,36 @@ func TestButtonsPayloadMatchesTheGraphSchema(t *testing.T) {
 	}
 }
 
+// The read payload is pinned the same way: marking a message
+// read is what gives the sender her blue ticks, and the typing
+// indicator only exists as a rider on this call — a wrong
+// shape here would fail silently in dry-run and cost the chat
+// its most human signal.
+func TestReadPayloadMatchesTheGraphSchema(t *testing.T) {
+	payload := buildReadPayload("wamid.TEST123")
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		MessagingProduct string `json:"messaging_product"`
+		Status           string `json:"status"`
+		MessageID        string `json:"message_id"`
+		TypingIndicator  struct {
+			Type string `json:"type"`
+		} `json:"typing_indicator"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.MessagingProduct != "whatsapp" || got.Status != "read" || got.MessageID != "wamid.TEST123" {
+		t.Fatalf("read payload = %s", raw)
+	}
+	if got.TypingIndicator.Type != "text" {
+		t.Fatalf("typing indicator = %s", raw)
+	}
+}
+
 func TestCTAPayloadMatchesTheGraphSchema(t *testing.T) {
 	payload := buildCTAPayload("233200000000", "Pay here to complete your order.", "Click to pay GH₵875", "https://pay.example.test/ABC")
 	raw, err := json.Marshal(payload)

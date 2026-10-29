@@ -529,6 +529,12 @@ func HandleInbound(in Inbound) {
 		return
 	}
 
+	// Her message is read the moment the agent picks it up:
+	// she sees the blue ticks, and the typing indicator runs
+	// while this turn works, the way a person who has opened
+	// the chat looks to the one waiting on her reply.
+	whatsapp.MarkReadTyping(in.MessageID)
+
 	// Every inbound message is one turn, and the turn's
 	// model budget opens with it: one call to understand,
 	// drafting on its own small budget (see model.BeginTurn).

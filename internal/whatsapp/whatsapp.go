@@ -89,6 +89,11 @@ type outboxRecord struct {
 	// URL is the target of a tap-to-open button message
 	// (Kind "cta_url"); Buttons holds its one display text.
 	URL string `json:"url,omitempty"`
+	// ReadID is set on a record of Kind "read": the inbound
+	// message that was marked read (with the typing indicator
+	// shown) when the agent picked it up. To and Body stay
+	// empty on such a record; nothing was sent to anyone.
+	ReadID string `json:"readId,omitempty"`
 }
 
 type sendPayload struct {
@@ -434,6 +439,49 @@ func buildCTAPayload(to, body, displayText, url string) ctaPayload {
 	payload.Interactive.Action.Parameters.DisplayText = displayText
 	payload.Interactive.Action.Parameters.URL = url
 	return payload
+}
+
+// readPayload is the mark-as-read call. The typing indicator
+// rides in the same call — it is the only way WhatsApp shows
+// one — and it runs until the agent's reply lands or about
+// 25 seconds pass, whichever comes first.
+type readPayload struct {
+	MessagingProduct string `json:"messaging_product"`
+	Status           string `json:"status"`
+	MessageID        string `json:"message_id"`
+	TypingIndicator  struct {
+		Type string `json:"type"`
+	} `json:"typing_indicator"`
+}
+
+func buildReadPayload(messageID string) readPayload {
+	payload := readPayload{MessagingProduct: "whatsapp", Status: "read", MessageID: messageID}
+	payload.TypingIndicator.Type = "text"
+	return payload
+}
+
+// MarkReadTyping marks one inbound message as read — the
+// sender sees the blue ticks — and shows her the typing
+// indicator while the agent works on its answer, the way a
+// person picking up the chat looks. It is called once per
+// message, when the turn begins; a failed call costs nothing
+// but the ticks, and never touches the turn itself. In
+// dry-run mode it writes its outbox record and nothing more,
+// like every send.
+func MarkReadTyping(messageID string) {
+	if messageID == "" {
+		return
+	}
+	token := os.Getenv("WHATSAPP_TOKEN")
+	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")
+	_ = os.MkdirAll(datadir.Dir(), 0o755)
+	record := outboxRecord{At: nowISO(), Kind: "read", ReadID: messageID}
+	if token == "" || phoneID == "" {
+		record.DryRun = true
+		appendOutbox(record)
+		return
+	}
+	post(record, buildReadPayload(messageID))
 }
 
 // SendText sends one text message, or logs it to the outbox in
