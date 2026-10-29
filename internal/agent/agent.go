@@ -316,6 +316,30 @@ func sendPieces(from string, pieces ...string) {
 	}
 }
 
+// The universal yes/no buttons: whenever the agent's question
+// is a two-option choice, the question rides on buttons
+// instead of asking for typed words — a tap cannot be
+// misread the way a word can, and it is less work for the
+// person answering. Her typed yes and no keep working
+// exactly as before: a tap is translated back into the very
+// word she would have typed before any flow sees it (the
+// merchant branch and the tap switch in HandleInbound), so
+// the two can never diverge.
+const (
+	ynYesID = "yn_yes"
+	ynNoID  = "yn_no"
+)
+
+// sendYesNo asks one two-option question on buttons. The
+// titles say what each choice does, in the asker's own
+// terms; the body carries the question itself.
+func sendYesNo(from, body, yesTitle, noTitle string) {
+	whatsapp.SendButtons(from, body, []whatsapp.Button{
+		{ID: ynYesID, Title: yesTitle},
+		{ID: ynNoID, Title: noTitle},
+	})
+}
+
 // sendPayButton presents a payment link the way a buyer
 // should meet it: a button she taps, with the amount she is
 // about to pay on the button's face, never a raw link
@@ -606,8 +630,18 @@ func HandleInbound(in Inbound) {
 	}
 
 	// The merchant herself gets merchant mode for her own shop.
+	// A tap on a yes/no button in her chat is translated into
+	// the word she would have typed, so a tap and a typed
+	// answer can never diverge (see sendYesNo).
 	if shop := ownerShopFor(from); shop != nil {
-		handleMerchantMessageCtx(from, strings.TrimSpace(in.Text), shop.ID, in.ContextID)
+		text := strings.TrimSpace(in.Text)
+		switch in.ButtonID {
+		case ynYesID:
+			text = "yes"
+		case ynNoID:
+			text = "no"
+		}
+		handleMerchantMessageCtx(from, text, shop.ID, in.ContextID)
 		return
 	}
 
@@ -629,6 +663,13 @@ func HandleInbound(in Inbound) {
 		case in.ButtonID == "door_buy":
 			whatsapp.SendText(from, "Welcome in. If you have a shop code, send it, like SHOP-EFUA. If not, tell me what you are looking to buy and I will check every shop for it.")
 			return
+		case in.ButtonID == ynYesID:
+			// A tap on a yes/no button (see sendYesNo): the
+			// tap becomes the word she would have typed, and
+			// the ordinary flow below reads it.
+			in.Text = "yes"
+		case in.ButtonID == ynNoID:
+			in.Text = "no"
 		case strings.HasPrefix(in.ButtonID, "ff_"):
 			// A fulfilment tap (see fulfilment.go). Some taps are
 			// whole answers in themselves; the rest are translated

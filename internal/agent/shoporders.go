@@ -55,7 +55,7 @@ func merchantOrdersText(merchant *catalogue.Merchant) string {
 		return "No orders yet. When a buyer completes a sale, it lands here: what she bought, what she paid, and where it stands."
 	}
 	sort.Slice(mine, func(i, j int) bool { return mine[i].CreatedAt > mine[j].CreatedAt })
-	lines := []string{"Your orders, newest first:"}
+	lines := []string{"*Your orders, newest first:*"}
 	waiting := 0
 	for _, o := range mine {
 		if o.Status == "paid" && o.DeliveryState == "" {
@@ -77,9 +77,9 @@ func merchantOrdersText(merchant *catalogue.Merchant) string {
 		lines = append(lines, "And "+strconv.Itoa(len(mine)-len(shown))+" earlier ones.")
 	}
 	if waiting == 1 {
-		lines = append(lines, "1 paid order is waiting to be sent.")
+		lines = append(lines, "", "1 paid order is waiting to be sent.")
 	} else if waiting > 1 {
-		lines = append(lines, strconv.Itoa(waiting)+" paid orders are waiting to be sent.")
+		lines = append(lines, "", strconv.Itoa(waiting)+" paid orders are waiting to be sent.")
 	}
 	return strings.Join(lines, "\n")
 }

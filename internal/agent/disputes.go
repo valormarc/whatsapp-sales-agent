@@ -180,7 +180,7 @@ func handleMerchantRefundClaim(from string, merchant *catalogue.Merchant, msg, l
 	}
 	sess.DisputeConfirmRef = order.Reference
 	sessions[key] = sess
-	whatsapp.SendText(buyer, merchant.Name+" says she has refunded "+money.GHS(order.Charged())+" for order "+order.Reference+". Have you received the refund? Reply yes or no.")
+	sendYesNo(buyer, merchant.Name+" says she has refunded "+money.GHS(order.Charged())+" for order "+order.Reference+". Have you received the refund?", "Yes, received", "Not yet")
 	whatsapp.SendText(from, "I have asked the buyer to confirm the refund for order "+order.Reference+". Her word closes the dispute.")
 	return true
 }

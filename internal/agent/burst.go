@@ -301,7 +301,7 @@ func burstLines(s *Session) []string {
 	}
 	lines := []string{head}
 	for i, item := range s.BurstBatch {
-		line := strconv.Itoa(i+1) + ". " + item.Name + " — " + money.GHS(item.ListPrice)
+		line := strconv.Itoa(i+1) + ". *" + item.Name + "* — " + money.GHS(item.ListPrice)
 		if item.Unit != "" && item.BaseQty > 0 {
 			line += " for " + formatQty(item.BaseQty) + " " + unitWord(item.Unit, item.BaseQty)
 		}
@@ -313,7 +313,7 @@ func burstLines(s *Session) []string {
 		}
 		lines = append(lines, line)
 	}
-	lines = append(lines, "What is the last price for each? Give them in one message, in that order, like: 170, 75, 2900. One figure for all of them works too, like: all 75. Or say fixed price, and each stays at its list price.")
+	lines = append(lines, "", "What is the last price for each? Give them in one message, in that order, like: 170, 75, 2900. One figure for all of them works too, like: all 75. Or say fixed price, and each stays at its list price.")
 	return lines
 }
 

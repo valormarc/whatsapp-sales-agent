@@ -80,18 +80,18 @@ func startConfirmation(from string, s *Session, merchant *catalogue.Merchant, pr
 			// The fee is not hers to pay here at all: it goes
 			// to whoever brings the item, when it arrives.
 			sendPieces(from,
-				"The "+name+" is "+money.GHS(price)+". If you want it sent, delivery is "+money.GHS(fee)+", paid to "+carrierTarget(merchant.DeliveryNote)+" when it reaches you.",
-				"Shall I send the payment link?")
+				"The "+name+" is "+money.GHS(price)+". If you want it sent, delivery is "+money.GHS(fee)+", paid to "+carrierTarget(merchant.DeliveryNote)+" when it reaches you.")
+			sendYesNo(from, "Shall I send the payment link?", "Yes, send it", "Not yet")
 			return
 		}
 		sendPieces(from,
-			"The "+name+" is "+money.GHS(price)+", plus "+money.GHS(fee)+" delivery if you want it sent to you.",
-			"Shall I send the payment link?")
+			"The "+name+" is "+money.GHS(price)+", plus "+money.GHS(fee)+" delivery if you want it sent to you.")
+		sendYesNo(from, "Shall I send the payment link?", "Yes, send it", "Not yet")
 		return
 	}
 	sendPieces(from,
-		"The "+name+" is "+money.GHS(price)+".",
-		"Shall I send the payment link?")
+		"The "+name+" is "+money.GHS(price)+".")
+	sendYesNo(from, "Shall I send the payment link?", "Yes, send it", "Not yet")
 }
 
 // answerDeliveryOrTotal answers a delivery question, or the demand

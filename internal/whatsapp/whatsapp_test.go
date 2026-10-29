@@ -11,7 +11,38 @@ package whatsapp
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
+
+// The pace is per recipient: a first send never waits, a
+// second send to the same person waits out the gap, another
+// person is unaffected, and once the gap has passed there
+// is nothing to wait for. The reservation is what is tested
+// here; the sleep itself is one line on top of it.
+func TestPaceSlotReservesTheGapPerRecipient(t *testing.T) {
+	old := sendPaceGap
+	sendPaceGap = 300 * time.Millisecond
+	defer func() { sendPaceGap = old }()
+	to := "233200000777"
+	if wait := reservePaceSlot(to); wait != 0 {
+		t.Fatalf("the first send should not wait, got %v", wait)
+	}
+	if wait := reservePaceSlot(to); wait <= 0 || wait > sendPaceGap {
+		t.Fatalf("the second send should wait out the gap, got %v", wait)
+	}
+	if wait := reservePaceSlot("233200000778"); wait != 0 {
+		t.Fatalf("another recipient should not wait, got %v", wait)
+	}
+	paceMu.Lock()
+	paceLast[to] = time.Now().Add(-time.Second)
+	paceMu.Unlock()
+	if wait := reservePaceSlot(to); wait != 0 {
+		t.Fatalf("once the gap has passed there is no wait, got %v", wait)
+	}
+	if wait := reservePaceSlot(""); wait != 0 {
+		t.Fatalf("a record with no recipient is never paced, got %v", wait)
+	}
+}
 
 func TestButtonsPayloadMatchesTheGraphSchema(t *testing.T) {
 	payload := buildButtonsPayload("233200000000", "Pick one.", []Button{

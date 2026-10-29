@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -132,10 +133,50 @@ func appendOutbox(rec outboxRecord) {
 	_, _ = f.Write(buf.Bytes())
 }
 
+// Send pacing: bubbles to one person arrive a beat apart,
+// the way a person sends them — never as a machine burst.
+// Every live send funnels through post, so the pace is kept
+// there, per recipient: a send reserves the next slot for
+// its recipient and waits out whatever of the gap is left.
+// A record with no recipient (the mark-as-read call) is not
+// a bubble and is never paced. Dry-run sends never reach
+// post, so tests and simulators run at full speed.
+var sendPaceGap = 1200 * time.Millisecond
+
+var (
+	paceMu   sync.Mutex
+	paceLast = map[string]time.Time{}
+)
+
+// reservePaceSlot books the next send slot for one
+// recipient and reports how long the caller should wait
+// before sending. The first send never waits.
+func reservePaceSlot(to string) time.Duration {
+	if to == "" || sendPaceGap <= 0 {
+		return 0
+	}
+	paceMu.Lock()
+	defer paceMu.Unlock()
+	now := time.Now()
+	wait := paceLast[to].Add(sendPaceGap).Sub(now)
+	if wait < 0 {
+		wait = 0
+	}
+	paceLast[to] = now.Add(wait)
+	return wait
+}
+
+func paceSend(to string) {
+	if wait := reservePaceSlot(to); wait > 0 {
+		time.Sleep(wait)
+	}
+}
+
 // post delivers one prepared payload to the Graph API and writes
 // the outbox record either way, mirroring SendText's discipline:
 // the outbox is the record of what the agent tried to say.
 func post(record outboxRecord, payload any) Result {
+	paceSend(record.To)
 	token := os.Getenv("WHATSAPP_TOKEN")
 	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")
 	data, _ := json.Marshal(payload)

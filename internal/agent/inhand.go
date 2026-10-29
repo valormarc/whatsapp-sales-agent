@@ -153,7 +153,7 @@ func beginInHandWait(from string, s *Session, merchant *catalogue.Merchant, f fu
 		grounds,
 		"I have asked "+merchant.Name+" to confirm. The moment she does, your payment button follows, and nothing is paid before it.")
 	if phone := merchantNotifyPhone(merchant); phone != "" {
-		whatsapp.SendText(phone, "One moment before your buyer pays: she is buying the "+s.itemLabel()+" ("+money.GHS(basketGoods(s)+s.AgreedPrice)+").\nDo you have it in hand now? Reply yes if you do, or no if you do not.")
+		sendYesNo(phone, "One moment before your buyer pays: she is buying the "+s.itemLabel()+" ("+money.GHS(basketGoods(s)+s.AgreedPrice)+").\nDo you have it in hand now?", "Yes, in hand", "Not in hand")
 	}
 }
 
@@ -167,7 +167,7 @@ func reopenInHand(from string, s *Session, merchant *catalogue.Merchant) {
 	sessions[sessionKey(s.MerchantID, from)] = s
 	whatsapp.SendText(from, "I have asked "+merchant.Name+" again to confirm the "+s.itemLabel()+" is in hand.")
 	if phone := merchantNotifyPhone(merchant); phone != "" {
-		whatsapp.SendText(phone, "Your buyer is still waiting: do you have the "+s.itemLabel()+" ("+money.GHS(basketGoods(s)+s.AgreedPrice)+") in hand now? Reply yes if you do, or no if you do not.")
+		sendYesNo(phone, "Your buyer is still waiting: do you have the "+s.itemLabel()+" ("+money.GHS(basketGoods(s)+s.AgreedPrice)+") in hand now?", "Yes, in hand", "Not in hand")
 	}
 }
 

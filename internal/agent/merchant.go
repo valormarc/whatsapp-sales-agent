@@ -904,7 +904,7 @@ func onboardingQuestionText(flow *OnboardingFlow) string {
 	case "measure":
 		return "Do you sell the " + flow.Name + " by measure, like by the yard, litre or kilo, or only as a whole?"
 	case "confirm":
-		return "Shall I add it? Say yes to save it, or no to drop it."
+		return "Shall I add it?"
 	}
 	return ""
 }
@@ -940,8 +940,8 @@ func enterOnboardingConfirm(from string, flow *OnboardingFlow) {
 	if !flow.Fixed {
 		summary += "That leaves " + money.GHS(flow.ListPrice-flow.FloorPrice) + " I can give away when customers bargain, always inside your daily allowance.\n"
 	}
-	summary += "Shall I add it? Say yes to save it, or no to drop it."
-	whatsapp.SendText(from, summary)
+	summary += "\nShall I add it?"
+	sendYesNo(from, summary, "Yes, save it", "No, drop it")
 }
 
 // handleMerchantCommand runs one catalogue command outside the
@@ -1303,7 +1303,7 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			return true
 		}
 		s.PendingRemove = product.Name
-		whatsapp.SendText(from, "Remove "+product.Name+" from your catalogue? Customers will no longer be offered it. Say yes to confirm, or no to keep it.")
+		sendYesNo(from, "Remove "+product.Name+" from your catalogue? Customers will no longer be offered it.", "Yes, remove it", "No, keep it")
 		return true
 	}
 

@@ -50,11 +50,15 @@ func merchantAttentionText(merchant *catalogue.Merchant, s *Session) string {
 	work := attentionWorkLines(s)
 	needs := len(disputes) + len(toSend) + len(work)
 
-	var lines []string
+	// The list is laid out in blocks — the heading, one block
+	// per kind of work, the day's figures to close — with a
+	// blank line between blocks, so each part can be read on
+	// its own the way it will be worked through.
+	var blocks [][]string
 	if needs == 0 && len(waiting) == 0 {
-		lines = append(lines, "Nothing needs you just now.")
+		blocks = append(blocks, []string{"Nothing needs you just now."})
 	} else {
-		lines = append(lines, "Here is what needs your attention:")
+		blocks = append(blocks, []string{"*Here is what needs your attention:*"})
 	}
 	orderLine := func(o orders.Order, tail string) string {
 		total := o.Total
@@ -63,25 +67,35 @@ func merchantAttentionText(merchant *catalogue.Merchant, s *Session) string {
 		}
 		return "- " + o.Reference + " | " + o.ProductName + " | " + money.GHS(total) + " | buyer " + o.From + " | " + tail
 	}
-	for i, o := range disputes {
-		if i == 5 {
-			lines = append(lines, "And "+strconv.Itoa(len(disputes)-5)+" more with a dispute open.")
-			break
+	if len(disputes) > 0 {
+		block := make([]string, 0, len(disputes)+1)
+		for i, o := range disputes {
+			if i == 5 {
+				block = append(block, "And "+strconv.Itoa(len(disputes)-5)+" more with a dispute open.")
+				break
+			}
+			tail := "a dispute is open on it"
+			if o.DisputeState == "refund_claimed" {
+				tail = "the buyer has claimed a refund on it"
+			}
+			block = append(block, orderLine(o, tail))
 		}
-		tail := "a dispute is open on it"
-		if o.DisputeState == "refund_claimed" {
-			tail = "the buyer has claimed a refund on it"
-		}
-		lines = append(lines, orderLine(o, tail))
+		blocks = append(blocks, block)
 	}
-	for i, o := range toSend {
-		if i == 5 {
-			lines = append(lines, "And "+strconv.Itoa(len(toSend)-5)+" more paid orders waiting to be sent.")
-			break
+	if len(toSend) > 0 {
+		block := make([]string, 0, len(toSend)+1)
+		for i, o := range toSend {
+			if i == 5 {
+				block = append(block, "And "+strconv.Itoa(len(toSend)-5)+" more paid orders waiting to be sent.")
+				break
+			}
+			block = append(block, orderLine(o, "paid, waiting to be sent"))
 		}
-		lines = append(lines, orderLine(o, "paid, waiting to be sent"))
+		blocks = append(blocks, block)
 	}
-	lines = append(lines, work...)
+	if len(work) > 0 {
+		blocks = append(blocks, work)
+	}
 	if len(waiting) > 0 {
 		owed := 0.0
 		for _, o := range waiting {
@@ -95,11 +109,15 @@ func merchantAttentionText(merchant *catalogue.Merchant, s *Session) string {
 		if len(waiting) == 1 {
 			noun = "order is"
 		}
-		lines = append(lines, strconv.Itoa(len(waiting))+" "+noun+" waiting for buyers to pay, "+money.GHS(owed)+" in all.")
+		blocks = append(blocks, []string{strconv.Itoa(len(waiting)) + " " + noun + " waiting for buyers to pay, " + money.GHS(owed) + " in all."})
 	}
 	day := daybook.Default.GetDayState(merchant.ID, daybook.Options{Allowance: merchant.DailyGiveawayAllowance})
-	lines = append(lines, "Today so far: "+insights.DayReportText(day))
-	return strings.Join(lines, "\n")
+	blocks = append(blocks, []string{"Today so far: " + insights.DayReportText(day)})
+	parts := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		parts = append(parts, strings.Join(block, "\n"))
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // attentionWorkLines names the merchant's own unfinished

@@ -134,10 +134,17 @@ func namedBasketCandidate(s *Session, msg string) *catalogue.Product {
 }
 
 // addQuestionText is the one confirming question an add
-// always gets, with the running total in front of her.
+// always gets, with the running total in front of her. It
+// is asked on buttons (see askAdd): a tap cannot be misread,
+// and her typed yes or no reads exactly as it always did.
 func addQuestionText(s *Session, p *catalogue.Product) string {
 	total := basketGoods(s) + s.AgreedPrice + p.ListPrice
-	return "Add the " + p.Name + " at " + money.GHS(p.ListPrice) + " to this order too? That would make your items " + money.GHS(total) + " in all, before delivery. Yes, or no?"
+	return "Add the " + p.Name + " at " + money.GHS(p.ListPrice) + " to this order too? That would make your items " + money.GHS(total) + " in all, before delivery."
+}
+
+// askAdd puts the add question on its buttons.
+func askAdd(from string, s *Session, p *catalogue.Product) {
+	sendYesNo(from, addQuestionText(s, p), "Yes, add it", "No, leave it")
 }
 
 // offerAdd puts the confirming question for a verified
@@ -155,7 +162,7 @@ func offerAdd(from string, s *Session, merchant *catalogue.Merchant, candidate *
 	}
 	s.PendingAdd = candidate
 	sessions[key] = s
-	whatsapp.SendText(from, addQuestionText(s, candidate))
+	askAdd(from, s, candidate)
 	return true
 }
 
@@ -170,7 +177,7 @@ func servePendingAdd(from string, s *Session, merchant *catalogue.Merchant, msg,
 	candidate := s.PendingAdd
 	if reading := thinkStageIntent(from, s, merchant, msg); reading.Intent == stageIntentPicture {
 		answerPictureAsk(from, merchant, candidate)
-		whatsapp.SendText(from, addQuestionText(s, candidate))
+		askAdd(from, s, candidate)
 		return true
 	} else if reading.Intent == stageIntentCancel || fulfilCancelRe.MatchString(lower) {
 		dropPendingSale(from, s)
@@ -201,6 +208,6 @@ func servePendingAdd(from string, s *Session, merchant *catalogue.Merchant, msg,
 		reaskFulfilStep(from, s)
 		return true
 	}
-	whatsapp.SendText(from, addQuestionText(s, candidate))
+	askAdd(from, s, candidate)
 	return true
 }
