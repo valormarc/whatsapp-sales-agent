@@ -40,9 +40,24 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	}
 	noteSpeakerWords(s, msg)
 
+	// A quote outranks the wander of the conversation: when
+	// her message quotes a product's bubble, that product is
+	// the one she is looking at now, however long ago the
+	// bubble was sent and whatever she viewed since.
+	applyQuotedFocus(s, shopID)
+
 	// A place she states anywhere in the chat is kept on her
 	// session, so the fulfilment step never asks for it twice.
 	if s.Location == "" {
+		if loc := extractStatedLocation(msg); loc != "" {
+			s.Location = loc
+		}
+	} else if turnQuote != nil && turnQuote.Known && turnQuote.Author == "user" {
+		// She is quoting her own earlier words to correct
+		// them: a place she names against her own quoted
+		// statement replaces the place those words settled.
+		// (A quote of the shop's words changes nothing here;
+		// only she can correct herself.)
 		if loc := extractStatedLocation(msg); loc != "" {
 			s.Location = loc
 		}
@@ -266,6 +281,20 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		// as the offer itself (see measure.go).
 		if handleQuantity(from, s, merchant, msg, lower) {
 			return
+		}
+		// An offer made while quoting ANOTHER product's bubble
+		// is an offer on that product: the haggle reopens on
+		// the quoted goods, carrying what this order has
+		// already settled, and the offer is heard there.
+		if offer := parseOffer(lower); offer != nil && !howMuchRe.MatchString(lower) {
+			if qp := quotedProductIn(shopID); qp != nil && (s.Product == nil || qp.ID != s.Product.ID) {
+				loc, hist, basket := s.Location, s.History, s.Basket
+				s = openHaggle(shopID, merchant, qp)
+				s.Location, s.History, s.Basket = loc, hist, basket
+				sessions[key] = s
+				processOffer(from, s, merchant, *offer, msg)
+				return
+			}
 		}
 		offer := parseOffer(lower)
 		if offer != nil && !howMuchRe.MatchString(lower) {

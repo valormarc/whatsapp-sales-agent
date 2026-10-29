@@ -409,12 +409,16 @@ type Inbound struct {
 	// the agent sent (an interactive button_reply webhook), and
 	// empty for every typed message.
 	ButtonID string
-	// ContextID is the id of the agent's own message this one
-	// quotes, when the sender replied with a quote. It tells the
+	// ContextID is the id of the message this one quotes,
+	// when the sender replied with a quote, and ContextFrom
+	// is who sent that quoted message. Together they tell the
 	// agent what a message points at when its words alone do
 	// not: a merchant quoting the allowance note is talking
-	// about the note, whatever words she adds.
-	ContextID string
+	// about the note, whatever words she adds. The quote is
+	// resolved against the message book at the door (see
+	// quotes.go).
+	ContextID   string
+	ContextFrom string
 }
 
 // noteSpeakerWords remembers what the speaker said on this
@@ -486,6 +490,15 @@ func HandleInbound(in Inbound) {
 
 	from := in.From
 
+	// The message book: her message enters it under its own
+	// id, so it can be quoted and resolved later, and the
+	// message it quotes, if any, is resolved now, before any
+	// board runs (see quotes.go). The resolved quote is a
+	// fact of this turn only.
+	recordInboundMsg(in)
+	turnQuote = resolveQuote(in)
+	defer func() { turnQuote = nil }()
+
 	// Photo intake, routed by shop context like everything else.
 	// A shop owner's photo is a throw-in: it opens onboarding from
 	// the photo and whatever words came with it (see photo.go).
@@ -504,7 +517,14 @@ func HandleInbound(in Inbound) {
 				// to this shop's merchant for her word (see
 				// payment.go). The media reference travels with
 				// the claim; the picture alone settles nothing.
-				if order := orders.Default.NewestUnpaidFor(shopID, from); order != nil {
+				// A screenshot that quotes one order's bubble
+				// (its total, its pay button) is a claim on THAT
+				// order, not merely her newest.
+				order := orders.Default.NewestUnpaidFor(shopID, from)
+				if qo := quotedUnpaidOrder(shopID, from); qo != nil {
+					order = qo
+				}
+				if order != nil {
 					createClaim(from, shop, order, claimAmountOf(in.Caption), in.ImageID, true)
 					return
 				}

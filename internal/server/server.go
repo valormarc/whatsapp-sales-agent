@@ -61,10 +61,13 @@ type webhookPayload struct {
 					Type string `json:"type"`
 					// Context is present when the message quotes
 					// an earlier one: its id names the quoted
+					// message, and its from names who sent that
 					// message, which is how the agent knows what
-					// a reply points at.
+					// a reply points at, and whose words it is
+					// pointing at.
 					Context *struct {
-						ID string `json:"id"`
+						ID   string `json:"id"`
+						From string `json:"from"`
 					} `json:"context"`
 					Text *struct {
 						Body string `json:"body"`
@@ -146,9 +149,10 @@ func Handler() http.Handler {
 								fmt.Fprintf(os.Stderr, "inbound handling failed: %v\n", rec)
 							}
 						}()
-						contextID := ""
+						contextID, contextFrom := "", ""
 						if msg.Context != nil {
 							contextID = msg.Context.ID
+							contextFrom = msg.Context.From
 						}
 						switch msg.Type {
 						case "text":
@@ -156,14 +160,14 @@ func Handler() http.Handler {
 							if msg.Text != nil {
 								body = msg.Text.Body
 							}
-							agent.HandleInbound(agent.Inbound{From: msg.From, Text: body, MessageID: msg.ID, ContextID: contextID})
+							agent.HandleInbound(agent.Inbound{From: msg.From, Text: body, MessageID: msg.ID, ContextID: contextID, ContextFrom: contextFrom})
 						case "image":
 							var imageID, caption string
 							if msg.Image != nil {
 								imageID = msg.Image.ID
 								caption = msg.Image.Caption
 							}
-							agent.HandleInbound(agent.Inbound{From: msg.From, ImageID: imageID, Caption: caption, MessageID: msg.ID})
+							agent.HandleInbound(agent.Inbound{From: msg.From, ImageID: imageID, Caption: caption, MessageID: msg.ID, ContextID: contextID, ContextFrom: contextFrom})
 						case "interactive":
 							// A tap on a reply button the agent sent.
 							// Only the button's id travels inward; the
@@ -174,7 +178,7 @@ func Handler() http.Handler {
 								buttonID = msg.Interactive.ButtonReply.ID
 							}
 							if buttonID != "" {
-								agent.HandleInbound(agent.Inbound{From: msg.From, ButtonID: buttonID, MessageID: msg.ID})
+								agent.HandleInbound(agent.Inbound{From: msg.From, ButtonID: buttonID, MessageID: msg.ID, ContextID: contextID, ContextFrom: contextFrom})
 							}
 						}
 					}()

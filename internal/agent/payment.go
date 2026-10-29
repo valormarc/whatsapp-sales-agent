@@ -256,6 +256,25 @@ func handleMerchantClaim(from string, merchant *catalogue.Merchant, lower string
 		return true
 	}
 
+	// A reply quoting one claim alert out of several is an
+	// answer about THAT claim: her yes or no settles the
+	// quoted one, never merely the oldest open one, and she
+	// does not have to type its reference. A quoted claim
+	// she is not answering (a question about it, say) is not
+	// consumed here; her words fall through untouched.
+	if o := quotedClaimOrder(merchant); o != nil {
+		no := isClaimNo(lower)
+		yes := !no && isClaimYes(lower)
+		if !yes && !no {
+			yes, no = claimLeadAnswer(lower)
+		}
+		if yes || no {
+			settleClaim(from, merchant, o, yes)
+			return true
+		}
+		return false
+	}
+
 	no := isClaimNo(lower)
 	yes := !no && isClaimYes(lower)
 	if !yes && !no {

@@ -249,6 +249,12 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	// The same holds when the quote itself does the pointing:
 	// a reply quoting the note is about the note.
 	quotingNote := contextID != "" && s.LastNoteMsgID != "" && contextID == s.LastNoteMsgID
+	if turnQuote != nil && turnQuote.Known && s.LastMerchantNote != "" && turnQuote.Body == s.LastMerchantNote {
+		// The same pointing, recognised through the message
+		// book: whatever id the quote carried, its words are
+		// the note's own words.
+		quotingNote = true
+	}
 
 	// Her words are understood once, lazily: the doors below
 	// ask the mind only when they reach the point of needing

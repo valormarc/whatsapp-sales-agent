@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/datadir"
@@ -34,8 +35,46 @@ type Result struct {
 	MessageID string
 }
 
+// SentRecord is one message this number sent, as the phone
+// shows it: the id WhatsApp gave it, who it went to, its body
+// and kind, and for a tap-to-open button its display text and
+// target. OnSend, when set, is told about every send that
+// carries an id, live or dry-run: it is how the agent keeps
+// its book of sent messages, so a later reply that quotes one
+// of them can be resolved to what it said (see the agent's
+// quoted-reply handling). A dry-run send has no WhatsApp id,
+// so it is given a local one: the bookkeeping is identical,
+// and a simulator can quote a dry-run message exactly the way
+// a phone quotes a live one.
+type SentRecord struct {
+	ID      string
+	To      string
+	Body    string
+	Kind    string
+	Buttons []string
+	URL     string
+	At      string
+}
+
+// OnSend is the sent-message recorder, set by the agent.
+var OnSend func(SentRecord)
+
+var drySeq uint64
+
+func newDryID() string {
+	return fmt.Sprintf("dry-%d-%d", time.Now().UnixNano(), atomic.AddUint64(&drySeq, 1))
+}
+
+func noteSent(rec outboxRecord) {
+	if OnSend == nil || rec.ID == "" {
+		return
+	}
+	OnSend(SentRecord{ID: rec.ID, To: rec.To, Body: rec.Body, Kind: rec.Kind, Buttons: rec.Buttons, URL: rec.URL, At: rec.At})
+}
+
 type outboxRecord struct {
 	At     string `json:"at"`
+	ID     string `json:"id,omitempty"`
 	To     string `json:"to"`
 	Body   string `json:"body"`
 	DryRun bool   `json:"dryRun,omitempty"`
@@ -113,7 +152,6 @@ func post(record outboxRecord, payload any) Result {
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		fmt.Fprintf(os.Stderr, "WhatsApp send failed: %d %s\n", res.StatusCode, string(body))
 	}
-	appendOutbox(record)
 	result := Result{Status: res.StatusCode}
 	var sent struct {
 		Messages []struct {
@@ -123,6 +161,12 @@ func post(record outboxRecord, payload any) Result {
 	if json.Unmarshal(body, &sent) == nil && len(sent.Messages) > 0 {
 		result.MessageID = sent.Messages[0].ID
 	}
+	// The outbox record carries the id WhatsApp gave the
+	// message, so the record of what was said can be found
+	// again by the id a later quoted reply points at.
+	record.ID = result.MessageID
+	appendOutbox(record)
+	noteSent(record)
 	return result
 }
 
@@ -297,9 +341,11 @@ func SendButtons(to, body string, buttons []Button) Result {
 	if token == "" || phoneID == "" {
 		dry := record
 		dry.DryRun = true
+		dry.ID = newDryID()
 		appendOutbox(dry)
+		noteSent(dry)
 		fmt.Printf("[dry-run buttons -> %s] %s (%s)\n", to, body, strings.Join(titles, " | "))
-		return Result{DryRun: true}
+		return Result{DryRun: true, MessageID: dry.ID}
 	}
 
 	payload := buildButtonsPayload(to, body, buttons)
@@ -366,9 +412,11 @@ func SendPayButton(to, body, displayText, url string) Result {
 	if token == "" || phoneID == "" {
 		dry := record
 		dry.DryRun = true
+		dry.ID = newDryID()
 		appendOutbox(dry)
+		noteSent(dry)
 		fmt.Printf("[dry-run cta -> %s] %s (%s)\n", to, body, displayText)
-		return Result{DryRun: true}
+		return Result{DryRun: true, MessageID: dry.ID}
 	}
 
 	return post(record, buildCTAPayload(to, body, displayText, url))
@@ -399,9 +447,11 @@ func SendText(to, body string) Result {
 	if token == "" || phoneID == "" {
 		dry := record
 		dry.DryRun = true
+		dry.ID = newDryID()
 		appendOutbox(dry)
+		noteSent(dry)
 		fmt.Printf("[dry-run -> %s] %s\n", to, body)
-		return Result{DryRun: true}
+		return Result{DryRun: true, MessageID: dry.ID}
 	}
 
 	payload := sendPayload{MessagingProduct: "whatsapp", To: to, Type: "text"}
@@ -430,9 +480,11 @@ func SendImage(to, mediaRef, caption string) Result {
 	if token == "" || phoneID == "" {
 		dry := record
 		dry.DryRun = true
+		dry.ID = newDryID()
 		appendOutbox(dry)
+		noteSent(dry)
 		fmt.Printf("[dry-run image -> %s] %s (media %s)\n", to, caption, mediaRef)
-		return Result{DryRun: true}
+		return Result{DryRun: true, MessageID: dry.ID}
 	}
 
 	payload := imageSendPayload{MessagingProduct: "whatsapp", To: to, Type: "image"}

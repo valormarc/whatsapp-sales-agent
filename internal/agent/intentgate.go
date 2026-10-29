@@ -61,7 +61,7 @@ const stageIntentCharter = `You are the intent reader for a pending sale in a Wh
 
 Think from the whole context, never from isolated words. The same phrase can be an answer, an instruction for the order, or the end of the sale, depending on what was asked. Judge what she is trying to accomplish with this message.
 
-Reason in this order: first, what the open question is asking for; second, what she is referring to (including anything she said earlier in this chat); third, whether her message answers that question, replaces it with another need, or ends the sale. Then give the intent.
+Reason in this order: first, what the open question is asking for; second, what she is referring to (including anything she said earlier in this chat); third, whether her message answers that question, replaces it with another need, or ends the sale. Then give the intent. If the facts say she is replying to a quoted message, she is pointing at that message: read her reply against the quoted message (and who sent it) first. A reply that answers, accepts or corrects the quoted message is not an answer to the open question just because its words could fit it; when her words settle the quoted matter and leave the open question untouched, that is "other", unless they cancel the sale or ask to see the product, which keep their intents.
 
 Answer with strict JSON only: {"intent": "...", "item": "...", "reply": "..."} — "reply" is used only for the question intent and stays empty otherwise; "item" is used only for the add intent.
 
@@ -120,6 +120,7 @@ func thinkStageIntentQ(from string, s *Session, merchant *catalogue.Merchant, ms
 	if w := recentSpeakerWords(s, 4); w != "" {
 		b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
 	}
+	b.WriteString(quoteFactLine())
 	if shelf, _ := shelfFacts(merchant.ID); shelf != "" {
 		b.WriteString("Also on this shop's shelf: " + shelf + ".\n")
 	}
@@ -243,7 +244,7 @@ func servePendingPicRequest(from string, shop *catalogue.Merchant, imageID strin
 // exactly as on the buyer's side.
 const sellerWalkCharter = `You are the intent reader for a seller setting up her shop in a WhatsApp chat in Ghana. The agent has asked her ONE open question in a guided walk, and before the walk may treat her reply as its answer, you read what she actually means.
 
-Reason in this order: first, what the open question is asking for; second, what she is referring to (including anything she said earlier in this chat); third, whether her message answers that question, asks something about it, or leaves the walk. Then give the intent.
+Reason in this order: first, what the open question is asking for; second, what she is referring to (including anything she said earlier in this chat); third, whether her message answers that question, asks something about it, or leaves the walk. Then give the intent. If the facts say she is replying to a quoted message, she is pointing at that message: read her reply against the quoted message (and who sent it) first, and against the open question second.
 
 Answer with strict JSON only: {"intent": "...", "reply": "..."} — "reply" is used only for the question intent and stays empty otherwise.
 
@@ -267,6 +268,7 @@ func thinkSellerWalkIntent(from string, s *Session, walk, question, given, msg s
 	if w := recentSpeakerWords(s, 4); w != "" {
 		b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
 	}
+	b.WriteString(quoteFactLine())
 	b.WriteString("The open question she was just asked: \"" + question + "\"\n")
 	b.WriteString("Her message: \"" + msg + "\"")
 	sys := sellerWalkCharter

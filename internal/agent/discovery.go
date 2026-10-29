@@ -29,7 +29,7 @@ import (
 // buyer. The format is the shape; the words stay the model's.
 const discoveryCharter = `You are the thinking of a sales agent who sells for many independent shops on one shared WhatsApp number. This buyer has not chosen a shop yet. The facts list every shop, its code, and its goods with list prices; those are the only goods and prices that exist for you.
 
-Reason in this order before you decide: first, what she is referring to (including any results she was just shown and anything she said earlier in this chat); second, what she wants to happen; third, which of the facts answer it.
+Reason in this order before you decide: first, what she is referring to (including any results she was just shown and anything she said earlier in this chat); second, what she wants to happen; third, which of the facts answer it. When the facts say she is replying to a quoted message, that message — and who sent it, her or the shop — is what she is referring to: a reply that accepts, picks or asks about the quoted product is a pick of that product's shop, and a reply correcting her own quoted words is read against those words.
 
 Read her message and decide:
 - intent "shop": she names a shop (by name or code), or picks a shop or a product from results she was shown. Give "shop" as the shop code, and when she picked a product give it in matches too.
@@ -113,6 +113,9 @@ func understandDiscovery(from, text string) *discoveryUnderstanding {
 		if w := recentSpeakerWords(pre, 4); w != "" {
 			facts += "\nWhat she said earlier in this chat, oldest first: " + w + "."
 		}
+	}
+	if qf := quoteFactLine(); qf != "" {
+		facts += "\n" + qf
 	}
 	// Her paid orders are facts too: a buyer whose session is
 	// gone (the agent restarted, days passed) still owns her
@@ -279,10 +282,45 @@ func handleUnboundBuyer(from, text string) {
 	if u := understandDiscovery(from, text); u != nil && actOnDiscovery(from, u) {
 		return
 	}
+	if quotedPick(from, text) {
+		return
+	}
 	if pickFromShown(from, text) {
 		return
 	}
 	discoveryNet(from, text)
+}
+
+// quotedPick is the no-model net for a quoted reply from an
+// unbound buyer: when her message quotes a product's bubble
+// and her words pick it, accept it, offer on it or ask for
+// its picture — the shapes a pick takes — she is taken to
+// that product's shop, the way a pick from shown results
+// takes her. A quote she merely mentions, in a question or
+// a sentence of her own, is not a pick and falls through.
+func quotedPick(from, text string) bool {
+	q := turnQuote
+	if q == nil || !q.Known || q.Product == nil || q.ProductShop == nil {
+		return false
+	}
+	p := catalogue.FindByID(q.ProductShop.ID, q.Product.ID)
+	if p == nil {
+		return false
+	}
+	lower := strings.ToLower(text)
+	shop := q.ProductShop
+	switch {
+	case picRe.MatchString(lower):
+		bindings[from] = shop.ID
+		delete(sessions, sessionKey("", from))
+		sessions[sessionKey(shop.ID, from)] = &Session{Stage: "browsing", MerchantID: shop.ID, LastViewed: p}
+		answerPictureAsk(from, shop, p)
+		return true
+	case isBareAck(lower) || parseOffer(lower) != nil || buyIntentRe.MatchString(lower):
+		bindDiscoveryShop(from, shop, p)
+		return true
+	}
+	return false
 }
 
 // newestPaidOrderAnywhere finds the buyer's paid order
