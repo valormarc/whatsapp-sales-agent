@@ -1,8 +1,8 @@
-# WhatsApp Sales Agent
+# Stall
 
 My entry for the Meta Global AI Developer Hackathon. Startup track, theme: Build for Your World.
 
-I build software for small businesses. The sellers I work with run their shops on WhatsApp and on memory: prices in their heads, stock counted by eye, orders scattered across chats. They are never going to learn a dashboard. So this agent meets them where they already are.
+I build software for small businesses. The sellers I work with run their shops on WhatsApp and on memory: prices in their heads, stock counted by eye, orders scattered across chats. They are never going to learn a dashboard. So Stall meets them where they already are.
 
 A customer chats with the shop on WhatsApp in plain text. The agent answers from the shop catalogue, haggles the way a trader does, moving between the list price and a floor the merchant set and never crossing it, and closes the sale with a MoMo payment link. The merchant onboards by sending product photos on WhatsApp and answering a few questions in the same chat. No app to install, nothing new to learn.
 
