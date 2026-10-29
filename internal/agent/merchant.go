@@ -19,6 +19,7 @@ package agent
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -134,6 +135,9 @@ var (
 	// only", "<item> whole only"), in her own words.
 	setMeasureRe = regexp.MustCompile(`^set measure of (.+?) to (.+)$`)
 	wholeOnlyRe  = regexp.MustCompile(`^(?:sell )?(.+?) whole only$`)
+	setStockRe   = regexp.MustCompile(`^(?:set|update) stock of (.+?) to (\d+)$`)
+	myOrdersRe   = regexp.MustCompile(`^(my )?orders[.!?]?$`)
+	cancelOrderRe = regexp.MustCompile(`^cancel order ([a-z0-9-]+)[.!?]?$`)
 	// The wants list: what her buyers asked for that she does not
 	// stock, kept for her in the want book.
 	wantsListRe = regexp.MustCompile(`^(buyer )?wants$|^(buyer )?requests$`)
@@ -898,6 +902,14 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			} else {
 				line += ", your last price " + money.GHS(p.FloorPrice)
 			}
+			switch {
+			case p.Stock == 1:
+				line += ", only 1 in stock"
+			case p.Stock > 1:
+				line += ", " + strconv.Itoa(p.Stock) + " in stock"
+			case p.Stock == 0:
+				line += ", none in stock"
+			}
 			lines = append(lines, line)
 		}
 		lines = append(lines, "Your daily giveaway allowance is "+money.GHS(merchant.DailyGiveawayAllowance)+". Your last prices are yours only; customers never see them.")
@@ -1091,6 +1103,38 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			whatsapp.SendText(from, "Done. "+product.Name+" is now fixed at "+money.GHS(product.ListPrice)+": there is no bargaining on it.")
 		} else {
 			whatsapp.SendText(from, "Done. The last price for "+product.Name+" is now "+money.GHS(product.FloorPrice)+". Its price stays "+money.GHS(product.ListPrice)+".")
+		}
+		return true
+	}
+
+	if myOrdersRe.MatchString(lower) {
+		whatsapp.SendText(from, merchantOrdersText(merchant))
+		return true
+	}
+
+	if m := cancelOrderRe.FindStringSubmatch(lower); m != nil {
+		cancelMerchantOrder(from, merchant, strings.ToUpper(m[1]))
+		return true
+	}
+
+	if m := setStockRe.FindStringSubmatch(lower); m != nil {
+		count, convErr := strconv.Atoi(m[2])
+		if convErr != nil {
+			whatsapp.SendText(from, "I could not read the count in that. Try: set stock of <name> to 5.")
+			return true
+		}
+		product, err := catalogue.SetStock(merchant.ID, strings.TrimSpace(m[1]), count)
+		if err != nil {
+			whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
+			return true
+		}
+		switch {
+		case count == 0:
+			whatsapp.SendText(from, "Done. "+product.Name+" is marked as none in stock.")
+		case count == 1:
+			whatsapp.SendText(from, "Done. "+product.Name+" now has 1 in stock. With only one, I will confirm you have it in hand before each sale.")
+		default:
+			whatsapp.SendText(from, "Done. "+product.Name+" now has "+strconv.Itoa(count)+" in stock.")
 		}
 		return true
 	}

@@ -33,6 +33,7 @@ var (
 	ErrDuplicateName     = errors.New("you already sell something with that name")
 	ErrProductNotFound   = errors.New("there is no product with that name in the catalogue")
 	ErrListPrice         = errors.New("the price must be more than zero")
+	ErrStock             = errors.New("the stock count cannot be below zero")
 	ErrListBelowFloor    = errors.New("the price must stay above the last price")
 	ErrFloorPrice        = errors.New("the last price must be more than zero and not above the price")
 	ErrNegativeAllowance = errors.New("the allowance cannot be negative")
@@ -406,6 +407,28 @@ func SetDeliveryPaidTo(merchantID, who string) error {
 		m.DeliveryPaidTo = who
 		return nil
 	})
+}
+
+// SetStock sets how many of a product the shop has. The
+// count is a fact she owns like her prices: it is what the
+// in-hand gate reads (a count of one is a one-off, confirmed
+// with her before each sale), and what her catalogue readback
+// shows her. Zero is a real count: she has none just now.
+func SetStock(merchantID, name string, count int) (Product, error) {
+	if count < 0 {
+		return Product{}, ErrStock
+	}
+	var updated Product
+	err := updateMerchant(merchantID, func(m *Merchant) error {
+		i := productIndex(m, name)
+		if i < 0 {
+			return ErrProductNotFound
+		}
+		m.Products[i].Stock = count
+		updated = m.Products[i]
+		return nil
+	})
+	return updated, err
 }
 
 // SetProductPhotos records the kept photo paths on a saved

@@ -71,12 +71,25 @@ func openDispute(from string, merchant *catalogue.Merchant, order *orders.Order,
 
 // disputeTarget is the order a dispute from this buyer in
 // this shop is about: the one she quotes, else her newest
-// paid order that has not been confirmed received.
+// paid order that has not been confirmed received. An order
+// the shop cancelled after she had paid still counts: the
+// money moved, so the dispute road the cancellation message
+// promised her has to exist.
 func disputeTarget(shopID, from string) *orders.Order {
-	if qo := quotedOrderFor(shopID, from); qo != nil && qo.Status == "paid" {
+	if qo := quotedOrderFor(shopID, from); qo != nil && (qo.Status == "paid" || (qo.Status == "cancelled" && qo.PaymentPath != "")) {
 		return qo
 	}
-	return newestPaidOrderFor(shopID, from)
+	if o := newestPaidOrderFor(shopID, from); o != nil {
+		return o
+	}
+	var newest *orders.Order
+	for _, o := range orders.Default.All() {
+		oo := o
+		if oo.MerchantID == shopID && oo.From == from && oo.Status == "cancelled" && oo.PaymentPath != "" {
+			newest = &oo
+		}
+	}
+	return newest
 }
 
 // handleDisputeConfirm runs while a buyer owes an answer on

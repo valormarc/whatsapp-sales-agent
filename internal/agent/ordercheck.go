@@ -83,6 +83,12 @@ func orderReadback(merchant *catalogue.Merchant, o *orders.Order) string {
 	}
 
 	switch {
+	case o.Status == "cancelled":
+		if o.PaymentPath != "" {
+			pieces = append(pieces, "The shop cancelled this order after you paid. The shop owes you that money back; if it does not reach you, tell me and I will open a dispute on it.")
+		} else {
+			pieces = append(pieces, "The shop cancelled this order. Nothing was paid for it, and nothing is owed.")
+		}
 	case o.Status == "paid":
 		pieces = append(pieces, "It is paid. Thank you.")
 		switch o.DeliveryState {

@@ -81,6 +81,24 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		return
 	}
 
+	// A dispute being opened, in the words of being cheated,
+	// with a paid order behind them: it freezes the order on
+	// Stall's side and starts the clock (see disputes.go).
+	// The thinking names the same act for the shapes this
+	// net cannot read. The dispute runs before the payment
+	// road on purpose: the natural way to report being
+	// cheated begins "I paid for...", and those words are a
+	// payment claim's shape too; with no unpaid order behind
+	// them the claim road would answer "no unpaid order" and
+	// swallow the dispute whole. A plain payment report
+	// carries no dispute words, so it is untouched.
+	if isDisputeText(lower) {
+		if order := disputeTarget(shopID, from); order != nil {
+			openDispute(from, merchant, order, msg)
+			return
+		}
+	}
+
 	// Paying for a sale already completed: reporting a payment,
 	// or asking for the merchant's number to pay it. Both attach
 	// to her own newest unpaid order in this shop (payment.go),
@@ -89,18 +107,6 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// for a request to resend the link.
 	if handleBuyerPayment(from, merchant, msg, lower) {
 		return
-	}
-
-	// A dispute being opened, in the words of being cheated,
-	// with a paid order behind them: it freezes the order on
-	// Stall's side and starts the clock (see disputes.go).
-	// The thinking names the same act for the shapes this
-	// net cannot read.
-	if isDisputeText(lower) {
-		if order := disputeTarget(shopID, from); order != nil {
-			openDispute(from, merchant, order, msg)
-			return
-		}
 	}
 
 	// Thinking first. On an open turn (not inside a guided

@@ -148,6 +148,40 @@ func (b *Daybook) RecordSale(merchantID string, s Sale) State {
 	return state
 }
 
+// RecordCancellation takes a booked sale back out of the
+// book: one fewer sale, the revenue out, the giveaway it drew
+// returned to the day's allowance. It applies only when the
+// stored book is for the sale's own date: the book keeps one
+// day at a time, and a past day is history that is not
+// rewritten. Figures never drop below zero. It reports
+// whether the reversal landed.
+func (b *Daybook) RecordCancellation(merchantID string, s Sale) bool {
+	all := b.loadAll()
+	stored, ok := all[merchantID]
+	if !ok || stored.Date != s.Date {
+		return false
+	}
+	stored.Sales--
+	if stored.Sales < 0 {
+		stored.Sales = 0
+	}
+	stored.Revenue -= s.AgreedPrice
+	if stored.Revenue < 0 {
+		stored.Revenue = 0
+	}
+	given := s.ListPrice - s.AgreedPrice
+	if given < 0 {
+		given = 0
+	}
+	stored.GivenAway -= given
+	if stored.GivenAway < 0 {
+		stored.GivenAway = 0
+	}
+	all[merchantID] = stored
+	b.saveAll(all)
+	return true
+}
+
 // RecordWalkAway books a customer who would not meet the final price
 // and was let go. The merchant hears about these in her day report: a
 // pattern of walk-aways on one product is pricing information, not
