@@ -389,6 +389,9 @@ func TestPhotoStatusCaptionSuppliesNameAndPrice(t *testing.T) {
 	if s.Onboarding.Name != "Double Clothes Rack" || s.Onboarding.ListPrice != 270 {
 		t.Fatalf("caption should supply the correct name and price, flow = %+v; replies = %q", s.Onboarding, got)
 	}
+	if strings.Contains(s.Onboarding.Description, "wa.me/") || strings.Contains(s.Onboarding.Description, "Order here") {
+		t.Fatalf("copied ordering link must not become product description: %q", s.Onboarding.Description)
+	}
 	if strings.Contains(got, "What is it called?") || strings.Contains(got, "What is the product called?") {
 		t.Fatalf("the caption already names the product, so it must not ask for the name: %q", got)
 	}
