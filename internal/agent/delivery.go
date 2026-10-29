@@ -147,12 +147,22 @@ func buyerConfirmReceived(from string, merchant *catalogue.Merchant, shopID stri
 		return true
 	}
 	ref := o.Reference
+	wasDisputed := o.DisputeState == "open" || o.DisputeState == "refund_claimed"
 	orders.Default.Update(ref, func(x *orders.Order) {
 		x.DeliveryState = "received"
 		x.ReceivedAt = nowStamp()
+		if wasDisputed {
+			x.DisputeState = "resolved_received"
+		}
 	})
 	whatsapp.SendText(merchant.OwnerWhatsApp, "Order "+ref+": the buyer has confirmed she received the "+o.ProductName+".")
 	whatsapp.SendText(from, "Thank you. I have told "+merchant.Name+" that your order "+ref+" has arrived.")
+	if wasDisputed {
+		// The goods arriving closes a live dispute clean:
+		// no strike, and both sides hear that it closed.
+		whatsapp.SendText(from, "Your dispute on order "+ref+" is closed: the goods reached you, and no strike stands.")
+		whatsapp.SendText(merchant.OwnerWhatsApp, "The dispute on order "+ref+" is closed: the buyer confirms the goods arrived.")
+	}
 	return true
 }
 

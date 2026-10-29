@@ -232,6 +232,21 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 		return
 	}
 
+	// Her word on an open in-hand confirmation (see
+	// inhand.go): a sale is waiting on it before its buyer
+	// may pay. Same discipline: after her flows, before her
+	// commands, and silent when nothing waits.
+	if handleMerchantInHand(from, merchant, text, lower) {
+		return
+	}
+
+	// Her word that she refunded a disputed order (see
+	// disputes.go): never taken alone; the buyer is asked to
+	// confirm, and her answer is what closes it.
+	if handleMerchantRefundClaim(from, merchant, text, lower) {
+		return
+	}
+
 	// The payment setup retry lives here, rather
 	// than with her catalogue commands: a shop whose payment setup
 	// failed at signup is usually still empty-shelved, and the

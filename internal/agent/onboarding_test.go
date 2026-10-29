@@ -257,6 +257,10 @@ func TestMerchantOnboardsProductAndCustomerBuysIt(t *testing.T) {
 	}
 	c.say(t, customer, "Koforidua")
 	c.finishDetails(t, customer)
+	// The cloth is a one-off (a fresh listing carries one in
+	// stock), so the sale waits at the in-hand gate; the
+	// seller's yes completes it.
+	c.say(t, merchant, "yes")
 	if got := strings.Join(c.replies(t, customer), "\n"); !strings.Contains(got, "Pay here") {
 		t.Fatalf("her location should complete the sale with the link, got %q", got)
 	}

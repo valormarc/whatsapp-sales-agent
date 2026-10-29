@@ -276,6 +276,13 @@ func settlementNoticeRecord(o *orders.Order, merchant *catalogue.Merchant, fee, 
 	lines = append(lines, "Total paid: "+money.GHS(o.Charged()))
 	lines = append(lines, "Payment: confirmed")
 	lines = append(lines, "Seev fee "+money.GHS(fee)+", so "+money.GHS(net)+" settles to your MoMo tomorrow.")
+	if merchant != nil && sellerIsNew(merchant.OwnerWhatsApp) {
+		// A new seller hears the platform's position in
+		// plain words on her own receipt: her money moves on
+		// the rail's schedule, not Stall's, and what Stall
+		// watches is the delivery.
+		lines = append(lines, "You are new on Stall: buyers are told so until your first deliveries are confirmed received. A dispute on this order goes on your record.")
+	}
 	lines = append(lines, "")
 	lines = append(lines, insights.DayReportLines(day)...)
 	return strings.Join(lines, "\n")

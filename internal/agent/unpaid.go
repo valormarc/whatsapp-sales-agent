@@ -60,6 +60,10 @@ func CheckUnpaidOrders(now time.Time) {
 	// seller who has not quoted in time leaves her buyer
 	// offered the other ways (see deliveryfees.go).
 	CheckFeeQuotes(now)
+	// And the in-hand timeout (see inhand.go), and the
+	// dispute clock (see disputes.go).
+	CheckInHand(now)
+	CheckDisputes(now)
 	for _, o := range orders.Default.All() {
 		if o.Status != "pending" || o.ProviderRef == nil || *o.ProviderRef == "" || o.UnpaidAlerted {
 			continue

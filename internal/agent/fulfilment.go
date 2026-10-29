@@ -257,6 +257,10 @@ func fulfilPrompt(s *Session) string {
 		return "I am still waiting for the shop to give the delivery fee. The moment it comes, I will show you your full total."
 	case "feeexpired":
 		return "The shop has not given the delivery fee yet. Say wait to keep waiting, or tell me if you would rather pick it up or meet up."
+	case "inhandwait":
+		return "I am still waiting for the shop to confirm the item is in hand. The moment she does, your payment button follows."
+	case "inhandexpired":
+		return "The shop has not confirmed the item is in hand yet. Say wait to keep waiting, or cancel to leave it."
 	case "size":
 		return sizeQuestionText(s)
 	case "pkgname":
@@ -548,6 +552,23 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		}
 		whatsapp.SendText(from, fulfilPrompt(s))
 		return
+	case "inhandwait":
+		// She is waiting on the seller's in-hand word. The
+		// gate already ran the intent layer (a cancel ends
+		// the sale above); anything else is talk while she
+		// waits, and the wait is held up again.
+		whatsapp.SendText(from, fulfilPrompt(s))
+		return
+	case "inhandexpired":
+		// The seller never confirmed in time. Waiting asks
+		// again; the cancel law above still ends the sale;
+		// anything else holds the position up again.
+		if waitWordRe.MatchString(lower) {
+			reopenInHand(from, s, merchant)
+			return
+		}
+		whatsapp.SendText(from, fulfilPrompt(s))
+		return
 	default: // "choice"
 		// A question about the sale itself (the total, delivery)
 		// is answered, and the fulfilment question is held up
@@ -606,6 +627,7 @@ func dropPendingSale(from string, s *Session) {
 		view = wholeProductOf(shopID, p)
 	}
 	cancelFeeQuote(shopID, from)
+	cancelInHand(shopID, from)
 	sessions[sessionKey(shopID, from)] = &Session{Stage: "browsing", MerchantID: shopID, LastViewed: view, Location: s.Location, History: s.History}
 	whatsapp.SendText(from, "Okay, cancelled. Tell me what else you need.")
 }

@@ -117,9 +117,23 @@ type Order struct {
 	Unit     string  `json:"unit,omitempty"`
 
 	DeliveryPaidTo string `json:"deliveryPaidTo,omitempty"`
-	PaymentPath    string `json:"paymentPath,omitempty"`
-	SettledVia     string `json:"settledVia,omitempty"`
-	ScreenshotRef  string `json:"screenshotRef,omitempty"`
+
+	// DisputeState is the order's scam-protection state: ""
+	// (no dispute), "open" (a dispute is live and the order
+	// is frozen on Stall's side), "refund_claimed" (the
+	// seller says she refunded; the buyer is being asked to
+	// confirm), "resolved_received" (the goods arrived),
+	// "resolved_refund" (the buyer confirmed her refund), or
+	// "struck" (unresolved past the limit; a strike stands
+	// against the seller). DisputeBy is the number that
+	// opened it and DisputeAt when, RFC3339.
+	DisputeState string `json:"disputeState,omitempty"`
+	DisputeBy    string `json:"disputeBy,omitempty"`
+	DisputeAt    string `json:"disputeAt,omitempty"`
+
+	PaymentPath   string `json:"paymentPath,omitempty"`
+	SettledVia    string `json:"settledVia,omitempty"`
+	ScreenshotRef string `json:"screenshotRef,omitempty"`
 
 	// CreatedAt is when the order was placed, RFC3339. Orders
 	// placed before this field existed carry none; the unpaid

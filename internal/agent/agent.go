@@ -137,6 +137,16 @@ type Session struct {
 	// waits at the feewait step (see deliveryfees.go).
 	FeeQuotePlace string
 
+	// InHandOK records that the seller has confirmed she has
+	// this sale's item in hand, when the sale needed that
+	// confirmation before payment (see inhand.go).
+	InHandOK bool
+
+	// DisputeConfirmRef is the order whose claimed refund
+	// this buyer is being asked to confirm or deny (see
+	// disputes.go).
+	DisputeConfirmRef string
+
 	// Basket holds the items already agreed in this same
 	// order while the buyer haggles over one more: each was
 	// settled on its own (its own haggle, its own draw on

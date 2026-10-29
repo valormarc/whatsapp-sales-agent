@@ -24,6 +24,17 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	p := s.Product
 	shopID := s.MerchantID
 	merchant := catalogue.GetMerchant(shopID)
+	// The in-hand gate stands at the threshold of payment:
+	// on the sales where a phantom item would hurt most,
+	// the seller confirms the goods are in hand before any
+	// order is recorded or any button sent (see inhand.go).
+	// Her yes re-enters here with the gate lifted.
+	if !s.InHandOK {
+		if grounds := inHandGrounds(merchant, s, price); grounds != "" {
+			beginInHandWait(from, s, merchant, f, grounds)
+			return
+		}
+	}
 	// The reference is the order's key in the book and the
 	// buyer's receipt: the shop's own code and the shop's own
 	// count, so the code alone names whose order it is (EFUA-0007
@@ -191,6 +202,19 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	}
 	whatsapp.SendText(from, totalRecord(items, deliveryFee, chargedFee, f.Mode, f.Location, paidTo, note))
 	var pieces []string
+	// The trust word, when the seller's record calls for
+	// one, goes out before the payment button: a buyer about
+	// to pay a stranger is told what the marketplace knows
+	// about her, in plain words, while it can still change
+	// her mind (see trust.go).
+	if merchant != nil {
+		switch {
+		case flaggedNumber(merchant.OwnerWhatsApp):
+			pieces = append(pieces, "Before you pay, you should know: "+merchant.Name+" has strikes on its record here for disputes that were never resolved. If you go ahead, your payment is confirmed by Stall itself the moment it lands, and if the goods do not reach you, tell me and I will open a dispute and freeze the order on Stall's side.")
+		case sellerIsNew(merchant.OwnerWhatsApp):
+			pieces = append(pieces, "One thing to know: "+merchant.Name+" is new on Stall and has not completed a delivery here yet. Your payment is confirmed by Stall itself the moment it lands, and if the goods do not reach you, tell me and I will open a dispute and freeze the order on Stall's side.")
+		}
+	}
 	// The package details she gave ride with the order, and she
 	// hears the name read back so a wrong name is caught here,
 	// not at the rider's door.

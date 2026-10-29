@@ -63,6 +63,14 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		}
 	}
 
+	// An answer owed on a dispute: the shop says she refunded
+	// her, and the buyer's yes or no closes it (see
+	// disputes.go). It outranks every other reading of her
+	// words, because a bare yes here is evidence, not chat.
+	if handleDisputeConfirm(from, s, merchant, msg, lower) {
+		return
+	}
+
 	// An answer owed to her merchant: the merchant asked this
 	// buyer a question through the agent, and her reply is
 	// carried back first. A payment answer is settled here by
@@ -81,6 +89,18 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// for a request to resend the link.
 	if handleBuyerPayment(from, merchant, msg, lower) {
 		return
+	}
+
+	// A dispute being opened, in the words of being cheated,
+	// with a paid order behind them: it freezes the order on
+	// Stall's side and starts the clock (see disputes.go).
+	// The thinking names the same act for the shapes this
+	// net cannot read.
+	if isDisputeText(lower) {
+		if order := disputeTarget(shopID, from); order != nil {
+			openDispute(from, merchant, order, msg)
+			return
+		}
 	}
 
 	// Thinking first. On an open turn (not inside a guided

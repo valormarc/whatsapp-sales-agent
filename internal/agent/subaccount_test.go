@@ -117,6 +117,11 @@ func TestSignupOpensTheShopsOwnPaymentAccount(t *testing.T) {
 	c.say(t, buyer, "50")
 	c.say(t, buyer, "Accra")
 	c.finishDetails(t, buyer)
+	// The plantain is a one-off (a fresh listing carries one
+	// in stock), so the sale waits at the in-hand gate; the
+	// owner's yes completes it and only then is the payment
+	// created.
+	c.say(t, owner, "yes")
 	if len(fake.payments) != 1 {
 		t.Fatalf("one payment should have been created, got %d", len(fake.payments))
 	}

@@ -216,6 +216,10 @@ try {
   await say(CUSTOMER, 'customer', 'Akosua Mensah');
   r = await say(CUSTOMER, 'customer', 'no');
   r = await say(CUSTOMER, 'buyer', 'yes');
+  // A fresh listing is a one-off, so the sale waits at the
+  // in-hand gate: the merchant's yes releases the button.
+  const yesNotes = await say(MERCHANT, 'seller', 'yes');
+  r = drain(CUSTOMER);
   check('her details complete the sale and the payment link follows', last(r).includes('Pay here'), last(r));
 
   const day = JSON.parse(readFileSync(DAYBOOK, 'utf8')).demo;
@@ -227,7 +231,7 @@ try {
     `${day.givenAway}`,
   );
 
-  const notes = drain(MERCHANT);
+  const notes = [...yesNotes, ...drain(MERCHANT)];
   check(
     'the merchant was told about the sale',
     notes.some((b) => b.includes('New order') && b.includes('Kente Cloth')),
@@ -296,6 +300,8 @@ try {
   await say(CUTTER, 'cutter', 'Akosua Mensah');
   r = await say(CUTTER, 'cutter', 'no');
   r = await say(CUTTER, 'buyer', 'yes');
+  const cutYesNotes = await say(MERCHANT, 'seller', 'yes');
+  r = drain(CUTTER);
   check('her details complete the cut sale with the link', last(r).includes('Pay here'), last(r));
 
   const orders = JSON.parse(readFileSync(join(DATA, 'orders.json'), 'utf8'));
@@ -312,7 +318,7 @@ try {
     dayAfter.givenAway === 600 - dealPrice + (150 - cutPrice),
     `${dayAfter.givenAway}`,
   );
-  const cutNotes = drain(MERCHANT);
+  const cutNotes = [...cutYesNotes, ...drain(MERCHANT)];
   check(
     'the merchant notice names the cut',
     cutNotes.some((b) => b.includes('Item: 3 yards of Ankara Cloth') && b.includes(`Agreed price: GH₵${cutPrice}`)),
