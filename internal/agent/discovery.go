@@ -28,10 +28,12 @@ import (
 // buyer. The format is the shape; the words stay the model's.
 const discoveryCharter = `You are the thinking of a sales agent who sells for many independent shops on one shared WhatsApp number. This buyer has not chosen a shop yet. The facts list every shop, its code, and its goods with list prices; those are the only goods and prices that exist for you.
 
+Reason in this order before you decide: first, what she is referring to (including any results she was just shown and anything she said earlier in this chat); second, what she wants to happen; third, which of the facts answer it.
+
 Read her message and decide:
 - intent "shop": she names a shop (by name or code), or picks a shop or a product from results she was shown. Give "shop" as the shop code, and when she picked a product give it in matches too.
 - intent "search": she wants a kind of thing, whether or not she has a shop in mind, and whether she asks it as a question ("which shop has laptops?"), a need ("I am looking for a laptop"), or a statement. Give "item" as the thing in her own words, and "matches": every product in the facts that genuinely fits it BY MEANING, not by wording. A laptop is a notebook computer under any brand name; slides and sandals are the same family; a phone is not a laptop. Name each match by its shop code and its exact product name from the facts. Only products in the facts, never an invention.
-- intent "picture": she is asking to SEE a picture of a thing: "show me picture", "send pic", and also "I am not buying without pic", which means the same thing: the picture comes before any buying. Give "item" as the thing she wants to see and "matches" for it exactly as a search.
+- intent "picture": she is asking to SEE a picture of a thing: "show me picture", "send pic", and also "I am not buying without pic", which means the same thing: the picture comes before any buying. Give "item" as the thing she wants to see and "matches" for it exactly as a search. A pick that carries a picture ask in the same breath is this intent, not a pick: "the strappy ones, can I see a picture?" said about a shown result is her choosing that result BY asking to see it — the picture is what she wants, so answer the picture ask rather than only landing her in the shop.
 - intent "browse": she asks what shops or goods there are.
 - intent "no_shop": she says she has no particular shop, without naming a thing she wants. If she names a thing as well, it is a search.
 - intent "offtopic": her message is not about buying or shops at all.
@@ -101,7 +103,12 @@ func understandDiscovery(from, text string) *discoveryUnderstanding {
 			}
 		}
 		if len(shown) > 0 {
-			facts += "\nYou just showed her these results: " + strings.Join(shown, "; ") + ". If she now names one of them, or says the first or the second, that is a pick: intent shop. If she asks to see a picture, in any words, that is intent picture, with the shown result she means in matches."
+			facts += "\nYou just showed her these results: " + strings.Join(shown, "; ") + ". If she now names one of them, or says the first or the second, that is a pick: intent shop. If she asks to see a picture, in any words, that is intent picture, with the shown result she means in matches. When she does both in one message — names or describes one of them AND asks for its picture, like \"the strappy ones, can I see a picture?\" — that is intent picture with that result in matches."
+		}
+	}
+	if pre, ok := sessions[sessionKey("", from)]; ok {
+		if w := recentSpeakerWords(pre, 4); w != "" {
+			facts += "\nWhat she said earlier in this chat, oldest first: " + w + "."
 		}
 	}
 	reply := model.Chat([]model.Message{
@@ -209,10 +216,21 @@ func discoveryReplyOr(u *discoveryUnderstanding, fallback string) string {
 // the door belong to her first contact, and everything after
 // is understood and answered.
 func handleUnboundBuyer(from, text string) {
-	if pickFromShown(from, text) {
+	pre, ok := sessions[sessionKey("", from)]
+	if !ok || pre == nil {
+		pre = &Session{Stage: "unbound"}
+		sessions[sessionKey("", from)] = pre
+	}
+	noteSpeakerWords(pre, text)
+	// The thinking leads, here as everywhere: a pick that
+	// carries a picture ask in the same breath is a picture
+	// ask, and only the thinking can tell the two apart. The
+	// word net below speaks only when no model can be read,
+	// the standing rule for every fallback in the agent.
+	if u := understandDiscovery(from, text); u != nil && actOnDiscovery(from, u) {
 		return
 	}
-	if u := understandDiscovery(from, text); u != nil && actOnDiscovery(from, u) {
+	if pickFromShown(from, text) {
 		return
 	}
 	discoveryNet(from, text)
@@ -477,14 +495,18 @@ func pickFromShown(from, text string) bool {
 		}
 		score := 0
 		namesProduct := false
+		herWords := map[string]bool{}
+		for _, w := range splitWords(lower) {
+			herWords[w] = true
+		}
 		for _, w := range splitWords(p.Name) {
-			if len(w) > 2 && strings.Contains(lower, w) {
+			if len(w) > 2 && herWords[w] {
 				score++
 				namesProduct = true
 			}
 		}
 		for _, w := range splitWords(shop.Name + " " + shop.ShopCode) {
-			if len(w) > 2 && strings.Contains(lower, w) {
+			if len(w) > 2 && herWords[w] {
 				score++
 			}
 		}

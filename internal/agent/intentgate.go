@@ -60,6 +60,8 @@ const stageIntentCharter = `You are the intent reader for a pending sale in a Wh
 
 Think from the whole context, never from isolated words. The same phrase can be an answer, an instruction for the order, or the end of the sale, depending on what was asked. Judge what she is trying to accomplish with this message.
 
+Reason in this order: first, what the open question is asking for; second, what she is referring to (including anything she said earlier in this chat); third, whether her message answers that question, replaces it with another need, or ends the sale. Then give the intent.
+
 Answer with strict JSON only: {"intent": "...", "reply": "..."} — "reply" is used only for the question intent and stays empty otherwise.
 
 The intents:
@@ -88,17 +90,35 @@ func thinkStageIntent(from string, s *Session, merchant *catalogue.Merchant, msg
 	if s == nil || s.Product == nil || merchant == nil {
 		return stageReading{}
 	}
+	extra := ""
+	if s.FulfilStep == "confirm" {
+		f := s.PendingFulfil
+		extra = "The order she is confirming: " + f.Mode + ", package name " + f.PackageName + ", note " + f.Note + "."
+	}
+	return thinkStageIntentQ(from, s, merchant, msg, fulfilPrompt(s), s.AgreedPrice, extra)
+}
+
+// thinkStageIntentQ is the stage read against a stated
+// open question and price, so every board that holds a
+// question open over a buyer (the fulfilment steps, the
+// pending close) is read the same way.
+func thinkStageIntentQ(from string, s *Session, merchant *catalogue.Merchant, msg, question string, price float64, extra string) stageReading {
+	if s == nil || s.Product == nil || merchant == nil {
+		return stageReading{}
+	}
 	var b strings.Builder
-	b.WriteString("The shop is " + merchant.Name + ". The pending sale is the " + s.Product.Name + " (" + s.Product.Description + ") at " + money.GHS(s.AgreedPrice) + "; its list price is " + money.GHS(s.Product.ListPrice) + ".\n")
+	b.WriteString("The shop is " + merchant.Name + ". The pending sale is the " + s.Product.Name + " (" + s.Product.Description + ") at " + money.GHS(price) + "; its list price is " + money.GHS(s.Product.ListPrice) + ".\n")
 	if merchant.DeliveryFee > 0 {
 		b.WriteString("Delivery costs " + money.GHS(merchant.DeliveryFee) + ". " + merchant.DeliveryNote + "\n")
 	} else {
 		b.WriteString("The shop has no set delivery fee; delivery is arranged with the seller.\n")
 	}
-	b.WriteString("The open question she was just asked: \"" + fulfilPrompt(s) + "\"\n")
-	if s.FulfilStep == "confirm" {
-		f := s.PendingFulfil
-		b.WriteString("The order she is confirming: " + f.Mode + ", package name " + f.PackageName + ", note " + f.Note + ".\n")
+	if w := recentSpeakerWords(s, 4); w != "" {
+		b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
+	}
+	b.WriteString("The open question she was just asked: \"" + question + "\"\n")
+	if extra != "" {
+		b.WriteString(extra + "\n")
 	}
 	b.WriteString("Her message: \"" + msg + "\"")
 	sys := stageIntentCharter
@@ -196,4 +216,110 @@ func servePendingPicRequest(from string, shop *catalogue.Merchant, imageID strin
 	}
 	whatsapp.SendText(from, "Thank you. I have sent it to the buyer, and I have kept it on the "+p.Name+" for the next buyer who asks.")
 	return true
+}
+
+// sellerWalkCharter briefs the thinking for one turn of a
+// seller's own guided walk (listing a product, opening her
+// shop). She is the domain expert on her goods and a
+// beginner on this platform, in that order: when she asks
+// what a step means, she is answered plainly and the step
+// waits; her answer is never consumed by a question she was
+// asking. The judgement is the model's, from the situation,
+// exactly as on the buyer's side.
+const sellerWalkCharter = `You are the intent reader for a seller setting up her shop in a WhatsApp chat in Ghana. The agent has asked her ONE open question in a guided walk, and before the walk may treat her reply as its answer, you read what she actually means.
+
+Reason in this order: first, what the open question is asking for; second, what she is referring to (including anything she said earlier in this chat); third, whether her message answers that question, asks something about it, or leaves the walk. Then give the intent.
+
+Answer with strict JSON only: {"intent": "...", "reply": "..."} — "reply" is used only for the question intent and stays empty otherwise.
+
+The intents:
+- "answer": she is answering the open question, in whatever shape the answer naturally takes.
+- "question": she is asking what something means, why it is needed, or how this works, and expects an explanation before she goes on. Draft the explanation in "reply": plain, respectful, correct English, from the facts and meanings given, never a title (never Ma, Madam, Sir or Boss). Short: two or three sentences at most.
+- "cancel": she is leaving the walk: stopping, postponing it, saying she will do it later or not at all.
+- "other": none of these fits.
+
+Meanings she may ask about: her list price is the price customers see first. Her last price is the lowest she will accept; the agent bargains between the two and never goes below her last price, and customers never see it. A daily giveaway allowance is the total discount she lets the agent give away across a day. Her shop code is the address customers use to reach her shop on this number. The holder name is the name on the MoMo account her sales money is paid into; it must match the account itself, or the money cannot land. A product's measure is how it is sold: as a whole piece, or by the yard, litre or kilo.`
+
+// thinkSellerWalkIntent asks the thinking what a seller's
+// reply inside her own guided walk means, against the open
+// question she was asked.
+func thinkSellerWalkIntent(from string, s *Session, walk, question, given, msg string, figures []float64) stageReading {
+	var b strings.Builder
+	b.WriteString("The walk: " + walk + ".\n")
+	if given != "" {
+		b.WriteString("What she has given so far: " + given + ".\n")
+	}
+	if w := recentSpeakerWords(s, 4); w != "" {
+		b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
+	}
+	b.WriteString("The open question she was just asked: \"" + question + "\"\n")
+	b.WriteString("Her message: \"" + msg + "\"")
+	sys := sellerWalkCharter
+	timeout := 8000
+	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, TimeoutMs: &timeout})
+	if out == nil {
+		return stageReading{}
+	}
+	text := *out
+	open := strings.Index(text, "{")
+	closeIdx := strings.LastIndex(text, "}")
+	if open == -1 || closeIdx <= open {
+		return stageReading{}
+	}
+	var raw struct {
+		Intent string `json:"intent"`
+		Reply  string `json:"reply"`
+	}
+	if err := json.Unmarshal([]byte(text[open:closeIdx+1]), &raw); err != nil {
+		return stageReading{}
+	}
+	switch raw.Intent {
+	case stageIntentAnswer, stageIntentAsk, stageIntentCancel, stageIntentOther:
+		return stageReading{Intent: raw.Intent, Reply: strings.TrimSpace(raw.Reply)}
+	}
+	return stageReading{}
+}
+
+// serveSellerWalkTurn reads one onboarding turn before the
+// walk may consume it. It serves a question (answered, the
+// step re-asked) and a call-off (the walk dropped, as her
+// own cancel word drops it), and reports whether it served
+// the turn. Steps whose questions the walk asks in its own
+// specialised shapes (the intake gate, the duplicate
+// choice, the piece size) keep their own handling and are
+// not read here.
+func serveSellerWalkTurn(from string, s *Session, merchant *catalogue.Merchant, text, lower string) bool {
+	flow := s.Onboarding
+	if flow == nil || controlWord(lower) == "cancel" {
+		return false
+	}
+	question := onboardingQuestionText(flow)
+	if question == "" {
+		return false
+	}
+	var given []string
+	if flow.Name != "" {
+		given = append(given, "name "+flow.Name)
+	}
+	if flow.ListPrice > 0 {
+		given = append(given, "list price "+money.GHS(flow.ListPrice))
+	}
+	if flow.FloorPrice > 0 {
+		given = append(given, "last price "+money.GHS(flow.FloorPrice))
+	}
+	reading := thinkSellerWalkIntent(from, s, "listing a product for her shop", question, strings.Join(given, "; "), text,
+		[]float64{flow.ListPrice, flow.FloorPrice, merchant.DailyGiveawayAllowance})
+	switch reading.Intent {
+	case stageIntentCancel:
+		s.Onboarding = nil
+		whatsapp.SendText(from, "Dropped it. Nothing was saved. Say \"add a product\" whenever you are ready.")
+		return true
+	case stageIntentAsk:
+		if reading.Reply != "" && voiceClean(reading.Reply) && figuresClean(reading.Reply, []float64{flow.ListPrice, flow.FloorPrice, merchant.DailyGiveawayAllowance}...) {
+			whatsapp.SendText(from, reading.Reply)
+			askOnboardingStep(from, flow)
+			return true
+		}
+	}
+	return false
 }

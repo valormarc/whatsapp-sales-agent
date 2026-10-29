@@ -10,6 +10,11 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 )
 
+// lastStagePrompt holds the most recent stage read the
+// stub was handed, so a test can see what the thinking was
+// given to reason with.
+var lastStagePrompt string
+
 // stubStageModel stands in for the thinking the way the
 // live model is briefed: it reads the stage charter's
 // request and answers with the intent the words MEAN. The
@@ -36,7 +41,36 @@ func stubStageModel(t *testing.T) {
 			}
 		}
 		content := `{"intent":"unclear","reply":""}`
+		if strings.Contains(system, "intent reader for a seller") {
+			content = `{"intent":"answer"}`
+			her := ""
+			for _, m := range body.Messages {
+				if m.Role == "user" {
+					her = m.Content
+				}
+			}
+			// Judge the current message only: her earlier
+			// words ride along in the prompt as history, and
+			// a question she asked two turns ago is not the
+			// message being read now.
+			if i := strings.LastIndex(her, "Her message: \""); i >= 0 {
+				her = her[i:]
+			}
+			switch {
+			case strings.Contains(her, "what do you mean by last price"):
+				content = `{"intent":"question","reply":"Your last price is the lowest you will accept for it. I bargain between your list price and your last price, and I never go below it. Customers never see it."}`
+			case strings.Contains(her, "why do you need the name"):
+				content = `{"intent":"question","reply":"The name must match the MoMo account itself. Your sales money is paid into that account, and it cannot land if the name is different."}`
+			case strings.Contains(her, "do it later"):
+				content = `{"intent":"cancel"}`
+			}
+		}
 		if strings.Contains(system, "intent reader for a pending sale") {
+			for _, m := range body.Messages {
+				if m.Role == "user" {
+					lastStagePrompt = m.Content
+				}
+			}
 			content = `{"intent":"answer"}`
 			switch {
 			case strings.Contains(her, "see what it looks like"), strings.Contains(her, "not buying without pic"), strings.Contains(her, "show me pic"):
@@ -285,5 +319,141 @@ func TestStageQuestionIsAnsweredNotSwallowed(t *testing.T) {
 	c.say(t, buyer2, "Akosua Mensah")
 	if got := c.last(t, buyer2); !strings.Contains(got, "Any message for the seller") {
 		t.Fatalf("after the answer her name should land as the name, got %q", got)
+	}
+}
+
+// The reasoning window: what she said earlier in the chat
+// reaches the stage read, so a reference back to it can be
+// understood instead of guessed at.
+func TestStageReadSeesHerEarlierWords(t *testing.T) {
+	_, c := setupTwitterShops(t)
+	stubStageModel(t)
+	buyer := "233550009111"
+	c.say(t, buyer, "SHOP-EFUA")
+	c.replies(t, buyer)
+	c.say(t, buyer, "I am buying this for my sister")
+	c.replies(t, buyer)
+	c.say(t, buyer, "Handmade Beaded Bag")
+	c.last(t, buyer)
+	c.say(t, buyer, "850")
+	c.replies(t, buyer)
+	c.say(t, buyer, "Before I pay I need to see what it looks like")
+	c.replies(t, buyer)
+	if !strings.Contains(lastStagePrompt, "buying this for my sister") {
+		t.Fatalf("the stage read should carry her earlier words, got %q", lastStagePrompt)
+	}
+	if !strings.Contains(lastStagePrompt, "What she said earlier in this chat") {
+		t.Fatalf("the stage read should label the window as her earlier words, got %q", lastStagePrompt)
+	}
+}
+
+// The seller's boards are read the same way as the buyer's:
+// inside her own listing walk, a question about the step is
+// answered and the step waits, and a call-off in her own
+// words drops the walk.
+func TestSellerWalkQuestionAnsweredAndCallOffHonoured(t *testing.T) {
+	_, c := setupTwitterShops(t)
+	stubStageModel(t)
+	owner := ownerEfua
+	c.say(t, owner, "add a product")
+	c.last(t, owner)
+	c.say(t, owner, "Kente Scarf")
+	c.last(t, owner)
+	c.say(t, owner, "Handwoven kente scarf, bright colours.")
+	c.last(t, owner)
+	c.say(t, owner, "300")
+	c.last(t, owner)
+	c.say(t, owner, "Wait, what do you mean by last price?")
+	got := strings.Join(c.replies(t, owner), "\n")
+	if !strings.Contains(got, "lowest you will accept") {
+		t.Fatalf("her question about the step should be answered, got %q", got)
+	}
+	if !strings.Contains(got, "what is your last price for Kente Scarf") {
+		t.Fatalf("the step should be asked again after the answer, got %q", got)
+	}
+	// The walk is still standing exactly where she left it.
+	c.say(t, owner, "250")
+	if got := c.last(t, owner); !strings.Contains(got, "by measure") && !strings.Contains(got, "Shall I add it") {
+		t.Fatalf("her last price should land as the walk's answer after the question, got %q", got)
+	}
+
+	// A call-off in her own words, at the very first step.
+	owner2Shop(t, c)
+	c.say(t, "233200000099", "add a product")
+	c.last(t, "233200000099")
+	c.say(t, "233200000099", "Actually I will do it later")
+	if got := c.last(t, "233200000099"); !strings.Contains(got, "Dropped it") {
+		t.Fatalf("a call-off inside the walk should drop it, got %q", got)
+	}
+}
+
+// owner2Shop gives the second test seller a shop of her own
+// in the scratch catalogue.
+func owner2Shop(t *testing.T, c *chat) {
+	t.Helper()
+	if _, err := catalogue.CreateMerchant("Second Shop", "233200000099"); err != nil {
+		t.Fatalf("second shop: %v", err)
+	}
+}
+
+// The signup walk is read too: why a step is needed is
+// answered before the step takes her words as its answer.
+func TestSignupQuestionAnsweredNotConsumed(t *testing.T) {
+	dir := setupChat(t, "233550009120", `{"merchants":{}}`)
+	c := &chat{dir: dir}
+	fake := &fakeSeev{}
+	startFakeSeev(t, fake)
+	stubStageModel(t)
+	stranger := "233550009120"
+	c.say(t, stranger, "open a shop")
+	c.last(t, stranger)
+	c.say(t, stranger, "Adjoa's Kitchen")
+	got := c.last(t, stranger)
+	if !strings.Contains(got, "AKOSUA MENSAH") {
+		t.Fatalf("the walk should be standing on the holder confirmation, got %q", got)
+	}
+	c.say(t, stranger, "But why do you need the name on the account?")
+	got = strings.Join(c.replies(t, stranger), "\n")
+	if !strings.Contains(got, "cannot land if the name is different") {
+		t.Fatalf("her why question should be answered, got %q", got)
+	}
+	if !strings.Contains(got, "reads AKOSUA MENSAH") {
+		t.Fatalf("the confirmation should be asked again after the answer, got %q", got)
+	}
+	c.say(t, stranger, "yes")
+	if shop := catalogue.MerchantByOwner(stranger); shop == nil {
+		t.Fatal("her yes after the explanation should still open the shop")
+	}
+}
+
+// The buyer's pending close is a held-open question like
+// any other: a picture ask is served there, and a question
+// about the total is answered, before yes and no are read.
+func TestPendingCloseReadByMeaning(t *testing.T) {
+	_, c := setupTwitterShops(t)
+	stubStageModel(t)
+	buyer := "233550009121"
+	c.say(t, buyer, "SHOP-EFUA")
+	c.replies(t, buyer)
+	c.say(t, buyer, "Handmade Beaded Bag")
+	c.last(t, buyer)
+	c.say(t, buyer, "I will take it")
+	c.last(t, buyer)
+	c.say(t, buyer, "Before I pay I need to see what it looks like")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "I don't have the pic of the Handmade Beaded Bag") {
+		t.Fatalf("a picture ask at the close should be served, got %q", got)
+	}
+	if !strings.Contains(got, "Shall I send the payment link") {
+		t.Fatalf("the close should be held up again, got %q", got)
+	}
+	c.say(t, buyer, "How much will I pay in all?")
+	got = strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "GH₵875") {
+		t.Fatalf("her total question at the close should be answered, got %q", got)
+	}
+	c.say(t, buyer, "yes")
+	if got := c.last(t, buyer); !strings.Contains(got, "how do you want to get it") && !strings.Contains(got, "How do you want to get it") {
+		t.Fatalf("her yes after the answers should still close, got %q", got)
 	}
 }

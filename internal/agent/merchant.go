@@ -185,8 +185,12 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 		s = &Session{Stage: "merchant", MerchantID: merchantID}
 		sessions[key] = s
 	}
+	noteSpeakerWords(s, text)
 
 	if s.Onboarding != nil {
+		if serveSellerWalkTurn(from, s, merchant, text, lower) {
+			return
+		}
 		advanceOnboarding(from, s, text, lower)
 		return
 	}
@@ -696,22 +700,40 @@ func gotoNextOnboardingStep(from string, flow *OnboardingFlow) {
 
 // askOnboardingStep asks the question for the flow's current step,
 // in the same words the guided walk has always used.
-func askOnboardingStep(from string, flow *OnboardingFlow) {
+// onboardingQuestionText is the open question for the
+// walk's plain guided steps, as one string: askOnboardingStep
+// sends it, and the seller stage read reasons against it.
+// Steps with their own specialised shapes (the intake gate,
+// the duplicate choice, the piece size, the summary) return
+// "" here and keep their own handling.
+func onboardingQuestionText(flow *OnboardingFlow) string {
 	switch flow.Step {
 	case "name":
-		whatsapp.SendText(from, "What is it called?")
+		return "What is it called?"
 	case "description":
-		whatsapp.SendText(from, "Tell me about "+flow.Name+" in a few words: what it is, and what makes it worth buying. Customers will read this.")
+		return "Tell me about " + flow.Name + " in a few words: what it is, and what makes it worth buying. Customers will read this."
 	case "list":
-		whatsapp.SendText(from, "What is the list price for "+flow.Name+"? This is the price customers see first. Give it in cedis, for example 450.")
+		return "What is the list price for " + flow.Name + "? This is the price customers see first. Give it in cedis, for example 450."
 	case "lastprice":
 		if flow.PhotoCompact {
-			whatsapp.SendText(from, "What is your last price? If non-negotiable, say 'non-negotiable'. If list price is wrong, correct like 'price is 500'.")
-			return
+			return "What is your last price? If non-negotiable, say 'non-negotiable'. If list price is wrong, correct like 'price is 500'."
 		}
-		whatsapp.SendText(from, "Now, if a customer bargains, what is your last price for "+flow.Name+"? That is the lowest I can go. I will never sell below it, and the customer will never see it. If the price does not move at all, just say non-negotiable. If the list price itself is wrong, correct it like this: price is 500.")
+		return "Now, if a customer bargains, what is your last price for " + flow.Name + "? That is the lowest I can go. I will never sell below it, and the customer will never see it. If the price does not move at all, just say non-negotiable. If the list price itself is wrong, correct it like this: price is 500."
 	case "measure":
-		whatsapp.SendText(from, "Do you sell the "+flow.Name+" by measure, like by the yard, litre or kilo, or only as a whole?")
+		return "Do you sell the " + flow.Name + " by measure, like by the yard, litre or kilo, or only as a whole?"
+	case "confirm":
+		return "Shall I add it? Say yes to save it, or no to drop it."
+	}
+	return ""
+}
+
+func askOnboardingStep(from string, flow *OnboardingFlow) {
+	if flow.Step == "confirm" {
+		enterOnboardingConfirm(from, flow)
+		return
+	}
+	if q := onboardingQuestionText(flow); q != "" {
+		whatsapp.SendText(from, q)
 	}
 }
 

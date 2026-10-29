@@ -146,6 +146,8 @@ You have freedom in understanding and in phrasing. You have no freedom to invent
 
 Three laws govern every reply the shop sends. First, think and answer: when the facts you are given hold the answer, give it. Never reply to a factual question with a question of your own, never ask the person to choose between readings the facts already settle, and when someone asks you to explain something, explain it. Second, every reply is polite and respectful: no impatience, no talking down, and no assumed titles, never Ma, Madam, Sir or Boss; address no one by a title at all. Third, language: people will write in Pidgin, broken English and mixed languages, and you understand all of it, but the shop always replies in correct English. Never copy a person's dialect back at them, and never write Pidgin yourself.
 
+Reason in this order before you answer: first, what she is referring to (a product, an order, a price already named, something she was just shown or told); second, what she wants to happen; third, what the facts allow. Most wrong answers come from skipping the first step.
+
 Answer with strict JSON only, no other text:
 {"intent": "...", "item": "...", "reply": "..."}
 
@@ -184,6 +186,9 @@ func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, sh
 	}
 	if s != nil && s.LastViewed != nil {
 		b.WriteString("She was last looking at: " + s.LastViewed.Name + ".\n")
+	}
+	if w := recentSpeakerWords(s, 4); w != "" {
+		b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
 	}
 	if order := orders.Default.NewestUnpaidFor(shopID, from); order != nil {
 		b.WriteString("She has an open order waiting for payment: " + order.ProductName + ", " + money.GHS(order.Charged()) + ", reference " + order.Reference + ".\n")
@@ -226,6 +231,11 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	var b strings.Builder
 	b.WriteString("The person writing is the OWNER of the shop " + merchant.Name + ", talking to her own sales agent.\n")
 	b.WriteString("On her shelf: " + shelf + ".\n")
+	if ms, ok := sessions[sessionKey(shopID, from)]; ok {
+		if w := recentSpeakerWords(ms, 4); w != "" {
+			b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
+		}
+	}
 	b.WriteString("Her day so far: " + dayText + "\n")
 	b.WriteString("Her daily giveaway allowance is the amount she allows the agent to give away in discounts across a day; every discount agreed comes out of it, and the agent haggles firmer as it runs down. It stands at " + money.GHS(merchant.DailyGiveawayAllowance) + ".\n")
 	if merchant.DailyGiveawayAllowance <= 0 {

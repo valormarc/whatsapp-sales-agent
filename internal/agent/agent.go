@@ -370,6 +370,43 @@ type Inbound struct {
 	ContextID string
 }
 
+// noteSpeakerWords remembers what the speaker said on this
+// turn, whatever stage she is in. The record used to be
+// kept only inside a haggle; reasoning starved everywhere
+// else, because a read that cannot see her earlier words
+// cannot tell what "that one", "it" or "the other one"
+// points at.
+func noteSpeakerWords(s *Session, msg string) {
+	if s == nil || strings.TrimSpace(msg) == "" {
+		return
+	}
+	s.History = lastN(append(append([]model.Message{}, s.History...), model.Message{Role: "user", Content: msg}), 12)
+}
+
+// recentSpeakerWords renders her earlier words in this chat
+// (not the current message, which every read is given
+// separately) as one fact line for a thinking step, oldest
+// first, at most max of them.
+func recentSpeakerWords(s *Session, max int) string {
+	if s == nil {
+		return ""
+	}
+	var words []string
+	for _, m := range s.History {
+		if m.Role == "user" {
+			words = append(words, m.Content)
+		}
+	}
+	if len(words) <= 1 {
+		return ""
+	}
+	words = words[:len(words)-1]
+	if len(words) > max {
+		words = words[len(words)-max:]
+	}
+	return strings.Join(words, " | ")
+}
+
 func lastN(msgs []model.Message, n int) []model.Message {
 	if len(msgs) > n {
 		return msgs[len(msgs)-n:]

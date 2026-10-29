@@ -37,6 +37,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		s = &Session{Stage: "browsing", MerchantID: shopID}
 		sessions[key] = s
 	}
+	noteSpeakerWords(s, msg)
 
 	// A place she states anywhere in the chat is kept on her
 	// session, so the fulfilment step never asks for it twice.
@@ -114,6 +115,36 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		name := ""
 		if s.Product != nil {
 			name = s.Product.Name
+		}
+		closeQuestion := "Shall I send the payment link for the " + name + " at " + money.GHS(s.ClosePrice) + "? Say yes or no."
+		// The close question is read by meaning before the
+		// plain yes/no below, like every other held-open
+		// question in the sale: a picture ask is served, a
+		// question is answered and the close held up again,
+		// a call-off ends it in her own sense of the words.
+		reading := thinkStageIntentQ(from, s, merchant, msg, closeQuestion, s.ClosePrice, "")
+		switch reading.Intent {
+		case stageIntentPicture:
+			if s.Product != nil {
+				answerPictureAsk(from, merchant, s.Product)
+				whatsapp.SendText(from, closeQuestion)
+				return
+			}
+		case stageIntentCancel:
+			dropPendingSale(from, s)
+			return
+		case stageIntentConfirm:
+			price := s.ClosePrice
+			s.PendingClose = false
+			beginFulfilment(from, s, price)
+			return
+		case stageIntentAsk:
+			if reading.Reply != "" && voiceClean(reading.Reply) &&
+				figuresClean(reading.Reply, s.ClosePrice, s.Product.ListPrice, merchant.DeliveryFee, s.ClosePrice+merchant.DeliveryFee) {
+				whatsapp.SendText(from, reading.Reply)
+				whatsapp.SendText(from, closeQuestion)
+				return
+			}
 		}
 		switch {
 		case isClearYes(lower):
@@ -364,6 +395,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			}
 			if target != nil {
 				loc := s.Location
+				hist := s.History
 				// An offer right after a measured quote lands on
 				// the quantity she was quoted, for that same
 				// item: the haggle opens on the scaled figures.
@@ -373,6 +405,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 					s = openHaggle(shopID, merchant, target)
 				}
 				s.Location = loc // a fresh haggle never forgets where she is
+				s.History = hist // nor what she has said so far
 				sessions[key] = s
 				processOffer(from, s, merchant, *offer, msg)
 				return
@@ -423,8 +456,10 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	product := catalogue.FindProduct(shopID, lower)
 	if product != nil && intentRe.MatchString(lower) {
 		loc := s.Location
+		hist := s.History
 		s = openHaggle(shopID, merchant, product)
 		s.Location = loc // a fresh haggle never forgets where she is
+		s.History = hist // nor what she has said so far
 		sessions[key] = s
 		whatsapp.SendText(from, product.Name+": "+product.Description+" The price is "+money.GHS(product.ListPrice)+"."+offerInvite(product, " Make me an offer and let us see."))
 		return

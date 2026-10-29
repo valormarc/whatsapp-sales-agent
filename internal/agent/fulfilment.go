@@ -435,7 +435,7 @@ func dropPendingSale(from string, s *Session) {
 	if s.Qty > 0 {
 		view = wholeProductOf(shopID, p)
 	}
-	sessions[sessionKey(shopID, from)] = &Session{Stage: "browsing", MerchantID: shopID, LastViewed: view, Location: s.Location}
+	sessions[sessionKey(shopID, from)] = &Session{Stage: "browsing", MerchantID: shopID, LastViewed: view, Location: s.Location, History: s.History}
 	whatsapp.SendText(from, "Okay, cancelled. Tell me what else you need.")
 }
 

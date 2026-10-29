@@ -174,7 +174,9 @@ func openHaggle(shopID string, merchant *catalogue.Merchant, product *catalogue.
 func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer float64, msg string) {
 	key := sessionKey(s.MerchantID, from)
 	p := s.Product
-	s.History = lastN(append(append([]model.Message{}, s.History...), model.Message{Role: "user", Content: msg}), 12)
+	// Her words for this turn are already on the session's
+	// record (noteSpeakerWords at the turn's head); the haggle
+	// adds its own replies below.
 	// A fixed-price product is never haggled, by model or by
 	// engine: the seller said the price does not move, so there
 	// is no negotiation to run. An offer at the price buys it;

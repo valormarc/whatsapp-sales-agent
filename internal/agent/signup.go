@@ -53,11 +53,58 @@ func shareTextFor(shop catalogue.Merchant) string {
 	return "Your shop code is " + shop.ShopCode + ". Ask your customers to message this number and start with " + entry + ", and they will land in your shop, and only your shop."
 }
 
+// signupQuestionText is the open question for a signup
+// step, as one string, so the seller stage read can reason
+// against the very question she was asked.
+func signupQuestionText(from string, flow *SignupFlow) string {
+	switch flow.Step {
+	case "holder":
+		return "I need the name on the MoMo account, the name the account itself carries. What name is on it?"
+	case "confirmholder":
+		return "Money from your payment links will go to the MoMo account on this number, " + checkout.LocalNumber(from) + ". The name on that account reads " + flow.HolderName + ". Say yes if that is the right account, or tell me the name on the right account."
+	default: // "name"
+		return "What is your shop called?"
+	}
+}
+
+// serveSignupQuestion reads one signup turn before the
+// walk may consume it: a question she asks about the step
+// is answered from the facts and the step is re-asked; a
+// call-off drops the walk as her own cancel word does.
+func serveSignupQuestion(from string, s *Session, text string) bool {
+	flow := s.Signup
+	if flow == nil {
+		return false
+	}
+	given := ""
+	if flow.Name != "" {
+		given = "shop name " + flow.Name
+	}
+	reading := thinkSellerWalkIntent(from, s, "opening her shop", signupQuestionText(from, flow), given, text, nil)
+	switch reading.Intent {
+	case stageIntentCancel:
+		delete(sessions, sessionKey("", from))
+		whatsapp.SendText(from, "Dropped it. No shop was created. Say \"open a shop\" whenever you are ready.")
+		return true
+	case stageIntentAsk:
+		if reading.Reply != "" && voiceClean(reading.Reply) && figuresClean(reading.Reply) {
+			whatsapp.SendText(from, reading.Reply)
+			whatsapp.SendText(from, signupQuestionText(from, flow))
+			return true
+		}
+	}
+	return false
+}
+
 // advanceSignup feeds one message to the open-a-shop walk.
 func advanceSignup(from string, s *Session, text, lower string) {
 	if controlWord(lower) == "cancel" {
 		delete(sessions, sessionKey("", from))
 		whatsapp.SendText(from, "Dropped it. No shop was created. Say \"open a shop\" whenever you are ready.")
+		return
+	}
+	noteSpeakerWords(s, text)
+	if serveSignupQuestion(from, s, text) {
 		return
 	}
 	flow := s.Signup
