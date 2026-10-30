@@ -83,7 +83,7 @@ func saveFeeQuotes(all []feeQuote) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(datadir.Path("feequotes.json"), data, 0o644)
+	_ = os.WriteFile(datadir.Path("feequotes.json"), data, 0o600)
 }
 
 // openFeeQuote records a fresh request for this buyer in

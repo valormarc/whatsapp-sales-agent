@@ -33,7 +33,11 @@ func TestBuyerReceivesHerReferenceAtTheSale(t *testing.T) {
 	buyer := "233550010001"
 
 	got := buySheaPickup(t, c, buyer)
-	if !strings.Contains(got, "Your order reference is EFUA-0001.") {
+	ref := orders.Default.NewestFor("efua", buyer).Reference
+	if !strings.HasPrefix(ref, "EFUA-0001-") {
+		t.Fatalf("her reference should carry the shop's serial and its tail, got %q", ref)
+	}
+	if !strings.Contains(got, "Your order reference is "+ref+".") {
 		t.Fatalf("completion = %q, want her reference given as its own piece", got)
 	}
 }
@@ -41,11 +45,13 @@ func TestBuyerReceivesHerReferenceAtTheSale(t *testing.T) {
 func TestReferencesAreSerialPerShop(t *testing.T) {
 	_, c := setupTwitterShops(t)
 
-	if got := buySheaPickup(t, c, "233550010002"); !strings.Contains(got, "EFUA-0001") {
-		t.Fatalf("first Efua order = %q, want EFUA-0001", got)
+	buySheaPickup(t, c, "233550010002")
+	if ref := orders.Default.NewestFor("efua", "233550010002").Reference; !strings.HasPrefix(ref, "EFUA-0001-") {
+		t.Fatalf("first Efua order reference = %q, want the EFUA-0001 serial with its tail", ref)
 	}
-	if got := buySheaPickup(t, c, "233550010003"); !strings.Contains(got, "EFUA-0002") {
-		t.Fatalf("second Efua order = %q, want EFUA-0002", got)
+	buySheaPickup(t, c, "233550010003")
+	if ref := orders.Default.NewestFor("efua", "233550010003").Reference; !strings.HasPrefix(ref, "EFUA-0002-") {
+		t.Fatalf("second Efua order reference = %q, want the EFUA-0002 serial with its tail", ref)
 	}
 	// Ama's first order carries her own code and starts at one.
 	buyer := "233550010004"
@@ -57,8 +63,9 @@ func TestReferencesAreSerialPerShop(t *testing.T) {
 	c.replies(t, buyer)
 	tap(t, buyer, "ff_self")
 	c.finishDetails(t, buyer)
-	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Your order reference is AMA-0001.") {
-		t.Fatalf("first Ama order = %q, want AMA-0001", got)
+	amaRef := orders.Default.NewestFor("ama", buyer).Reference
+	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.HasPrefix(amaRef, "AMA-0001-") || !strings.Contains(got, "Your order reference is "+amaRef+".") {
+		t.Fatalf("first Ama order = %q, want her AMA-0001 reference with its tail given as its own piece", got)
 	}
 }
 
@@ -67,10 +74,11 @@ func TestCheckByReferenceAndByAsking(t *testing.T) {
 	buyer := "233550010005"
 	buySheaPickup(t, c, buyer)
 	c.replies(t, ownerEfua) // drain the merchant notice
+	ref := orders.Default.NewestFor("efua", buyer).Reference
 
-	c.say(t, buyer, "EFUA-0001")
+	c.say(t, buyer, ref)
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Order EFUA-0001: Raw Shea Butter (500g) at GH₵120.") ||
+	if !strings.Contains(got, "Order "+ref+": Raw Shea Butter (500g) at GH₵120.") ||
 		!strings.Contains(got, "It is not paid yet.") ||
 		!strings.Contains(got, "You are collecting it yourself.") ||
 		!strings.Contains(got, "The package carries the name Akosua Mensah.") {
@@ -79,7 +87,7 @@ func TestCheckByReferenceAndByAsking(t *testing.T) {
 
 	c.say(t, buyer, "check my order")
 	got = strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Order EFUA-0001:") {
+	if !strings.Contains(got, "Order "+ref+":") {
 		t.Fatalf("readback by asking = %q, want her latest order pulled up", got)
 	}
 }
@@ -106,12 +114,13 @@ func TestCheckedOrderShowsPaidOnlyWhenTheLinkSettles(t *testing.T) {
 	// check then says paid. (The harness walk mints no real
 	// session, so the order is given the session reference it
 	// would carry in production.)
-	ref := "EFUA-0001"
-	orders.Default.Update("EFUA-0001", func(o *orders.Order) { o.ProviderRef = &ref })
+	minted := orders.Default.NewestFor("efua", buyer).Reference
+	session := "EFUA-0001"
+	orders.Default.Update(minted, func(o *orders.Order) { o.ProviderRef = &session })
 	fakeSeevReadback(t, "completed", 12000)
 	c.say(t, buyer, "I have paid")
 	c.replies(t, buyer)
-	c.say(t, buyer, "EFUA-0001")
+	c.say(t, buyer, minted)
 	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "It is paid. Thank you.") {
 		t.Fatalf("readback after settlement = %q, want the paid line", got)
 	}
@@ -121,13 +130,15 @@ func TestCheckingNeverCrossesBuyersOrShops(t *testing.T) {
 	_, c := setupTwitterShops(t)
 	buySheaPickup(t, c, "233550010007")
 
+	minted := orders.Default.NewestFor("efua", "233550010007").Reference
+
 	// Another buyer in the same shop quoting the reference gets
 	// a plain not-found, never the order.
 	stranger := "233550010008"
 	c.say(t, stranger, "SHOP-EFUA")
 	c.replies(t, stranger)
-	c.say(t, stranger, "EFUA-0001")
-	if got := c.last(t, stranger); !strings.Contains(got, "I cannot find an order with the reference EFUA-0001 for you") {
+	c.say(t, stranger, minted)
+	if got := c.last(t, stranger); !strings.Contains(got, "I cannot find an order with the reference "+minted+" for you") {
 		t.Fatalf("cross-buyer check = %q, want a plain not found", got)
 	}
 
@@ -136,8 +147,8 @@ func TestCheckingNeverCrossesBuyersOrShops(t *testing.T) {
 	buyer := "233550010007"
 	c.say(t, buyer, "SHOP-AMA")
 	c.replies(t, buyer)
-	c.say(t, buyer, "EFUA-0001")
-	if got := c.last(t, buyer); !strings.Contains(got, "I cannot find an order with the reference EFUA-0001 for you at Ama's Stall") {
+	c.say(t, buyer, minted)
+	if got := c.last(t, buyer); !strings.Contains(got, "I cannot find an order with the reference "+minted+" for you at Ama's Stall") {
 		t.Fatalf("cross-shop check = %q, want a plain not found for this shop", got)
 	}
 

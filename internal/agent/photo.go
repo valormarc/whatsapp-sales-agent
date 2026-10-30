@@ -97,13 +97,23 @@ func harvestDoubt(caption string, price float64, span []int) bool {
 // form comes first in the alternation, so a reader never stops
 // at the comma: "Ghc 1,500" is fifteen hundred cedis, and a
 // reader that takes only the "1" has priced a laptop at GH₵1.
-const figurePattern = `\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?`
+// The k form rides before the plain form for the same reason:
+// "1k" is a thousand cedis, and a reader that stops at the "1"
+// has priced it at one. The k must end the figure (not "1kg",
+// which is a weight, and reads as its plain 1).
+const figurePattern = `\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?[kK]\b|\d+(?:\.\d{1,2})?`
 
 // parseFigure parses a figure matched by figurePattern: the
 // thousands commas are grouping, not decimals, so they come out
-// before the parse.
+// before the parse, and a trailing k is the thousand it says.
 func parseFigure(s string) (float64, error) {
-	return strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
+	mult := 1.0
+	if strings.HasSuffix(s, "k") || strings.HasSuffix(s, "K") {
+		mult = 1000
+		s = s[:len(s)-1]
+	}
+	v, err := strconv.ParseFloat(strings.ReplaceAll(s, ",", ""), 64)
+	return v * mult, err
 }
 
 var (

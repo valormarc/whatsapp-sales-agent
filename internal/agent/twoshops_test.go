@@ -321,7 +321,7 @@ func TestOwnerCommandsTouchOnlyHerOwnShop(t *testing.T) {
 
 func TestSettlementNoticeGoesToTheSellingShopsOwner(t *testing.T) {
 	t.Setenv("SEEV_SECRET_KEY", "")
-	t.Setenv("SEEV_WEBHOOK_SECRET", "")
+	t.Setenv("SEEV_WEBHOOK_SECRET", "whsec_shops")
 	dir, c := setupTwoShops(t)
 	buyer := "233550004040"
 
@@ -354,8 +354,11 @@ func TestSettlementNoticeGoesToTheSellingShopsOwner(t *testing.T) {
 	if ref == "" {
 		t.Fatal("no Ama order on disk to settle")
 	}
+	t.Setenv("SEEV_SECRET_KEY", "sk_test_shops")
+	fakeSeevReadback(t, "completed", 16000)
 	body := `{"data":{"reference":"SEEVSIM1","status":"completed","amount":160},"meta":{"order_reference":"` + ref + `"}}`
-	if status := seevwebhook.Handle(body, "", ""); status != 200 {
+	ts, sig := signSeevWebhook(t, body)
+	if status := seevwebhook.Handle(body, ts, sig); status != 200 {
 		t.Fatalf("webhook status %d, want 200", status)
 	}
 

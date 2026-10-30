@@ -377,7 +377,7 @@ func orderPaymentURL(o *orders.Order) string {
 func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Merchant, shopID string, u *understood) bool {
 	switch u.Intent {
 	case intentOffTopic:
-		laneStrike(from, s, merchant)
+		laneStrike(from, s, merchant, u.Words)
 		return true
 	case intentCourtesy:
 		// Thanks is a closing, not a new sale: the reply is

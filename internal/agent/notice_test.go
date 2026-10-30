@@ -30,7 +30,7 @@ func TestSaleNoticeIsLaidOutInLines(t *testing.T) {
 		t.Fatalf("merchant notices = %v, want the one sale notice", notes)
 	}
 	notice := notes[0]
-	if !strings.HasPrefix(notice, "New order EFUA-0001\n") {
+	if !strings.HasPrefix(notice, "New order EFUA-0001-") {
 		t.Fatalf("notice should open with its heading and reference:\n%s", notice)
 	}
 	for _, want := range []string{

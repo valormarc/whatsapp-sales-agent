@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -342,7 +343,7 @@ func handleUnboundBuyer(from, text string) {
 		if u.Budget > 0 && budgetFigureIn(text, u.Budget) {
 			pre.Budget = u.Budget
 		}
-		if actOnDiscovery(from, u) {
+		if actOnDiscovery(from, strings.ToLower(text), u) {
 			return
 		}
 	}
@@ -453,7 +454,28 @@ func newestPaidOrderAnywhere(from, shopHint string) *orders.Order {
 	return any
 }
 
-func actOnDiscovery(from string, u *discoveryUnderstanding) bool {
+// priceWishRe reads a price wish in the buyer's own words:
+// the one signal that turns a set of matches into a price
+// ordering. Ordering by price is arithmetic, not judgement,
+// so it is enforced here in code wherever matches are
+// presented or a first match is taken: a model's listing
+// order is a reading, and a reading that puts the GH₵300
+// heel before the GH₵120 one she asked to see cheapest
+// first is wrong however good the matches are.
+var priceWishRe = regexp.MustCompile(`\bcheapest\b|\bcheaper\b|\bmost affordable\b|\blowest price\b`)
+
+// sortByPrice orders verified matches by list price,
+// cheapest first, keeping the given order inside a price.
+func sortByPrice(matches []struct {
+	Shop    catalogue.Merchant
+	Product catalogue.Product
+}) {
+	sort.SliceStable(matches, func(i, j int) bool {
+		return matches[i].Product.ListPrice < matches[j].Product.ListPrice
+	})
+}
+
+func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 	switch u.Intent {
 	case "cheaper":
 		// A balk at a shown price: the cheapest suitable
@@ -520,6 +542,9 @@ func actOnDiscovery(from string, u *discoveryUnderstanding) bool {
 		// matched product's shop and served the picture
 		// ask. Nothing is sold on this turn.
 		matches := verifiedMatches(u)
+		if priceWishRe.MatchString(lower) {
+			sortByPrice(matches)
+		}
 		if len(matches) == 0 {
 			// The thinking named the intent but no product:
 			// the picture she means is the one she was just
@@ -564,6 +589,9 @@ func actOnDiscovery(from string, u *discoveryUnderstanding) bool {
 		return true
 	case "search":
 		matches := verifiedMatches(u)
+		if priceWishRe.MatchString(lower) {
+			sortByPrice(matches)
+		}
 		// A judged ask (an occasion, a gift, a purse) is
 		// answered with a recommendation, not a catalogue
 		// dump: the strongest fit first, with its reason
@@ -654,7 +682,7 @@ func actOnDiscovery(from string, u *discoveryUnderstanding) bool {
 	case "no_shop":
 		if strings.TrimSpace(u.Item) != "" || len(u.Matches) > 0 {
 			u.Intent = "search"
-			return actOnDiscovery(from, u)
+			return actOnDiscovery(from, lower, u)
 		}
 		whatsapp.SendText(from, discoveryReplyOr(u, "No problem at all. What are you looking to buy? I will check every shop for it."))
 		return true
@@ -735,6 +763,28 @@ func discoveryNet(from, text string) {
 	// first one") must land on the closest thing she asked
 	// for, not on whichever shop sorts first.
 	sort.SliceStable(hits, func(i, j int) bool { return hits[i].score > hits[j].score })
+	// A price wish in her words outranks the score order:
+	// cheapest first is arithmetic, and the net enforces it
+	// rather than hoping a shelf happens to be priced in
+	// order.
+	if priceWishRe.MatchString(lower) {
+		sort.SliceStable(hits, func(i, j int) bool { return hits[i].product.ListPrice < hits[j].product.ListPrice })
+	}
+	// A picture ask is answered with the picture of the
+	// leading hit, exactly as the thinking's picture road
+	// answers it: she is put inside its shop and shown the
+	// goods. Under a price wish the leader is the cheapest,
+	// so "cheapest pic" shows her the cheapest one's photo
+	// instead of a list of both.
+	if picRe.MatchString(lower) && len(hits) > 0 {
+		h := hits[0]
+		bindings[from] = h.shop.ID
+		delete(sessions, sessionKey("", from))
+		p := h.product
+		sessions[sessionKey(h.shop.ID, from)] = &Session{Stage: "browsing", MerchantID: h.shop.ID, LastViewed: &p}
+		answerPictureAsk(from, &h.shop, &p)
+		return
+	}
 	// With a budget in force, even the net's answer is a
 	// recommendation: she stated what she can spend, and a
 	// bare list that ignores it is a worse answer than the

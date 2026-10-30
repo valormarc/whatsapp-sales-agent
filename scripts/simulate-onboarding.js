@@ -124,6 +124,7 @@ if (!existsSync(BIN)) {
 const child = spawn(BIN, [], {
   cwd: ROOT,
   env: {
+    WHATSAPP_DRY_RUN: '1', WHATSAPP_APP_SECRET: '',
     ...process.env,
     PORT: `${PORT}`,
     MERCHANT_WHATSAPP: MERCHANT,

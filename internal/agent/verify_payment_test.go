@@ -13,15 +13,34 @@ package agent
 // the live proof checks the same door against the real one.
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/orders"
 )
+
+// signSeevWebhook signs a webhook body the way Seev does,
+// with the secret the test put in SEEV_WEBHOOK_SECRET, so a
+// test can post an event the handler will verify. The
+// handler fails closed: an unsigned event is a 401 now,
+// never a settlement.
+func signSeevWebhook(t *testing.T, body string) (string, string) {
+	t.Helper()
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
+	mac := hmac.New(sha256.New, []byte(os.Getenv("SEEV_WEBHOOK_SECRET")))
+	mac.Write([]byte(fmt.Sprintf("%s.%s", ts, body)))
+	return ts, "v1=" + hex.EncodeToString(mac.Sum(nil))
+}
 
 // fakeSeevReadback serves one read-back shape for any session
 // asked of it, and points the checkout package at it. The

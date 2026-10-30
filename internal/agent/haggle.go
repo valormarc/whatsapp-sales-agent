@@ -17,8 +17,21 @@ import (
 	"strings"
 )
 
-var offerRe = regexp.MustCompile(`(\d+(?:\.\d{1,2})?)`)
-var numbersRe = regexp.MustCompile(`(\d+(?:\.\d+)?)`)
+var offerRe = regexp.MustCompile(`(\d+(?:\.\d{1,2})?[kK]\b|\d+(?:\.\d{1,2})?)`)
+var numbersRe = regexp.MustCompile(`(\d+(?:\.\d+)?[kK]\b|\d+(?:\.\d+)?)`)
+
+// parseNumbered reads one figure matched by the offer and
+// numbers patterns, honouring a trailing k as the thousand
+// it says: "1k" and "1.5k" are how buyers and sellers both
+// write a thousand cedis, and reading the 1 alone would
+// misprice everything it touches.
+func parseNumbered(s string) (float64, error) {
+	if strings.HasSuffix(s, "k") || strings.HasSuffix(s, "K") {
+		v, err := strconv.ParseFloat(s[:len(s)-1], 64)
+		return v * 1000, err
+	}
+	return strconv.ParseFloat(s, 64)
+}
 
 // parseOffer reads the first price in a message. A number that
 // forms part of a quantity phrase is a quantity, never a price,
@@ -55,7 +68,7 @@ func parseOffer(text string) *float64 {
 		if inside {
 			continue
 		}
-		f, err := strconv.ParseFloat(stripped[m[2]:m[3]], 64)
+		f, err := parseNumbered(stripped[m[2]:m[3]])
 		if err != nil {
 			continue
 		}
@@ -67,7 +80,7 @@ func parseOffer(text string) *float64 {
 func numbersIn(text string) []float64 {
 	out := []float64{}
 	for _, m := range numbersRe.FindAllStringSubmatch(strings.ReplaceAll(text, ",", ""), -1) {
-		if f, err := strconv.ParseFloat(m[1], 64); err == nil {
+		if f, err := parseNumbered(m[1]); err == nil {
 			out = append(out, f)
 		}
 	}

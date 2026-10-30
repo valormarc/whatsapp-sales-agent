@@ -584,9 +584,10 @@ func walkPriceShape(text string) bool {
 		return !unicode.IsLetter(r)
 	}) {
 		switch w {
-		case "gh", "ghc", "cedis", "price", "is", "it", "its", "the", "a", "an", "my", "i",
+		case "gh", "ghc", "ghs", "cedi", "cedis", "ghana", "price", "is", "it", "its", "the", "a", "an", "my", "i",
 			"list", "last", "at", "for", "selling", "sell", "sold", "goes", "going",
-			"be", "will", "that", "this", "only", "fixed", "about", "take":
+			"be", "will", "that", "this", "only", "fixed", "about", "take",
+			"please", "final", "na", "paa", "pesewas":
 		default:
 			return false
 		}

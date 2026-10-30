@@ -224,7 +224,7 @@ func servePendingPicRequest(from string, shop *catalogue.Merchant, imageID strin
 		ext = ".webp"
 	}
 	rel := filepath.Join("photos", p.ID+"-"+strconv.Itoa(len(p.Photos)+1)+ext)
-	if err := os.WriteFile(datadir.Path(rel), data, 0o644); err != nil {
+	if err := os.WriteFile(datadir.Path(rel), data, 0o600); err != nil {
 		whatsapp.SendText(from, "I could not fetch that photo. Please send it once more.")
 		return true
 	}

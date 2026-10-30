@@ -48,7 +48,7 @@ func saveTrust(all map[string]*trustRecord) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(datadir.Path("trust.json"), data, 0o644)
+	_ = os.WriteFile(datadir.Path("trust.json"), data, 0o600)
 }
 
 // strikesOf is the number's standing strike count.

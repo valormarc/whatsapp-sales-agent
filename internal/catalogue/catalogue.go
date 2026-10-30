@@ -5,15 +5,37 @@ package catalogue
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/datadir"
 	"github.com/valormarc/hackathon-agent/internal/money"
 )
+
+// fileMu serialises reads and writes of the catalogue file
+// itself. Callers above this package compose their own
+// load, modify, save cycles under their own locks; this one
+// guarantees the file is never torn between two writers
+// and never read mid-write.
+var fileMu sync.Mutex
+
+// writeAtomic writes data over path by way of a temporary
+// file in the same directory, renamed into place: a crash
+// leaves the old file or the new one, never a torn half.
+// The mode is owner-only; the catalogue holds every shop's
+// payout number and owner phone.
+func writeAtomic(path string, data []byte) {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err == nil {
+		_ = os.Rename(tmp, path)
+	}
+}
 
 // Product is one item a merchant sells. Prices are in cedis; FloorPrice
 // is the merchant's secret last price, which never reaches the customer.
@@ -268,13 +290,18 @@ func marshalJSON(v any) ([]byte, error) {
 }
 
 // LoadCatalogue reads the catalogue file, writing and returning the
-// seed first when the file does not exist.
+// seed first when the file does not exist. A file that exists but
+// does not parse is preserved byte for byte under a .corrupt- name
+// and shouted about before the empty catalogue is returned: read as
+// silently empty, the next save would wipe every shop on the shelf.
 func LoadCatalogue() Catalogue {
+	fileMu.Lock()
+	defer fileMu.Unlock()
 	path := FilePath()
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		_ = os.MkdirAll(filepath.Dir(path), 0o755)
+		_ = os.MkdirAll(filepath.Dir(path), 0o700)
 		if b, err := marshalJSON(seed); err == nil {
-			_ = os.WriteFile(path, b, 0o644)
+			writeAtomic(path, b)
 		}
 		return seed
 	}
@@ -284,6 +311,9 @@ func LoadCatalogue() Catalogue {
 	}
 	var c Catalogue
 	if err := json.Unmarshal(b, &c); err != nil {
+		bad := path + ".corrupt-" + time.Now().Format("20060102-150405")
+		_ = os.WriteFile(bad, b, 0o600)
+		fmt.Fprintf(os.Stderr, "catalogue: %s does not parse (%v); preserved as %s and read as empty\n", path, err, bad)
 		return Catalogue{Merchants: map[string]Merchant{}}
 	}
 	if c.Merchants == nil {
@@ -294,10 +324,12 @@ func LoadCatalogue() Catalogue {
 
 // SaveCatalogue writes the catalogue back to its file.
 func SaveCatalogue(c Catalogue) {
+	fileMu.Lock()
+	defer fileMu.Unlock()
 	path := FilePath()
-	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	_ = os.MkdirAll(filepath.Dir(path), 0o700)
 	if b, err := marshalJSON(c); err == nil {
-		_ = os.WriteFile(path, b, 0o644)
+		writeAtomic(path, b)
 	}
 }
 

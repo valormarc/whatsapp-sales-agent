@@ -499,15 +499,21 @@ func TestLinkCreationSurvivesAnIdempotencyCollision(t *testing.T) {
 	if err := json.Unmarshal(data, &all); err != nil {
 		t.Fatalf("orders parse: %v", err)
 	}
-	o, ok := all["EFUA-0001"]
-	if !ok {
-		t.Fatalf("order EFUA-0001 missing: %v", all)
+	if len(all) != 1 {
+		t.Fatalf("want the one order from the sale, got %v", all)
+	}
+	var o orders.Order
+	for _, v := range all {
+		o = v
+	}
+	if !strings.HasPrefix(o.Reference, "EFUA-0001-") {
+		t.Fatalf("the order's reference should carry its serial and tail, got %q", o.Reference)
 	}
 	providerRef := ""
 	if o.ProviderRef != nil {
 		providerRef = *o.ProviderRef
 	}
-	if o.Status != "pending" || o.LinkAttempts != 2 || providerRef != "PAY-EFUA-0001" {
+	if o.Status != "pending" || o.LinkAttempts != 2 || providerRef != "PAY-"+o.Reference {
 		t.Fatalf("the order should point at the session the fresh key opened: %+v", o)
 	}
 }

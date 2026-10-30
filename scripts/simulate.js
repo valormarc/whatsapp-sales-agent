@@ -123,7 +123,7 @@ if (!existsSync(BIN)) {
 }
 const child = spawn(BIN, [], {
   cwd: ROOT,
-  env: { ...process.env, PORT: `${PORT}`, MERCHANT_WHATSAPP: MERCHANT, WHATSAPP_VERIFY_TOKEN: 'sim-verify-token' },
+  env: { ...process.env, PORT: `${PORT}`, MERCHANT_WHATSAPP: MERCHANT, WHATSAPP_VERIFY_TOKEN: 'sim-verify-token', WHATSAPP_DRY_RUN: '1', WHATSAPP_APP_SECRET: '' },
   stdio: 'ignore',
 });
 

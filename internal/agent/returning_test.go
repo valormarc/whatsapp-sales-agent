@@ -87,7 +87,7 @@ func TestReturningBuyerIsGreetedAndOfferedHerUsual(t *testing.T) {
 	}
 	c.say(t, returningBuyer, "yes")
 	c.replies(t, returningBuyer)
-	o := orders.Default.GetOrder("TEST-0002")
+	o := orders.Default.NewestFor(MerchantID, returningBuyer)
 	if o == nil || o.Fulfilment != "delivery" || o.Location != "Koforidua" || o.Size != "40" {
 		t.Fatalf("order = %+v, want her usual carried onto it", o)
 	}
@@ -114,7 +114,7 @@ func TestReturningBuyerCanChangeHerUsual(t *testing.T) {
 	c.last(t, returningBuyer)
 	c.say(t, returningBuyer, "yes")
 	c.replies(t, returningBuyer)
-	o := orders.Default.GetOrder("TEST-0002")
+	o := orders.Default.NewestFor(MerchantID, returningBuyer)
 	if o == nil || o.Fulfilment != "pickup" {
 		t.Fatalf("order = %+v, want her changed choice on it", o)
 	}

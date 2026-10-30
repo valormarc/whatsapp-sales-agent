@@ -253,3 +253,50 @@ func TestDiscoverySingleMatchShowsThePhoto(t *testing.T) {
 		t.Fatalf("the single match should arrive with its photo, got %d image sends in %+v", images, recs)
 	}
 }
+
+const twoHeelShops = `{"merchants":{
+"ashop":{"id":"ashop","name":"Ama's Heels","shopCode":"AMA","ownerWhatsApp":"233550009001","dailyGiveawayAllowance":300,"products":[{"id":"stiletto","name":"Stiletto Heel","description":"Tall stiletto heel.","listPrice":300,"floorPrice":250,"stock":2}]},
+"zshop":{"id":"zshop","name":"Zed's Heels","shopCode":"ZED","ownerWhatsApp":"233550009002","dailyGiveawayAllowance":300,"products":[{"id":"blockheel","name":"Block Heel","description":"Low block heel.","listPrice":120,"floorPrice":100,"stock":2}]}
+}}`
+
+// A price wish is arithmetic, not a reading: when she asks
+// for the cheapest, code orders the net's hits by price,
+// so the GH₵120 heel leads even though the GH₵300 one
+// stands first in the catalogue walk.
+func TestDiscoveryNetCheapestLeadsByPrice(t *testing.T) {
+	dir := setupChat(t, "233550009002", twoHeelShops)
+	c := &chat{dir: dir}
+	buyer := "233550009101"
+
+	c.say(t, buyer, "What is the cheapest heel?")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	cheap := strings.Index(got, "Block Heel")
+	dear := strings.Index(got, "Stiletto Heel")
+	if cheap < 0 || dear < 0 {
+		t.Fatalf("both heels should be listed, got %q", got)
+	}
+	if cheap > dear {
+		t.Fatalf("the cheapest must lead the list, got %q", got)
+	}
+}
+
+// "Cheapest pic" on the net road shows her the cheapest
+// one's picture inside its shop, instead of listing both
+// and making her pick blind.
+func TestDiscoveryNetCheapestPicShowsTheCheapest(t *testing.T) {
+	dir := setupChat(t, "233550009002", twoHeelShops)
+	c := &chat{dir: dir}
+	buyer := "233550009102"
+
+	c.say(t, buyer, "send pic of the cheapest heel")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if bindings[buyer] != "zshop" {
+		t.Fatalf("she should land in the cheapest heel's shop, bound to %q, got %q", bindings[buyer], got)
+	}
+	if !strings.Contains(got, "Block Heel") {
+		t.Fatalf("the cheapest heel should be the one shown, got %q", got)
+	}
+	if strings.Contains(got, "Which one do you want to look at?") {
+		t.Fatalf("a picture ask is not a list, got %q", got)
+	}
+}

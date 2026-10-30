@@ -10,11 +10,18 @@ package agent
 // reaching her, same name on the package), names any price
 // that has moved since, and holds the whole thing up once:
 // same again? Her yes is the only question the lane ever
-// asks, and the payment button follows it. The order she
-// presents is her credential, so the lane works from any
-// number she speaks from: the new order is written on the
-// number she is using now, for the shop the old order
-// belongs to.
+// asks, and the payment button follows it.
+//
+// The lane reaches only her own orders. A reference names
+// an order, but the recap recites that order's delivery
+// place, collector and package name, so presenting a
+// reference is not enough: the number speaking must be the
+// number the order was placed from. A reference belonging
+// to another number gets a neutral answer and no details,
+// and nothing about her binding moves. (This reverses the
+// lane's first design, where the reference alone was the
+// credential and any number could present it: references
+// are serial, and a guessable number is not a credential.)
 
 import (
 	"regexp"
@@ -26,29 +33,45 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
-var reorderRe = regexp.MustCompile(`\b(buy|order|get|have|take) (it|this|that|them|the same|same) .{0,20}\bagain\b|\bre ?order\b|\brepurchase\b|\bsame (order|thing|one) again\b|\bthe same (order|thing) again\b|\bbuy (the )?same\b`)
+var reorderRe = regexp.MustCompile(`\b(buy|order|get|have|take|want) (it|this|that|them|the same|same) .{0,20}\bagain\b|\bre ?order\b|\brepurchase\b|\bsame (order|thing|one) again\b|\bthe same (order|thing) again\b|\bbuy (the )?same\b|\bsame again\b|\brepeat (my |the )?(last )?order\b|\bbuy am again\b`)
 
 var sameDetailsRe = regexp.MustCompile(`^use (the )?same\b|\bsame details\b|\bsame as (last time|before)\b|\bthe same details\b`)
 
 // reorderSource finds the completed order a reorder ask is
 // about: the one she quotes in this chat, the one whose
-// reference her words carry (in this shop, then in any
-// shop: the reference is the credential, not the number),
-// or her own newest paid order here.
+// reference her words carry (in this shop, then in any of
+// her shops), or her own newest paid order here. Every road
+// lands on an order placed from her own number.
 func reorderSource(shopID, from, msg string) *orders.Order {
 	if qo := quotedOrderFor(shopID, from); qo != nil {
 		return qo
 	}
-	if o := orderFromMessage(shopID, msg); o != nil {
+	if o := orderFromMessage(shopID, msg); o != nil && o.From == from {
 		return o
 	}
 	for _, o := range orders.Default.All() {
-		if o.Reference != "" && strings.Contains(strings.ToUpper(msg), o.Reference) {
+		if o.Reference != "" && o.From == from && strings.Contains(strings.ToUpper(msg), o.Reference) {
 			oo := o
 			return &oo
 		}
 	}
 	return newestPaidOrderFor(shopID, from)
+}
+
+// foreignRefOrder returns the order a message's reference
+// names when that order belongs to a different number, so
+// the lane can answer for it plainly instead of falling
+// through to handling that might recite its details.
+func foreignRefOrder(from, msg string) *orders.Order {
+	m := orderRefRe.FindStringSubmatch(strings.ToUpper(msg))
+	if m == nil {
+		return nil
+	}
+	o := orders.Default.GetOrder(m[1])
+	if o != nil && o.From != from {
+		return o
+	}
+	return nil
 }
 
 // reorderLine is one rebuilt line of the repeat order: the
@@ -71,6 +94,10 @@ type reorderLine struct {
 // only naming the act, and everything after the naming is
 // this code, from the books.
 func startReorder(from string, s *Session, merchant *catalogue.Merchant, shopID, msg string) bool {
+	if foreignRefOrder(from, msg) != nil {
+		whatsapp.SendText(from, "That order was placed from a different number, so I cannot pull it up from here. If it is yours, talk to me from the number you ordered with and I will find it at once.")
+		return true
+	}
 	source := reorderSource(shopID, from, msg)
 	if source == nil {
 		return false

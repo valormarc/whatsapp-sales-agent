@@ -40,6 +40,13 @@ import (
 
 const defaultBase = "https://api.seevplus.com"
 
+// seevHTTPClient carries every call to Seev. The default
+// client and http.Get have no timeout: a hung Seev
+// connection would hold a checkout or a settlement open
+// indefinitely. Thirty seconds is far beyond a healthy
+// Seev answer.
+var seevHTTPClient = &http.Client{Timeout: 30 * time.Second}
+
 // FeeBPS is Seev's fee in basis points: 1.5 percent.
 const FeeBPS = 150
 
@@ -170,7 +177,7 @@ func CreatePaymentLink(r LinkRequest) Link {
 		idem = r.Reference
 	}
 	req.Header.Set("idempotency-key", idem)
-	res, err := http.DefaultClient.Do(req)
+	res, err := seevHTTPClient.Do(req)
 	if err != nil {
 		// A failed link must never be a silent one: the provider's
 		// answer (or the transport error) is the only evidence of
@@ -228,7 +235,7 @@ func VerifyPayment(providerRef string) *Verification {
 	if providerRef == "" {
 		return nil
 	}
-	res, err := http.Get(apiBase() + "/api/v1/developer/payments/" + providerRef)
+	res, err := seevHTTPClient.Get(apiBase() + "/api/v1/developer/payments/" + providerRef)
 	if err != nil {
 		return nil
 	}

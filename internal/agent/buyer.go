@@ -457,8 +457,17 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				"No rush at all. The " + p.Name + " stands at " + money.GHS(p.ListPrice) + ".",
 			}
 		} else {
+			// A bare acknowledgement with nothing in view:
+			// the clarifier phrases the ask from the shelf
+			// when the model can be read (see clarify.go);
+			// the plain variants below are its fallback.
+			if line := clarifyLine(merchant, msg); line != "" {
+				whatsapp.SendText(from, line)
+				s.Acks++
+				return
+			}
 			variants = []string{
-				"No problem. Tell me what you are after and I will sort you out.",
+				"No problem. Tell me the item and I will price it for you.",
 				"Alright. What are you looking for today?",
 				"Ok, I am here. Name the item and I will price it for you.",
 			}
@@ -514,7 +523,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			// after all that silence is a buyer trying to buy.
 			return
 		case !shopish && (arithmeticRe.MatchString(lower) || offTopicRe.MatchString(lower)):
-			laneStrike(from, s, merchant)
+			laneStrike(from, s, merchant, msg)
 			return
 		case shopish || parseOffer(lower) != nil:
 			// Talk about the shop reopens the lane and clears
@@ -596,6 +605,15 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		target := catalogue.FindProduct(shopID, lower)
 		if target == nil {
 			target = s.LastViewed
+		}
+		if target == nil {
+			// A picture ask with nothing in view and nothing
+			// named: ask which one and put the shelf in front
+			// of her, rather than dumping the whole catalogue
+			// as the turn's tail used to.
+			whatsapp.SendText(from, "Which one would you like to see? Tap it on the shelf and I will show you its picture.")
+			presentShelf(from, merchant)
+			return
 		}
 		if target != nil {
 			s.LastViewed = target
@@ -711,5 +729,14 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		return
 	}
 
+	// Nothing in her words matched anything the shop can
+	// act on. The clarifier speaks first when the model can
+	// be read (see clarify.go); the fixed line and the
+	// catalogue are the model-down fallback, kept for
+	// exactly that case.
+	if line := clarifyLine(merchant, msg); line != "" {
+		whatsapp.SendText(from, line)
+		return
+	}
 	whatsapp.SendText(from, "Tell me what you are after and I will sort you out.\n"+productListText(shopID))
 }

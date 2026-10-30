@@ -76,7 +76,7 @@ func post(call seevCall) (map[string]any, int, bool) {
 	}
 	req.Header.Set("authorization", "Bearer "+os.Getenv("SEEV_SECRET_KEY"))
 	req.Header.Set("content-type", "application/json")
-	res, err := http.DefaultClient.Do(req)
+	res, err := seevHTTPClient.Do(req)
 	if err != nil {
 		log.Printf("seev %s: request failed: %v", call.path, err)
 		return nil, 0, false

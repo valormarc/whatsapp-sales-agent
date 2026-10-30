@@ -75,13 +75,20 @@ func availabilityFramed(lower string) bool {
 // answering even the easy ones teaches the whole market to come
 // back with more, and every answer is bought with the merchant's
 // money and spoken in her name.
-func laneStrike(from string, s *Session, merchant *catalogue.Merchant) {
+func laneStrike(from string, s *Session, merchant *catalogue.Merchant, said string) {
 	s.OffTopic++
 	switch {
 	case s.OffTopic == 1:
+		// The steer back to the shop is drafted from the
+		// shelf when the model can be read (see clarify.go);
+		// the fixed line and the list are its fallback.
+		ask := clarifyLine(merchant, said)
+		if ask == "" {
+			ask = "Tell me what you are after and I will sort you out.\n" + productListText(merchant.ID)
+		}
 		sendPieces(from,
 			"That one is outside my work here. I sell for "+merchant.Name+": the goods, their prices and delivery.",
-			"Tell me what you are after and I will sort you out.\n"+productListText(merchant.ID))
+			ask)
 	case s.OffTopic == 2:
 		whatsapp.SendText(from, "I only handle the shop here: what we sell, prices and delivery. Name an item and I will price it for you.")
 	default:

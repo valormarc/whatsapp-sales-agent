@@ -42,15 +42,17 @@ func buyTilapiaOnAma(t *testing.T, buyer string) (*chat, string, map[string]any)
 }
 
 func TestLinkSuccessAlertsTheMerchantInLines(t *testing.T) {
-	t.Setenv("SEEV_SECRET_KEY", "")
-	t.Setenv("SEEV_WEBHOOK_SECRET", "")
+	t.Setenv("SEEV_SECRET_KEY", "sk_test_alerts")
+	t.Setenv("SEEV_WEBHOOK_SECRET", "whsec_alerts")
 	buyer := "233550008101"
 	c, _, placed := buyTilapiaOnAma(t, buyer)
 	ref := placed["reference"].(string)
 	agreed := int(placed["total"].(float64))
 
+	fakeSeevReadback(t, "completed", float64(agreed*100))
 	body := `{"data":{"reference":"SEEVSIM9","status":"completed","amount":` + strconv.Itoa(agreed) + `},"meta":{"order_reference":"` + ref + `"}}`
-	if status := seevwebhook.Handle(body, "", ""); status != 200 {
+	ts, sig := signSeevWebhook(t, body)
+	if status := seevwebhook.Handle(body, ts, sig); status != 200 {
 		t.Fatalf("webhook status %d, want 200", status)
 	}
 	notes := c.replies(t, ownerAma)
@@ -75,15 +77,16 @@ func TestLinkSuccessAlertsTheMerchantInLines(t *testing.T) {
 }
 
 func TestLinkFailureAlertsBothSides(t *testing.T) {
-	t.Setenv("SEEV_SECRET_KEY", "")
-	t.Setenv("SEEV_WEBHOOK_SECRET", "")
+	t.Setenv("SEEV_SECRET_KEY", "sk_test_alerts")
+	t.Setenv("SEEV_WEBHOOK_SECRET", "whsec_alerts")
 	buyer := "233550008102"
 	c, _, placed := buyTilapiaOnAma(t, buyer)
 	ref := placed["reference"].(string)
 	agreed := int(placed["total"].(float64))
 
 	body := `{"data":{"reference":"SEEVSIM9","status":"failed","amount":` + strconv.Itoa(agreed) + `},"meta":{"order_reference":"` + ref + `"}}`
-	if status := seevwebhook.Handle(body, "", ""); status != 200 {
+	ts, sig := signSeevWebhook(t, body)
+	if status := seevwebhook.Handle(body, ts, sig); status != 200 {
 		t.Fatalf("webhook status %d, want 200", status)
 	}
 	if got := c.last(t, buyer); !strings.Contains(got, "did not go through") {

@@ -7,10 +7,13 @@ package orders
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/datadir"
 )
@@ -172,6 +175,8 @@ type Order struct {
 // All returns every order in the book, in reference order, for
 // the sweeps that walk the whole book (the unpaid watch).
 func (b *Book) All() []Order {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	all := b.loadAll()
 	refs := make([]string, 0, len(all))
 	for ref := range all {
@@ -205,9 +210,16 @@ func marshalJSON(v any) ([]byte, error) {
 	return []byte(strings.TrimSuffix(buf.String(), "\n")), nil
 }
 
-// Book is an order book stored in one JSON file.
+// Book is an order book stored in one JSON file. The mutex
+// is not decoration: this book is written from agent turns
+// (under the session lock), from the payment webhook and
+// from the unpaid watch (both outside it), and a load,
+// modify, save cycle from two of those at once would
+// silently drop one side's orders. Every public method
+// holds the lock across its whole cycle.
 type Book struct {
 	file string
+	mu   sync.Mutex
 }
 
 // New returns an order book backed by the given file.
@@ -218,6 +230,11 @@ func New(file string) *Book {
 // Default is the shared order book, backed by data/orders.json.
 var Default = New(datadir.Path("orders.json"))
 
+// loadAll reads the book. The caller holds the lock. A file
+// that exists but does not parse is preserved byte for byte
+// under a .corrupt- name and shouted about, never silently
+// read as an empty book: read as empty, the next save would
+// wipe every order the shop ever took.
 func (b *Book) loadAll() map[string]Order {
 	data, err := os.ReadFile(b.file)
 	if err != nil {
@@ -225,15 +242,26 @@ func (b *Book) loadAll() map[string]Order {
 	}
 	all := map[string]Order{}
 	if err := json.Unmarshal(data, &all); err != nil {
+		bad := b.file + ".corrupt-" + time.Now().Format("20060102-150405")
+		_ = os.WriteFile(bad, data, 0o600)
+		fmt.Fprintf(os.Stderr, "orders: %s does not parse (%v); preserved as %s and read as empty\n", b.file, err, bad)
 		return map[string]Order{}
 	}
 	return all
 }
 
+// saveAll writes the book atomically: a temporary file in
+// the same directory, renamed over the book, so a crash
+// mid-write leaves either the old book or the new one,
+// never a torn half. The caller holds the lock. The mode is
+// owner-only: the book holds phone numbers and addresses.
 func (b *Book) saveAll(all map[string]Order) {
-	_ = os.MkdirAll(datadir.Dir(), 0o755)
+	_ = os.MkdirAll(datadir.Dir(), 0o700)
 	if data, err := marshalJSON(all); err == nil {
-		_ = os.WriteFile(b.file, data, 0o644)
+		tmp := b.file + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o600); err == nil {
+			_ = os.Rename(tmp, b.file)
+		}
 	}
 }
 
@@ -241,6 +269,8 @@ func (b *Book) saveAll(all map[string]Order) {
 // starts as pending unless the given order already carries a status.
 // It returns the stored order.
 func (b *Book) RecordOrder(reference string, order Order) Order {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	all := b.loadAll()
 	stored := order
 	stored.Reference = reference
@@ -254,6 +284,8 @@ func (b *Book) RecordOrder(reference string, order Order) Order {
 
 // GetOrder returns the order with the given reference, or nil.
 func (b *Book) GetOrder(reference string) *Order {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if reference == "" {
 		return nil
 	}
@@ -268,6 +300,8 @@ func (b *Book) GetOrder(reference string) *Order {
 // FindByProviderRef finds an order by Seev's session reference, for
 // webhooks that carry Seev's reference rather than ours.
 func (b *Book) FindByProviderRef(providerRef string) *Order {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if providerRef == "" {
 		return nil
 	}
@@ -283,6 +317,8 @@ func (b *Book) FindByProviderRef(providerRef string) *Order {
 // SetStatus updates an order's status and returns the order, or nil
 // when the reference is unknown.
 func (b *Book) SetStatus(reference, status string) *Order {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	all := b.loadAll()
 	o, ok := all[reference]
 	if !ok {
@@ -299,6 +335,8 @@ func (b *Book) SetStatus(reference, status string) *Order {
 // unknown. Payment state (the settled path, the settlement
 // itself) moves through here, one small step at a time.
 func (b *Book) Update(reference string, mutate func(*Order)) *Order {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	all := b.loadAll()
 	o, ok := all[reference]
 	if !ok {
@@ -317,7 +355,16 @@ func (b *Book) Update(reference string, mutate func(*Order)) *Order {
 // "HACK-" plus a millisecond stamp, whose tail orders them the
 // same way. An unparseable reference sorts as the oldest of all.
 func refStamp(reference string) int64 {
-	n, err := strconv.ParseInt(reference[strings.LastIndex(reference, "-")+1:], 10, 64)
+	// The serial is the figure segment after the shop code:
+	// the second segment, whether the reference ends there
+	// (EFUA-0007) or carries its unguessable tail after it
+	// (EFUA-0007-K7Q). The legacy HACK- references carry
+	// their millisecond stamp in the same place.
+	parts := strings.Split(reference, "-")
+	if len(parts) < 2 {
+		return 0
+	}
+	n, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
 		return 0
 	}
@@ -329,6 +376,8 @@ func refStamp(reference string) int64 {
 // already taken), so a shop's references run 0001, 0002, ... in
 // the order her sales complete.
 func (b *Book) CountFor(merchantID string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	n := 0
 	for _, o := range b.loadAll() {
 		if o.MerchantID == merchantID {
@@ -343,6 +392,8 @@ func (b *Book) CountFor(merchantID string) int {
 // my order" pulls up her latest one in the shop she is standing
 // in, and only ever hers.
 func (b *Book) NewestFor(merchantID, buyer string) *Order {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	var best *Order
 	for _, o := range b.loadAll() {
 		if o.MerchantID != merchantID || o.From != buyer {
@@ -361,6 +412,8 @@ func (b *Book) NewestFor(merchantID, buyer string) *Order {
 // here: to her own newest open order, in the shop she is bound
 // to, and never to another shop's order or another buyer's.
 func (b *Book) NewestUnpaidFor(merchantID, buyer string) *Order {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	var best *Order
 	for _, o := range b.loadAll() {
 		if o.MerchantID != merchantID || o.From != buyer || !o.Unpaid() {

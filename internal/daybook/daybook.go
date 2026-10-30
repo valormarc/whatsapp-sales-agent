@@ -17,9 +17,11 @@ package daybook
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
@@ -72,9 +74,14 @@ func marshalJSON(v any) ([]byte, error) {
 	return []byte(strings.TrimSuffix(buf.String(), "\n")), nil
 }
 
-// Daybook is a day book stored in one JSON file.
+// Daybook is a day book stored in one JSON file. It is
+// written from agent turns and from the payment webhook's
+// settlement path, which do not hold the same locks, so
+// every public method holds this mutex across its whole
+// load, modify, save cycle.
 type Daybook struct {
 	file string
+	mu   sync.Mutex
 }
 
 // New returns a day book backed by the given file.
@@ -85,6 +92,10 @@ func New(file string) *Daybook {
 // Default is the shared day book, backed by data/daybook.json.
 var Default = New(datadir.Path("daybook.json"))
 
+// loadAll reads the book; the caller holds the lock. A
+// file that exists but does not parse is preserved under a
+// .corrupt- name and shouted about, never silently read as
+// empty: the next save would wipe the day's trading.
 func (b *Daybook) loadAll() map[string]State {
 	data, err := os.ReadFile(b.file)
 	if err != nil {
@@ -92,19 +103,25 @@ func (b *Daybook) loadAll() map[string]State {
 	}
 	all := map[string]State{}
 	if err := json.Unmarshal(data, &all); err != nil {
+		bad := b.file + ".corrupt-" + time.Now().Format("20060102-150405")
+		_ = os.WriteFile(bad, data, 0o600)
+		fmt.Fprintf(os.Stderr, "daybook: %s does not parse (%v); preserved as %s and read as empty\n", b.file, err, bad)
 		return map[string]State{}
 	}
 	return all
 }
 
+// saveAll writes the book atomically (temporary file,
+// renamed over), owner-only: the day's money story is the
+// shop's own business. The caller holds the lock.
 func (b *Daybook) saveAll(all map[string]State) {
-	_ = os.MkdirAll(filepath.Dir(b.file), 0o755)
-	// The Node implementation creates its source-tree data directory on
-	// save regardless of the file in use; mirror that so the runtime
-	// layout is identical.
-	_ = os.MkdirAll(datadir.Dir(), 0o755)
+	_ = os.MkdirAll(filepath.Dir(b.file), 0o700)
+	_ = os.MkdirAll(datadir.Dir(), 0o700)
 	if data, err := marshalJSON(all); err == nil {
-		_ = os.WriteFile(b.file, data, 0o644)
+		tmp := b.file + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o600); err == nil {
+			_ = os.Rename(tmp, b.file)
+		}
 	}
 }
 
@@ -112,6 +129,15 @@ func (b *Daybook) saveAll(all map[string]State) {
 // starts a fresh book. A non-zero allowance in opts updates the stored
 // allowance for the day.
 func (b *Daybook) GetDayState(merchantID string, opts Options) State {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.getDayState(merchantID, opts)
+}
+
+// getDayState is GetDayState with the lock already held:
+// the recording methods below compose it inside their own
+// locked cycle, and a plain mutex cannot be taken twice.
+func (b *Daybook) getDayState(merchantID string, opts Options) State {
 	date := opts.Date
 	if date == "" {
 		date = TodayString()
@@ -134,7 +160,9 @@ func (b *Daybook) GetDayState(merchantID string, opts Options) State {
 // the giveaway (list minus agreed, never negative) drawn from the
 // allowance. It returns the updated day state.
 func (b *Daybook) RecordSale(merchantID string, s Sale) State {
-	state := b.GetDayState(merchantID, Options{Allowance: s.Allowance, Date: s.Date})
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.getDayState(merchantID, Options{Allowance: s.Allowance, Date: s.Date})
 	state.Sales++
 	state.Revenue += s.AgreedPrice
 	given := s.ListPrice - s.AgreedPrice
@@ -156,6 +184,8 @@ func (b *Daybook) RecordSale(merchantID string, s Sale) State {
 // rewritten. Figures never drop below zero. It reports
 // whether the reversal landed.
 func (b *Daybook) RecordCancellation(merchantID string, s Sale) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	all := b.loadAll()
 	stored, ok := all[merchantID]
 	if !ok || stored.Date != s.Date {
@@ -187,7 +217,9 @@ func (b *Daybook) RecordCancellation(merchantID string, s Sale) bool {
 // pattern of walk-aways on one product is pricing information, not
 // failure.
 func (b *Daybook) RecordWalkAway(merchantID string, opts Options) State {
-	state := b.GetDayState(merchantID, opts)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.getDayState(merchantID, opts)
 	state.WalkAways++
 	all := b.loadAll()
 	all[merchantID] = state

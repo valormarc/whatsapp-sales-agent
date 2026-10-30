@@ -134,7 +134,7 @@ func appendOutbox(rec outboxRecord) {
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(rec)
-	f, err := os.OpenFile(datadir.Path("outbox.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(datadir.Path("outbox.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
@@ -151,6 +151,14 @@ func appendOutbox(rec outboxRecord) {
 // a bubble and is never paced. Dry-run sends never reach
 // post, so tests and simulators run at full speed.
 var sendPaceGap = 1200 * time.Millisecond
+
+// graphHTTPClient carries every call to the Graph API. The
+// default client has no timeout, and a hung connection there
+// would hold a buyer's whole turn (and, under the session
+// lock, every buyer's turn) open indefinitely; thirty
+// seconds is far beyond a healthy Graph answer, media
+// downloads included.
+var graphHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 var (
 	paceMu   sync.Mutex
@@ -197,7 +205,7 @@ func post(record outboxRecord, payload any) Result {
 	}
 	req.Header.Set("authorization", "Bearer "+token)
 	req.Header.Set("content-type", "application/json")
-	res, err := http.DefaultClient.Do(req)
+	res, err := graphHTTPClient.Do(req)
 	if err != nil {
 		appendOutbox(record)
 		return Result{}
@@ -254,7 +262,7 @@ func DownloadMediaBytes(mediaID string) (data []byte, mimeType string, ok bool) 
 			return nil, 0, err
 		}
 		req.Header.Set("authorization", "Bearer "+token)
-		res, err := http.DefaultClient.Do(req)
+		res, err := graphHTTPClient.Do(req)
 		if err != nil {
 			return nil, 0, err
 		}
@@ -321,7 +329,7 @@ func UploadMedia(data []byte, mime string) (string, bool) {
 	}
 	req.Header.Set("authorization", "Bearer "+token)
 	req.Header.Set("content-type", mw.FormDataContentType())
-	res, err := http.DefaultClient.Do(req)
+	res, err := graphHTTPClient.Do(req)
 	if err != nil {
 		return "", false
 	}

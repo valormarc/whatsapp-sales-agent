@@ -89,7 +89,7 @@ func SnapshotSessionsNow() {
 		return
 	}
 	tmp := datadir.Path("sessions.json.tmp")
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return
 	}
 	_ = os.Rename(tmp, datadir.Path("sessions.json"))

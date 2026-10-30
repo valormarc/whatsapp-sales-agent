@@ -12,9 +12,11 @@ package wants
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/datadir"
@@ -43,9 +45,13 @@ func marshalJSON(v any) ([]byte, error) {
 	return []byte(strings.TrimSuffix(buf.String(), "\n")), nil
 }
 
-// Book is a want book stored in one JSON file.
+// Book is a want book stored in one JSON file. Every
+// public method holds the mutex across its whole load,
+// modify, save cycle: the book is written from buyer turns
+// and from merchant stocking turns alike.
 type Book struct {
 	file string
+	mu   sync.Mutex
 }
 
 // New returns a want book backed by the given file.
@@ -66,6 +72,10 @@ type store struct {
 	Wants []Want `json:"wants"`
 }
 
+// loadAll reads the book; the caller holds the lock. A
+// file that exists but does not parse is preserved under a
+// .corrupt- name and shouted about, never silently read as
+// empty: the next save would wipe every recorded want.
 func (b *Book) loadAll() []Want {
 	data, err := os.ReadFile(b.file)
 	if err != nil {
@@ -73,16 +83,24 @@ func (b *Book) loadAll() []Want {
 	}
 	var s store
 	if err := json.Unmarshal(data, &s); err != nil {
+		bad := b.file + ".corrupt-" + time.Now().Format("20060102-150405")
+		_ = os.WriteFile(bad, data, 0o600)
+		fmt.Fprintf(os.Stderr, "wants: %s does not parse (%v); preserved as %s and read as empty\n", b.file, err, bad)
 		return nil
 	}
 	return s.Wants
 }
 
+// saveAll writes the book atomically (temporary file,
+// renamed over), owner-only. The caller holds the lock.
 func (b *Book) saveAll(all []Want) {
-	_ = os.MkdirAll(filepath.Dir(b.file), 0o755)
-	_ = os.MkdirAll(datadir.Dir(), 0o755)
+	_ = os.MkdirAll(filepath.Dir(b.file), 0o700)
+	_ = os.MkdirAll(datadir.Dir(), 0o700)
 	if data, err := marshalJSON(store{Wants: all}); err == nil {
-		_ = os.WriteFile(b.file, data, 0o644)
+		tmp := b.file + ".tmp"
+		if err := os.WriteFile(tmp, data, 0o600); err == nil {
+			_ = os.Rename(tmp, b.file)
+		}
 	}
 }
 
@@ -95,6 +113,8 @@ func normalise(text string) string {
 // compared trimmed and case-insensitively. It reports whether a new
 // entry was added.
 func (b *Book) Record(merchantID, buyer, text string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	text = strings.TrimSpace(text)
 	if merchantID == "" || buyer == "" || text == "" {
 		return false
@@ -116,6 +136,8 @@ func (b *Book) Record(merchantID, buyer, text string) bool {
 // no other shop's: a merchant only ever sees what her own buyers
 // asked her for.
 func (b *Book) List(merchantID string) []Want {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	var out []Want
 	for _, w := range b.loadAll() {
 		if w.MerchantID == merchantID {
@@ -171,6 +193,8 @@ func MatchesWant(wantText, productName string) bool {
 // answers, and marks them alerted in the book, so each want produces
 // at most one alert however many matching products arrive later.
 func (b *Book) MatchAndMark(merchantID, productName string) []Want {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	all := b.loadAll()
 	var matched []Want
 	changed := false

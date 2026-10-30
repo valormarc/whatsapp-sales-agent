@@ -120,3 +120,49 @@ func TestIntakeGateRefusesASentenceFigure(t *testing.T) {
 		t.Fatalf("saved product = %+v, want her confirmed 4500 and last 3900", p)
 	}
 }
+
+// The shapes sellers actually answer in are wider than the
+// first allowlist held: GHS before the figure, the singular
+// cedi, politeness and finality words riding along, the
+// market's own na and paa, pesewas named loosely, and the
+// k thousand. Each of these must settle its step at the
+// figure meant, while the sentence refusals above stand.
+func TestWalkAcceptsTheWidenedPriceShapes(t *testing.T) {
+	forms := []struct {
+		answer string
+		list   float64
+	}{
+		{"GHS 450", 450},
+		{"450 cedi", 450},
+		{"450 please", 450},
+		{"450 final", 450},
+		{"na 450", 450},
+		{"450 paa", 450},
+		{"450 pesewas", 450},
+		{"1k", 1000},
+	}
+	names := []string{"One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight"}
+	for i, form := range forms {
+		merchant := "2335500018" + string(rune('1'+i)) + "0"
+		dir := setupChat(t, merchant, shopWithBag)
+		c := &chat{dir: dir}
+		name := "Shape Item " + names[i]
+
+		c.say(t, merchant, "add a product")
+		c.last(t, merchant)
+		c.say(t, merchant, name)
+		c.last(t, merchant)
+		c.say(t, merchant, "A plain test item.")
+		c.last(t, merchant)
+		c.say(t, merchant, form.answer)
+		if got := c.last(t, merchant); !strings.Contains(got, "last price") {
+			t.Fatalf("%q at the list step must settle, got %q", form.answer, got)
+		}
+		c.say(t, merchant, "400")
+		finishWalkToShelf(t, c, merchant)
+		p := catalogue.FindByName(MerchantID, name)
+		if p == nil || p.ListPrice != form.list {
+			t.Fatalf("%q saved = %+v, want list %v", form.answer, p, form.list)
+		}
+	}
+}

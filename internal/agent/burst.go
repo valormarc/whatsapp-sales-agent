@@ -454,7 +454,7 @@ func allFigures(text string) []float64 {
 // burstFigureScrub matches a figure as allFigures reads
 // one, so the shape test below sees the same numbers the
 // answer parser would claim.
-var burstFigureScrub = regexp.MustCompile(`[0-9][0-9,]*(\.[0-9]+)?`)
+var burstFigureScrub = regexp.MustCompile(`[0-9][0-9,]*(\.[0-9]+)?[kK]?`)
 
 // burstAnswerShape reports whether a message is shaped
 // like a price answer: once its figures are removed, only

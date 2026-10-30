@@ -71,7 +71,7 @@ func saveInHand(all []inHandRequest) {
 	if err != nil {
 		return
 	}
-	_ = os.WriteFile(datadir.Path("inhands.json"), data, 0o644)
+	_ = os.WriteFile(datadir.Path("inhands.json"), data, 0o600)
 }
 
 func openInHand(q inHandRequest) {

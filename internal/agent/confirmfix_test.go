@@ -128,7 +128,7 @@ func TestDiscoveryTasteIsRecordedAsShown(t *testing.T) {
 	dir := setupChat(t, "233240000001", shopBagAndHeels)
 	_ = dir
 	buyer := "233550007205"
-	if !actOnDiscovery(buyer, &discoveryUnderstanding{Intent: "search", Item: "laptops"}) {
+	if !actOnDiscovery(buyer, "", &discoveryUnderstanding{Intent: "search", Item: "laptops"}) {
 		t.Fatal("the no-match search was not served")
 	}
 	pre := sessions[sessionKey("", buyer)]

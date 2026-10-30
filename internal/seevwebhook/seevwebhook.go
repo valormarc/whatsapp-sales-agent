@@ -25,6 +25,10 @@ import (
 // The shop is resolved from the order itself, so a settlement notice
 // for one shop can never land on another shop's owner. The env
 // number is only the fallback for a shop that records no owner.
+// verifyPaymentFn is the session read-back, seamed so tests
+// can stand Seev in without a network.
+var verifyPaymentFn = checkout.VerifyPayment
+
 func notifyMerchant(order *orders.Order, text string) {
 	phone := ""
 	if order != nil && order.MerchantID != "" {
@@ -51,10 +55,15 @@ func deref(s *string) string {
 // with: 401 for a bad signature, 400 for an unparseable body, 200 for
 // everything else, including events we deliberately do not act on.
 func Handle(rawBody, timestamp, signature string) int {
-	if secret := os.Getenv("SEEV_WEBHOOK_SECRET"); secret != "" {
-		if !checkout.VerifyWebhookSignatureNow(rawBody, timestamp, signature, secret) {
-			return 401
-		}
+	secret := os.Getenv("SEEV_WEBHOOK_SECRET")
+	if secret == "" {
+		// Fail closed, exactly as the WhatsApp webhook does:
+		// an unset secret never means "no signature needed"
+		// on the endpoint that marks orders paid.
+		return 401
+	}
+	if !checkout.VerifyWebhookSignatureNow(rawBody, timestamp, signature, secret) {
+		return 401
 	}
 
 	var body json.RawMessage
@@ -95,6 +104,17 @@ func Handle(rawBody, timestamp, signature string) int {
 		return 200
 	}
 
+	if !checkout.Enabled() {
+		// This deployment mints no payment links, so a paid
+		// event has nothing legitimate to settle here. Hold
+		// the order and tell the merchant, rather than
+		// marking goods paid on an event alone.
+		notifyMerchant(order,
+			"A payment event arrived for ref "+order.Reference+", but checkout is not set up on this deployment, so I have not marked the order paid. Please check the Seev dashboard.",
+		)
+		return 200
+	}
+
 	// Amount must match what the buyer was charged exactly: the
 	// item price plus the shop's delivery fee when one was charged.
 	// The order stores cedis. The webhook event reports its amount
@@ -106,28 +126,36 @@ func Handle(rawBody, timestamp, signature string) int {
 		return major != nil && money.Round(*major*100) != money.Round(charged*100)
 	}
 
-	// The session read-back is the authority when Seev answers:
-	// it is Seev's own record of this exact session. If it says
-	// not paid, it wins over the event. If it says paid for the
-	// charged amount, the order settles on its word even if the
+	// The session read-back is the authority: it is Seev's
+	// own record of this exact session. If it says not paid,
+	// it wins over the event. If it says paid for the charged
+	// amount, the order settles on its word even if the
 	// event's own amount reading is ever in a different unit.
-	// Only when Seev cannot be reached does the signature-
-	// verified event stand alone, with its amount checked.
+	// If Seev cannot be reached to confirm its own event,
+	// the order is HELD and the merchant told: an outage
+	// must never be what marks goods paid. The event stands
+	// alone only when the order carries no provider session
+	// to read back (the dry-run road, where no real money
+	// moves), and even then its amount is checked below.
 	readbackAgrees := false
-	if checkout.Enabled() && order.ProviderRef != nil && *order.ProviderRef != "" {
-		check := checkout.VerifyPayment(*order.ProviderRef)
-		if check != nil {
-			if !checkout.IsPaidStatus(check.Status) {
-				return 200
-			}
-			if amountMismatch(check.AmountMajor) {
-				notifyMerchant(order,
-					"Payment amount mismatch on ref "+order.Reference+": the order is "+money.GHS(charged)+" but Seev reports "+money.GHS(*check.AmountMajor)+". I have not marked it paid. Please check the Seev dashboard.",
-				)
-				return 200
-			}
-			readbackAgrees = true
+	if order.ProviderRef != nil && *order.ProviderRef != "" {
+		check := verifyPaymentFn(*order.ProviderRef)
+		if check == nil {
+			notifyMerchant(order,
+				"A payment event arrived for ref "+order.Reference+", but I could not confirm it with Seev just now, so I have not marked the order paid. Please check the Seev dashboard.",
+			)
+			return 200
 		}
+		if !checkout.IsPaidStatus(check.Status) {
+			return 200
+		}
+		if amountMismatch(check.AmountMajor) {
+			notifyMerchant(order,
+				"Payment amount mismatch on ref "+order.Reference+": the order is "+money.GHS(charged)+" but Seev reports "+money.GHS(*check.AmountMajor)+". I have not marked it paid. Please check the Seev dashboard.",
+			)
+			return 200
+		}
+		readbackAgrees = true
 	}
 	if amountMismatch(event.AmountMajor) && !readbackAgrees {
 		notifyMerchant(order,

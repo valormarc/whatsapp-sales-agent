@@ -22,8 +22,11 @@ import (
 // orderRefRe finds a quoted order reference in a buyer's words:
 // letters, a dash, and at least four figures (serials are minted
 // zero-padded to four; a shop code like BELORA-2, with its single
-// figure, can never be mistaken for one).
-var orderRefRe = regexp.MustCompile(`\b([A-Za-z]{2,}-\d{4,})\b`)
+// figure, can never be mistaken for one). New references carry a
+// three-character tail behind the serial, captured when present;
+// the references minted before tails still match on the serial
+// alone.
+var orderRefRe = regexp.MustCompile(`\b([A-Za-z]{2,}-\d{4,}(?:-[A-Za-z0-9]{3})?)\b`)
 
 // orderCheckRe reads a reference-less ask after an order: "check
 // my order", "order status", "where is my order". "Order" as a

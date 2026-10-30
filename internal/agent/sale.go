@@ -4,6 +4,7 @@
 package agent
 
 import (
+	"crypto/rand"
 	"fmt"
 	"strings"
 	"time"
@@ -15,6 +16,27 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
+
+// refTailAlphabet has no look-alike characters: no 0 with O,
+// no 1 with I or L, so a tail read aloud or typed from a
+// receipt is the tail that was minted.
+const refTailAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+
+// refTail draws a new reference's unguessable tail, three
+// characters from the crypto source.
+func refTail() string {
+	var b [3]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		// Never expected. Uniqueness still rests on the
+		// serial; only the unguessability is thinner.
+		return "XXX"
+	}
+	out := make([]byte, 3)
+	for i, v := range b {
+		out[i] = refTailAlphabet[int(v)%len(refTailAlphabet)]
+	}
+	return string(out)
+}
 
 // completeSale finishes a sale whose fulfilment is settled: the
 // order is recorded with how the goods move, the day book books
@@ -41,16 +63,20 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	// is Efua's seventh order) and no other shop can ever mint
 	// the same one. The count is bumped past any key already in
 	// the book, so a reference is never reused and an order is
-	// never silently overwritten.
+	// never silently overwritten. Behind the serial rides a
+	// short unguessable tail (EFUA-0007-K7Q): a reference is
+	// quoted back to pull an order up, and a bare serial is
+	// guessable by anyone who can count, so the serial alone
+	// is never the whole credential.
 	code := merchant.ShopCode
 	if code == "" {
 		code = strings.ToUpper(shopID)
 	}
 	serial := orders.Default.CountFor(shopID) + 1
-	reference := fmt.Sprintf("%s-%04d", code, serial)
+	reference := fmt.Sprintf("%s-%04d-%s", code, serial, refTail())
 	for orders.Default.GetOrder(reference) != nil {
 		serial++
-		reference = fmt.Sprintf("%s-%04d", code, serial)
+		reference = fmt.Sprintf("%s-%04d-%s", code, serial, refTail())
 	}
 	// Delivery money has two purses, and the shop's own setting
 	// (deliveryPaidToOf) says which one it falls into. When the

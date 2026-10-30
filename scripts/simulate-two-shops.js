@@ -16,6 +16,8 @@
 //
 // Run: node scripts/simulate-two-shops.js
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
+import { createHmac } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -174,6 +176,30 @@ function figures(text) {
 if (!existsSync(BIN)) {
   throw new Error('Go binary not built: run `go build -o agent ./cmd/agent` first');
 }
+// A stub Seev stands in for the real rail: the agent mints
+// the link against it and reads the session back from it,
+// and the webhook below is signed with the shared secret,
+// because the payment endpoint now fails closed — an
+// unsigned event is a 401, never a settlement.
+const SEEV_WEBHOOK_SECRET = 'whsec_sim';
+const seevStub = createServer((req, res) => {
+  let raw = '';
+  req.on('data', (d) => { raw += d; });
+  req.on('end', () => {
+    res.setHeader('content-type', 'application/json');
+    if (req.method === 'POST' && req.url === '/api/v1/developer/payments') {
+      res.end(JSON.stringify({ data: { checkout_url: 'https://pay.example.test/SEEVSIM', reference: 'SEEVSIM-TWO-SHOPS' } }));
+    } else if (req.method === 'GET' && req.url.startsWith('/api/v1/developer/payments/')) {
+      res.end(JSON.stringify({ data: { status: 'completed', amount: 16000 } }));
+    } else {
+      res.statusCode = 404;
+      res.end('{}');
+    }
+  });
+});
+await new Promise((resolve) => seevStub.listen(0, '127.0.0.1', resolve));
+const SEEV_BASE = `http://127.0.0.1:${seevStub.address().port}`;
+
 const child = spawn(BIN, [], {
   cwd: ROOT,
   env: {
@@ -185,8 +211,11 @@ const child = spawn(BIN, [], {
     MERCHANT_WHATSAPP: '233550009999',
     HACKATHON_AGENT_DATA_DIR: DATA,
     META_MODEL_API_KEY: '',
-    SEEV_SECRET_KEY: '',
-    SEEV_WEBHOOK_SECRET: '',
+    WHATSAPP_DRY_RUN: '1',
+    WHATSAPP_APP_SECRET: '',
+    SEEV_SECRET_KEY: 'sk_sim',
+    SEEV_WEBHOOK_SECRET: SEEV_WEBHOOK_SECRET,
+    SEEV_API_BASE: SEEV_BASE,
   },
   stdio: 'ignore',
 });
@@ -315,13 +344,16 @@ try {
   );
 
   console.log('\n===== SETTLEMENT REACHES ONLY THE SELLING SHOP =====');
+  const hookBody = JSON.stringify({
+    data: { reference: 'SEEVSIM-TWO-SHOPS', status: 'completed', amount: 160 },
+    meta: { order_reference: amaOrder.reference },
+  });
+  const hookTs = `${Math.floor(Date.now() / 1000)}`;
+  const hookSig = 'v1=' + createHmac('sha256', SEEV_WEBHOOK_SECRET).update(`${hookTs}.${hookBody}`).digest('hex');
   const hook = await fetch(`${BASE}/webhooks/seev`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      data: { reference: 'SEEVSIM-TWO-SHOPS', status: 'completed', amount: 160 },
-      meta: { order_reference: amaOrder.reference },
-    }),
+    headers: { 'content-type': 'application/json', 'x-seev-timestamp': hookTs, 'x-seev-signature': hookSig },
+    body: hookBody,
   });
   check('the Seev webhook answers 200', hook.status === 200, `${hook.status}`);
   await sleep(150);

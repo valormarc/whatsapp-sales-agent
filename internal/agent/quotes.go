@@ -118,7 +118,7 @@ func recordMsg(rec msgRecord) {
 	if err != nil {
 		return
 	}
-	f, err := os.OpenFile(msgBookFile(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(msgBookFile(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
@@ -157,7 +157,7 @@ func compactMsgBook() {
 		}
 	}
 	msgOrder = order
-	_ = os.WriteFile(msgBookFile(), []byte(b.String()), 0o644)
+	_ = os.WriteFile(msgBookFile(), []byte(b.String()), 0o600)
 }
 
 // lookupMsg finds one recorded message by id, inside one

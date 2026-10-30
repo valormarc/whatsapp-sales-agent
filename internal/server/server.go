@@ -21,6 +21,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/agent"
 	"github.com/valormarc/hackathon-agent/internal/seevwebhook"
@@ -37,7 +38,19 @@ func verifyToken() string {
 func signatureOK(rawBody []byte, header string) bool {
 	secret := os.Getenv("WHATSAPP_APP_SECRET")
 	if secret == "" {
-		return true // dev mode only; set the secret in production
+		// Fail closed. An unset secret must never read as
+		// "no signature needed": the day an env is lost on a
+		// restart is the day anyone who finds this URL can
+		// post as any phone number, owners included. The one
+		// exception is a process the operator has explicitly
+		// declared a sandbox (WHATSAPP_DRY_RUN=1, the proof
+		// and simulator fleet): it holds no credentials to
+		// send with and settles nothing real, and its
+		// harnesses post unsigned by construction. A live
+		// process never carries that flag, so for it an
+		// unset secret rejects everything. Run says which
+		// case it is at startup.
+		return os.Getenv("WHATSAPP_DRY_RUN") == "1"
 	}
 	if !strings.HasPrefix(header, "sha256=") {
 		return false
@@ -120,7 +133,7 @@ func Handler() http.Handler {
 		mode := q.Get("hub.mode")
 		token := q.Get("hub.verify_token")
 		challenge := q.Get("hub.challenge")
-		if mode == "subscribe" && verifyToken() != "" && token == verifyToken() {
+		if mode == "subscribe" && verifyToken() != "" && len(token) == len(verifyToken()) && subtle.ConstantTimeCompare([]byte(token), []byte(verifyToken())) == 1 {
 			w.Header().Set("content-type", "text/plain")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(challenge))
@@ -131,7 +144,18 @@ func Handler() http.Handler {
 	})
 
 	mux.HandleFunc("POST /webhook", func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
+		// The body is capped before anything reads it: the
+		// signature check needs the bytes, so an uncapped
+		// read would let an unauthenticated request eat
+		// memory before it is ever verified. Two megabytes
+		// is far beyond any real Meta batch.
+		r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = w.Write([]byte("too large"))
+			return
+		}
 		if !signatureOK(raw, r.Header.Get("x-hub-signature-256")) {
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = w.Write([]byte("bad signature"))
@@ -211,7 +235,12 @@ func Handler() http.Handler {
 	})
 
 	mux.HandleFunc("POST /webhooks/seev", func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
+		r.Body = http.MaxBytesReader(w, r.Body, 256<<10)
+		raw, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			return
+		}
 		status := seevwebhook.Handle(string(raw), r.Header.Get("x-seev-timestamp"), r.Header.Get("x-seev-signature"))
 		w.WriteHeader(status)
 		if status == 200 {
@@ -244,6 +273,29 @@ func Run() error {
 	port := Port()
 	agent.StartUnpaidWatch()
 	agent.StartSessionSnapshots()
+	if os.Getenv("WHATSAPP_APP_SECRET") == "" {
+		if os.Getenv("WHATSAPP_DRY_RUN") == "1" {
+			fmt.Fprintln(os.Stderr, "NOTE: dry run with no WHATSAPP_APP_SECRET; webhook signatures are not being checked (sandbox only)")
+		} else {
+			fmt.Fprintln(os.Stderr, "WARNING: WHATSAPP_APP_SECRET is not set; the WhatsApp webhook will reject every request until it is")
+		}
+	}
+	if os.Getenv("SEEV_WEBHOOK_SECRET") == "" {
+		fmt.Fprintln(os.Stderr, "WARNING: SEEV_WEBHOOK_SECRET is not set; the payment webhook will reject every event until it is")
+	}
 	fmt.Printf("hackathon-agent listening on :%d\n", port)
-	return http.ListenAndServe(":"+strconv.Itoa(port), Handler())
+	// Header and read timeouts close the slowloris door: a
+	// connection that dribbles its request is cut in
+	// seconds. There is deliberately no WriteTimeout: the
+	// webhook acks first and then handles the turn inline,
+	// and a long turn must not be severed mid-handling
+	// (Meta already holds its flushed 200 by then).
+	srv := &http.Server{
+		Addr:              ":" + strconv.Itoa(port),
+		Handler:           Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       90 * time.Second,
+	}
+	return srv.ListenAndServe()
 }

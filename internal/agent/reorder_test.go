@@ -69,7 +69,16 @@ func TestReorderNamesAMovedPrice(t *testing.T) {
 	}
 }
 
-func TestReorderFromAnotherNumberByReference(t *testing.T) {
+// A reference presented from a different number is
+// refused, however the story is told: the recap recites
+// the original buyer's delivery place and package name,
+// references are serial, and a guessable number is not a
+// credential. Her "other number" may be true, but the lane
+// cannot tell it from a stranger, so it answers neutrally
+// and no detail crosses. The order's own buyer, quoting
+// the same reference with reorder words, is served as
+// before.
+func TestReorderByReferenceFromAnotherNumberIsRefused(t *testing.T) {
 	setupChat(t, reorderOwner, reorderSeed)
 	c := &chat{seen: map[string]int{}}
 	seedReorderPast(reorderBuyer, 850)
@@ -78,14 +87,27 @@ func TestReorderFromAnotherNumberByReference(t *testing.T) {
 	c.replies(t, reorderBuyer2)
 	c.say(t, reorderBuyer2, "This is my other number. My order was EFUA-0001, can I repurchase it?")
 	got := c.joined(t, reorderBuyer2)
-	if !strings.Contains(got, "Same again") {
-		t.Fatalf("cross-number reorder = %q", got)
+	if !strings.Contains(got, "different number") {
+		t.Fatalf("a foreign reference must get the neutral answer: %q", got)
 	}
-	c.say(t, reorderBuyer2, "Yes")
-	c.replies(t, reorderBuyer2)
-	o := orders.Default.NewestFor("efua", reorderBuyer2)
-	if o == nil || o.From != reorderBuyer2 || o.Reference == "EFUA-0001" {
-		t.Fatalf("the new order must stand on her new number: %+v", o)
+	for _, leak := range []string{"Same again", "Kojo Tsey", "Osu", "Handmade Beaded Bag"} {
+		if strings.Contains(got, leak) {
+			t.Fatalf("the foreign reference leaked %q: %q", leak, got)
+		}
+	}
+	if o := orders.Default.NewestFor("efua", reorderBuyer2); o != nil {
+		t.Fatalf("no order may be built for the stranger: %+v", o)
+	}
+
+	// The same reference in its own buyer's mouth, with
+	// reorder words the net once missed ("I want this order
+	// again" was answered as a status check), opens the lane.
+	c.say(t, reorderBuyer, "SHOP-EFUA")
+	c.replies(t, reorderBuyer)
+	c.say(t, reorderBuyer, "I want this order again EFUA-0001")
+	got = c.joined(t, reorderBuyer)
+	if !strings.Contains(got, "Same again") {
+		t.Fatalf("the owner reordering by reference = %q", got)
 	}
 }
 

@@ -157,7 +157,7 @@ func attachPhotos(merchantID string, product catalogue.Product, refs []string) {
 			ext = ".webp"
 		}
 		rel := filepath.Join("photos", product.ID+"-"+string(rune('1'+i))+ext)
-		if err := os.WriteFile(datadir.Path(rel), data, 0o644); err != nil {
+		if err := os.WriteFile(datadir.Path(rel), data, 0o600); err != nil {
 			continue
 		}
 		kept = append(kept, rel)

@@ -229,7 +229,7 @@ func TestPaymentReportsNeverCrossShops(t *testing.T) {
 
 func TestLinkSettlementStillSettlesAndMarksTheSeevPath(t *testing.T) {
 	t.Setenv("SEEV_SECRET_KEY", "")
-	t.Setenv("SEEV_WEBHOOK_SECRET", "")
+	t.Setenv("SEEV_WEBHOOK_SECRET", "whsec_paths")
 	dir, c := setupTwoShops(t)
 	buyer := "233550008006"
 
@@ -254,8 +254,11 @@ func TestLinkSettlementStillSettlesAndMarksTheSeevPath(t *testing.T) {
 	// haggle carries a deliberate random trader variation, so the
 	// closing price is read from the order, never assumed.
 	agreed := int(placed["total"].(float64))
+	t.Setenv("SEEV_SECRET_KEY", "sk_test_paths")
+	fakeSeevReadback(t, "completed", float64(agreed*100))
 	body := `{"data":{"reference":"SEEVSIM9","status":"completed","amount":` + strconv.Itoa(agreed) + `},"meta":{"order_reference":"` + ref + `"}}`
-	if status := seevwebhook.Handle(body, "", ""); status != 200 {
+	ts, sig := signSeevWebhook(t, body)
+	if status := seevwebhook.Handle(body, ts, sig); status != 200 {
 		t.Fatalf("webhook status %d, want 200", status)
 	}
 	o := ordersOnDisk(t, dir)[0]

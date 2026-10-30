@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Live proof for the understanding lanes: buy again (same
-// number, another number, and through a quote shop's fresh
+// number; a stranger presenting the reference is refused,
+// because the recap recites the buyer's own details and a
+// serial is guessable; and through a quote shop's fresh
 // fee), same details adopted whole, and take it at the
 // price. Real model, dry-run WhatsApp, placeholder payment
 // rail. Run from the repo root with the agent binary built.
@@ -37,7 +39,16 @@ function outbox(to) {
   return fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((r) => r && r.to === to);
 }
 function fresh(to) { const all = outbox(to); const n = seen.get(to) || 0; seen.set(to, all.length); return all.slice(n); }
-const body = (rs) => rs.map((r) => r.body || "").join("\n");
+// All the text a phone would show for a record: the body,
+// any button titles, and a list sheet's row titles and
+// descriptions. The shelf arrives as a list, so a check
+// that waits for a product name must read its rows too —
+// body alone never sees them.
+const body = (rs) => rs.map((r) => [
+  r.body || "",
+  ...(r.buttons || []),
+  ...((r.sections || []).flatMap((s) => (s.rows || []).flatMap((row) => [row.title || "", row.description || ""]))),
+].join("\n")).join("\n");
 const hasButton = (rs) => rs.some((r) => r.kind === "cta_url");
 async function waitFor(to, pred, what, timeout = 150000) {
   const start = Date.now(); let acc = [];
@@ -82,18 +93,24 @@ async function main() {
     let mine = Object.values(orders).filter((o) => o.from === B1 && o.merchantId === "desk" && o.reference !== "DESK-0007");
     check("the repeat order stands with the old details", mine.length === 1 && mine[0].packageName === "Kojo Tsey" && mine[0].price === 120 && mine[0].deliveryFee === 20, JSON.stringify(mine));
 
-    console.log("B. the price moved, and another number presents the order");
+    console.log("B. the price moved; a stranger presents the order and is refused; its owner is served");
     await post(OWNER, "change price of Ankle Strap Heels to 130");
     await waitFor(OWNER, (t) => t.includes("130"), "the price change");
     await post(B2, "SHOP-DESK"); await waitFor(B2, (t) => t.includes("Ankle"), "shelf");
     await post(B2, "This is my other number. My order was DESK-0007, can I repurchase it?");
-    rs = await waitFor(B2, (t) => t.includes("GH₵130 now") || t.includes("Same again"), "the moved-price reorder");
-    check("the moved price is named before she confirms", body(rs).includes("was GH₵120") && body(rs).includes("GH₵130 now"), body(rs));
-    await post(B2, "Yes");
-    await waitFor(B2, (t, all) => hasButton(all), "the pay button");
+    rs = await waitFor(B2, (t) => t.includes("different number"), "the refusal");
+    check("a foreign reference gets the neutral answer", !body(rs).includes("Same again") && !body(rs).includes("Kojo Tsey") && !body(rs).includes("Osu"), body(rs));
     orders = JSON.parse(fs.readFileSync(path.join(dir, "data", "orders.json"), "utf8"));
     mine = Object.values(orders).filter((o) => o.from === B2);
-    check("the repeat stands on her new number at today's price", mine.length === 1 && mine[0].price === 130, JSON.stringify(mine));
+    check("no order is built for the stranger", mine.length === 0, JSON.stringify(mine));
+    await post(B1, "I want this order again DESK-0007");
+    rs = await waitFor(B1, (t) => t.includes("GH₵130 now") || t.includes("Same again"), "the moved-price reorder");
+    check("the moved price is named before she confirms", body(rs).includes("was GH₵120") && body(rs).includes("GH₵130 now"), body(rs));
+    await post(B1, "Yes");
+    await waitFor(B1, (t, all) => hasButton(all), "the pay button");
+    orders = JSON.parse(fs.readFileSync(path.join(dir, "data", "orders.json"), "utf8"));
+    mine = Object.values(orders).filter((o) => o.from === B1 && o.merchantId === "desk" && o.price === 130);
+    check("the owner's repeat stands at today's price", mine.length === 1, JSON.stringify(mine));
 
     console.log("C. take it at the price");
     await post(B3, "SHOP-DESK"); await waitFor(B3, (t) => t.includes("Ankle"), "shelf");
