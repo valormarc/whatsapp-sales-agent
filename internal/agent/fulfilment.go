@@ -111,6 +111,31 @@ func beginFulfilment(from string, s *Session, price float64) {
 	s.AgreedPrice = price
 	s.Ask = price
 	sessions[key] = s
+
+	// Picks from the shelf settle one by one into this
+	// order: when a price agreement lands and picks are
+	// still waiting, the agreed item is parked exactly as
+	// an agreed add parks it, and the next pick goes in
+	// front of her instead. The fulfilment below opens
+	// only when the last pick has been settled, and it
+	// opens for the whole order at once.
+	if s.ShelfSettling && len(s.ShelfPicks) > 0 {
+		agreedProduct, agreedQty, agreedUnit := s.Product, s.Qty, s.Unit
+		agreedLabel := s.itemLabel()
+		if next := takeNextShelfPick(s, shopID); next != nil {
+			s.Basket = append(s.Basket, BasketItem{Product: agreedProduct, AgreedPrice: price, Qty: agreedQty, Unit: agreedUnit})
+			sessions[key] = s
+			deal := "Deal. " + agreedLabel + " is yours for " + money.GHS(price) + ". That makes your order " + money.GHS(basketGoods(s)) + " in all so far."
+			sendPieces(from, deal, "Now the next one you picked:")
+			presentShelfPick(from, next)
+			return
+		}
+		// Nothing she picked can still be settled: the
+		// item in front of her is the last one standing,
+		// and it goes through the ordinary fulfilment.
+		sessions[key] = s
+	}
+
 	deal := "Deal. " + s.itemLabel() + " is yours for " + money.GHS(price) + "."
 	if len(s.Basket) > 0 {
 		deal += " That makes your order " + money.GHS(basketGoods(s)+price) + " in all."

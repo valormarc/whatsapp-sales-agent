@@ -306,13 +306,23 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 					// agreed ones away with it.
 					first := s.Basket[0]
 					rescued := &Session{Stage: "browsing", MerchantID: shopID, Location: s.Location, History: s.History,
-						Basket: s.Basket[1:], Product: first.Product, AgreedPrice: first.AgreedPrice, Qty: first.Qty, Unit: first.Unit}
+						Basket: s.Basket[1:], Product: first.Product, AgreedPrice: first.AgreedPrice, Qty: first.Qty, Unit: first.Unit,
+						ShelfPicks: s.ShelfPicks, ShelfSettling: s.ShelfSettling}
 					sessions[key] = rescued
 					whatsapp.SendText(from, "No problem at all. "+money.GHS(*offer)+" would leave me at a loss on the "+p.Name+", so I will let that one go with thanks.")
 					beginFulfilment(from, rescued, first.AgreedPrice)
 					return
 				}
-				sessions[key] = &Session{Stage: "browsing", MerchantID: shopID}
+				// A let-go while her shelf picks are settling
+				// does not end the order she is building: the
+				// session keeps the queue, and the next pick
+				// goes in front of her once the let-go is said.
+				ns := &Session{Stage: "browsing", MerchantID: shopID, ShelfPicks: s.ShelfPicks, ShelfSettling: s.ShelfSettling}
+				var nextPick *catalogue.Product
+				if ns.ShelfSettling {
+					nextPick = takeNextShelfPick(ns, shopID)
+				}
+				sessions[key] = ns
 				// The let-go carries the next step: the total with
 				// delivery, and the link ready the moment she says
 				// so. A bare "that is final" is where real chats go
@@ -327,6 +337,10 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 						next)
 				} else {
 					whatsapp.SendText(from, "No problem at all. "+money.GHS(*offer)+" would leave me at a loss on this one, so I will let you go with thanks. The "+p.Name+" is here at "+money.GHS(lastPrice)+" whenever you are ready.")
+				}
+				if nextPick != nil {
+					whatsapp.SendText(from, "Now the next one you picked:")
+					presentShelfPick(from, nextPick)
 				}
 			}
 			return
@@ -355,8 +369,10 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		if offer := parseOffer(lower); offer != nil && !howMuchRe.MatchString(lower) {
 			if qp := quotedProductIn(shopID); qp != nil && (s.Product == nil || qp.ID != s.Product.ID) {
 				loc, hist, basket := s.Location, s.History, s.Basket
+				picks, settling := s.ShelfPicks, s.ShelfSettling
 				s = openHaggle(shopID, merchant, qp)
 				s.Location, s.History, s.Basket = loc, hist, basket
+				s.ShelfPicks, s.ShelfSettling = picks, settling
 				sessions[key] = s
 				processOffer(from, s, merchant, *offer, msg)
 				return
@@ -512,6 +528,8 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				loc := s.Location
 				hist := s.History
 				basket := s.Basket
+				picks := s.ShelfPicks
+				settling := s.ShelfSettling
 				// An offer right after a measured quote lands on
 				// the quantity she was quoted, for that same
 				// item: the haggle opens on the scaled figures.
@@ -523,6 +541,8 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				s.Location = loc  // a fresh haggle never forgets where she is
 				s.History = hist  // nor what she has said so far
 				s.Basket = basket // nor what she has already agreed in this order
+				s.ShelfPicks = picks
+				s.ShelfSettling = settling
 				sessions[key] = s
 				processOffer(from, s, merchant, *offer, msg)
 				return
@@ -575,10 +595,14 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		loc := s.Location
 		hist := s.History
 		basket := s.Basket
+		picks := s.ShelfPicks
+		settling := s.ShelfSettling
 		s = openHaggle(shopID, merchant, product)
 		s.Location = loc  // a fresh haggle never forgets where she is
 		s.History = hist  // nor what she has said so far
 		s.Basket = basket // nor what she has already agreed in this order
+		s.ShelfPicks = picks
+		s.ShelfSettling = settling
 		sessions[key] = s
 		whatsapp.SendText(from, product.Name+": "+product.Description+" The price is "+money.GHS(product.ListPrice)+"."+offerInvite(product, " Make me an offer and let us see."))
 		return

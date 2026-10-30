@@ -150,6 +150,8 @@ func startReorder(from string, s *Session, merchant *catalogue.Merchant, shopID,
 	s.MerchantID = shopID
 	s.PendingAdd = nil
 	s.Basket = nil
+	s.ShelfPicks = nil
+	s.ShelfSettling = false
 	if first.scaled != nil {
 		s.Product = first.scaled
 		s.Qty, s.Unit = first.qty, first.unit

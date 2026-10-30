@@ -2,23 +2,32 @@ package agent
 
 // The shelf as a sheet: WhatsApp's list message slides a
 // panel up from the bottom of the chat, and a stall's goods
-// belong on it exactly the way they sit on a real shelf —
-// the buyer looks, taps the one she wants, and it is put in
-// front of her. The sheet is an addition, never a
-// replacement: a buyer who types the item's name is
-// understood exactly as before, and a tap is read as the
-// very pick she would have made in words (the same
-// philosophy as the fulfilment taps).
+// belong on it exactly the way they sit on a real shelf.
+// A sheet reports one tap at a time — that is the platform's
+// shape, there is no ticking several boxes at once — so
+// picking many is built the way a buyer picks at a real
+// stall: she taps an item and it goes into her hand, the
+// sheet comes back so she can tap the next one, and a Done
+// row sits at the top of the sheet whenever she is holding
+// anything. Tapping a picked item again takes it back off.
+// Done starts the settling: the picks are put in front of
+// her one by one, each with its photos, its price and its
+// own haggle, and they complete as one order with one
+// payment, the same basket machinery a spoken "add the bag
+// too" has always used. Typing still works exactly as
+// before; the sheet is an addition, never a replacement.
 //
 // Platform limits shape the composition: a sheet holds ten
 // rows in all, a row's title is 24 characters and its
 // description 72. A shelf longer than a sheet is paged —
 // nine items and a More row that opens the next sheet,
-// Shelf 2, Shelf 3 — so no shelf is ever cut off silently.
-// A product's identity never rides in the visible title,
-// which may be shortened; it rides in the row's id, so a
-// tap resolves to the exact product however its name was
-// trimmed for display.
+// Shelf 2, Shelf 3 — and the Done row takes one of the ten
+// rows while she is holding picks, so the pages narrow by
+// one to make room for it. No shelf is ever cut off
+// silently. A product's identity never rides in the visible
+// title, which may be shortened; it rides in the row's id,
+// so a tap resolves to the exact product however its name
+// was trimmed for display.
 
 import (
 	"strconv"
@@ -29,11 +38,13 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
-// Row id spellings on a shelf sheet: a product pick, and
-// the More row that opens the next sheet.
+// Row id spellings on a shelf sheet: a product pick, the
+// More row that opens the next sheet, and the Done row
+// that starts the settling.
 const (
 	shelfRowPrefix  = "shelf_"
 	shelfMorePrefix = "shelfmore_"
+	shelfDoneID     = "shelfdone"
 )
 
 // shelfItems is what the sheet can show: the shop's
@@ -52,22 +63,74 @@ func shelfItems(shop *catalogue.Merchant) []catalogue.Product {
 	return items
 }
 
-// shelfPageCount is how many sheets a shelf of n items
-// takes: one when they fit the ten rows, else pages of
-// nine items plus the More row.
-func shelfPageCount(n int) int {
-	if n <= 10 {
-		return 1
+// shelfLayout works out how a shelf of n items pages,
+// given the fixed rows the sheet must also carry: the
+// Done row while she holds picks, and a More row on every
+// page but the last. Ten rows is the whole sheet.
+func shelfLayout(n int, showDone bool) (pages, perPage int) {
+	extra := 0
+	if showDone {
+		extra = 1
 	}
-	return (n + 8) / 9
+	if n+extra <= 10 {
+		return 1, n
+	}
+	perPage = 9 - extra
+	return (n + perPage - 1) / perPage, perPage
 }
 
-// shelfSections composes one page of the shelf as a list
-// section: each item a row (price in its description), and
+// pickedIDs is the set of products this buyer has already
+// committed to in some way: the picks still in her hand,
+// the items parked in her order, and — while the settling
+// runs — the one in front of her now. Those rows wear a
+// tick on the sheet.
+func pickedIDs(s *Session) map[string]bool {
+	set := map[string]bool{}
+	if s == nil {
+		return set
+	}
+	for _, id := range s.ShelfPicks {
+		set[id] = true
+	}
+	for _, it := range s.Basket {
+		if it.Product != nil {
+			set[it.Product.ID] = true
+		}
+	}
+	if s.ShelfSettling && s.Product != nil {
+		set[s.Product.ID] = true
+	}
+	return set
+}
+
+// picksFigure is what her picks come to at list prices:
+// how many of them still resolve to goods on the shelf,
+// and their total.
+func picksFigure(s *Session, shopID string) (count int, total float64) {
+	if s == nil {
+		return 0, 0
+	}
+	for _, id := range s.ShelfPicks {
+		for _, p := range catalogue.ListProducts(shopID) {
+			if p.ID == id {
+				count++
+				total += p.ListPrice
+				break
+			}
+		}
+	}
+	return count, total
+}
+
+// shelfSections composes one page of the shelf for this
+// buyer: her Done section first while she holds picks,
+// then the items — each a row with its price in its
+// description and a tick on the ones she has picked — and
 // a More row when a further page exists.
-func shelfSections(shop *catalogue.Merchant, page int) []whatsapp.ListSection {
+func shelfSections(shop *catalogue.Merchant, page int, s *Session) []whatsapp.ListSection {
 	items := shelfItems(shop)
-	pages := shelfPageCount(len(items))
+	showDone := s != nil && len(s.ShelfPicks) > 0 && !s.ShelfSettling
+	pages, perPage := shelfLayout(len(items), showDone)
 	if page < 1 {
 		page = 1
 	}
@@ -78,18 +141,23 @@ func shelfSections(shop *catalogue.Merchant, page int) []whatsapp.ListSection {
 	if pages == 1 {
 		pageItems = items
 	} else {
-		start := (page - 1) * 9
-		end := start + 9
+		start := (page - 1) * perPage
+		end := start + perPage
 		if end > len(items) {
 			end = len(items)
 		}
 		pageItems = items[start:end]
 	}
+	picked := pickedIDs(s)
 	rows := make([]whatsapp.ListRow, 0, len(pageItems)+1)
 	for _, p := range pageItems {
+		title := trimToRunes(p.Name, 24)
+		if picked[p.ID] {
+			title = "✓ " + trimToRunes(p.Name, 22)
+		}
 		rows = append(rows, whatsapp.ListRow{
 			ID:          shelfRowPrefix + p.ID,
-			Title:       trimToRunes(p.Name, 24),
+			Title:       title,
 			Description: shelfRowDescription(p),
 		})
 	}
@@ -104,7 +172,26 @@ func shelfSections(shop *catalogue.Merchant, page int) []whatsapp.ListSection {
 	if pages > 1 {
 		title = "Shelf " + strconv.Itoa(page) + " of " + strconv.Itoa(pages)
 	}
-	return []whatsapp.ListSection{{Title: title, Rows: rows}}
+	sections := []whatsapp.ListSection{}
+	if showDone {
+		count, total := picksFigure(s, shop.ID)
+		sections = append(sections, whatsapp.ListSection{
+			Title: "Your picks",
+			Rows: []whatsapp.ListRow{{
+				ID:          shelfDoneID,
+				Title:       "Done, settle them",
+				Description: strconv.Itoa(count) + pluralItems(count) + " · " + money.GHS(total) + " in all",
+			}},
+		})
+	}
+	return append(sections, whatsapp.ListSection{Title: title, Rows: rows})
+}
+
+func pluralItems(n int) string {
+	if n == 1 {
+		return " item"
+	}
+	return " items"
 }
 
 // shelfRowDescription is a row's second line: the price
@@ -138,11 +225,45 @@ func trimToRunes(s string, n int) string {
 	return strings.TrimRight(cut, " ,;·-")
 }
 
+// shelfSession is the buyer's session in this shop, when
+// she has one: the sheet is composed from it (her ticks,
+// her Done row) and her place on it is remembered there.
+func shelfSession(from string, shop *catalogue.Merchant) *Session {
+	if bindings[from] != shop.ID {
+		return nil
+	}
+	return sessions[sessionKey(shop.ID, from)]
+}
+
 // sendShelfSheet puts one page of the shop's shelf in
-// front of the buyer as a slide-up sheet.
+// front of the buyer as a slide-up sheet, with a body that
+// matches where she is: fresh to the shelf, or already
+// holding picks.
 func sendShelfSheet(from string, shop *catalogue.Merchant, page int) {
-	body := "This is the shelf at " + shop.Name + ". Tap any item to see it properly: its photos, the full word on it, and its price."
-	whatsapp.SendList(from, body, "See the shelf", shelfSections(shop, page))
+	s := shelfSession(from, shop)
+	body := "This is the shelf at " + shop.Name + ". Tap an item to pick it, and pick as many as you like. When you are ready, tap Done on the sheet and we will settle them one by one."
+	if s != nil && len(s.ShelfPicks) > 0 && !s.ShelfSettling {
+		body = "Your picks are ticked on the shelf. Tap an item to add it, tap a ticked one to take it off, or tap Done to settle them."
+	}
+	sendShelfSheetBody(from, shop, page, body)
+}
+
+// sendShelfSheetBody sends the sheet with the given words
+// over it — a tap's answer rides on the sheet it reopens.
+func sendShelfSheetBody(from string, shop *catalogue.Merchant, page int, body string) {
+	s := shelfSession(from, shop)
+	if s != nil {
+		_, pages := shelfLayout(len(shelfItems(shop)), s != nil && len(s.ShelfPicks) > 0 && !s.ShelfSettling)
+		if page < 1 {
+			page = 1
+		}
+		if page > pages {
+			page = pages
+		}
+		s.ShelfPage = page
+		sessions[sessionKey(shop.ID, from)] = s
+	}
+	whatsapp.SendList(from, body, "See the shelf", shelfSections(shop, page, s))
 }
 
 // presentShelf shows a buyer the shop's shelf: the sheet
@@ -157,16 +278,90 @@ func presentShelf(from string, shop *catalogue.Merchant) {
 	sendShelfSheet(from, shop, 1)
 }
 
+// presentShelfPick puts a settled pick in front of her the
+// way naming it would: its photos when it has them, its
+// description and price, and the invitation to make an
+// offer.
+func presentShelfPick(from string, p *catalogue.Product) {
+	sendProductPhotos(from, p)
+	sendProductView(from, p, " Want to make an offer?")
+}
+
+// takeNextShelfPick moves the first of her remaining
+// picks that the shelf still holds into the session as
+// the item in front of her, reset the way an agreed add
+// leaves a session when it puts the next item up (see
+// basket.go), and returns it. Picks the shelf no longer
+// holds are let go on the way. It returns nil when
+// nothing she picked can still be settled, and leaves the
+// settling state cleared then, so the caller can fall
+// back to whatever it was doing.
+func takeNextShelfPick(s *Session, shopID string) *catalogue.Product {
+	for len(s.ShelfPicks) > 0 {
+		id := s.ShelfPicks[0]
+		s.ShelfPicks = s.ShelfPicks[1:]
+		var found *catalogue.Product
+		for _, p := range catalogue.ListProducts(shopID) {
+			if p.ID == id && p.Stock > 0 {
+				cp := p
+				found = &cp
+				break
+			}
+		}
+		if found == nil {
+			continue
+		}
+		s.Product = found
+		s.Ask = found.ListPrice
+		s.AgreedPrice = 0
+		s.Qty, s.Unit = 0, ""
+		s.Round, s.Floor, s.StepScale = 0, 0, 0
+		s.PendingClose = false
+		s.FulfilStep = ""
+		s.PendingFulfil = fulfilment{}
+		s.Stage = "browsing"
+		s.LastViewed = found
+		s.ShelfSettling = true
+		return found
+	}
+	s.ShelfSettling = false
+	return nil
+}
+
+// serveShelfDone reads the Done tap: the settling starts.
+// The first pick goes in front of her with its photos and
+// its price; the rest wait in her picks, and every price
+// agreement from here parks its item and brings the next
+// one up (see beginFulfilment) until the last one, whose
+// agreement opens the one fulfilment for the whole order.
+func serveShelfDone(from string, shop *catalogue.Merchant) {
+	s := shelfSession(from, shop)
+	if s == nil || len(s.ShelfPicks) == 0 {
+		sendShelfSheet(from, shop, 1)
+		return
+	}
+	count, _ := picksFigure(s, shop.ID)
+	next := takeNextShelfPick(s, shop.ID)
+	sessions[sessionKey(shop.ID, from)] = s
+	if next == nil {
+		sendShelfSheet(from, shop, 1)
+		return
+	}
+	if count > 1 {
+		whatsapp.SendText(from, "Good. Let us settle them one by one, starting with this one.")
+	}
+	presentShelfPick(from, next)
+}
+
 // routeShelfTap reads a tap on a shelf sheet in the shop
 // the buyer is standing in. A More tap opens the next
-// sheet. A product tap puts the product in front of her
-// exactly as naming it would — remembered as what she is
-// looking at, its photos when it has them, its description
-// and price, and the invitation to make an offer — so
-// everything she says next (a figure, "I'll buy") lands on
-// it the way it lands on a named item. A tap on a product
-// the shelf no longer holds reopens the shelf at its
-// first page rather than answering silence.
+// sheet. A Done tap starts the settling. A product tap
+// while the settling runs is a look, read exactly as
+// before. A product tap while she is still picking adds
+// the item to her picks — or takes it back off, when it
+// was already picked — and the sheet returns at the page
+// she tapped from, her picks ticked, with the state of
+// her hand in the words over it.
 func routeShelfTap(from, listID string) {
 	shopID := bindings[from]
 	if shopID == "" {
@@ -174,6 +369,16 @@ func routeShelfTap(from, listID string) {
 	}
 	shop := catalogue.GetMerchant(shopID)
 	if shop == nil {
+		return
+	}
+	// Her session stands from the first tap of any kind, so
+	// the sheet can remember the page she is looking at and
+	// her picks have somewhere to live.
+	if _, ok := sessions[sessionKey(shopID, from)]; !ok {
+		sessions[sessionKey(shopID, from)] = &Session{Stage: "browsing", MerchantID: shopID}
+	}
+	if listID == shelfDoneID {
+		serveShelfDone(from, shop)
 		return
 	}
 	if rest, ok := strings.CutPrefix(listID, shelfMorePrefix); ok {
@@ -200,15 +405,49 @@ func routeShelfTap(from, listID string) {
 		sendShelfSheet(from, shop, 1)
 		return
 	}
-	s, ok := sessions[sessionKey(shopID, from)]
-	if !ok {
-		s = &Session{Stage: "browsing", MerchantID: shopID}
-		sessions[sessionKey(shopID, from)] = s
-	}
+	s := sessions[sessionKey(shopID, from)]
 	s.LastViewed = picked
-	if s.Stage == "agreed" {
-		s.Stage = "browsing"
+	if s.ShelfSettling {
+		// Mid-settling a tap is a look at the goods, the
+		// way it always was: the settling itself is not
+		// disturbed by her glancing at another item.
+		if s.Stage == "agreed" {
+			s.Stage = "browsing"
+		}
+		sessions[sessionKey(shopID, from)] = s
+		presentShelfPick(from, picked)
+		return
 	}
-	sendProductPhotos(from, picked)
-	sendProductView(from, picked, " Want to make an offer?")
+	page := s.ShelfPage
+	if page < 1 {
+		page = 1
+	}
+	if picked.Stock <= 0 {
+		sendShelfSheet(from, shop, page)
+		return
+	}
+	for i, id := range s.ShelfPicks {
+		if id == pid {
+			s.ShelfPicks = append(s.ShelfPicks[:i], s.ShelfPicks[i+1:]...)
+			sessions[sessionKey(shopID, from)] = s
+			count, total := picksFigure(s, shopID)
+			body := "Took the " + picked.Name + " off your picks."
+			if count > 0 {
+				body += " You have " + strconv.Itoa(count) + pluralItems(count) + " picked so far, " + money.GHS(total) + " in all. Tap Done on the sheet when you are ready."
+			} else {
+				body += " Tap any item to pick it."
+			}
+			sendShelfSheetBody(from, shop, page, body)
+			return
+		}
+	}
+	if inBasket(s, picked) {
+		sendShelfSheetBody(from, shop, page, "The "+picked.Name+" is already in this order. Tap Done on the sheet when you are ready, or tap more items to pick them.")
+		return
+	}
+	s.ShelfPicks = append(s.ShelfPicks, pid)
+	sessions[sessionKey(shopID, from)] = s
+	count, total := picksFigure(s, shopID)
+	body := "Added the " + picked.Name + ". You have " + strconv.Itoa(count) + pluralItems(count) + " picked so far, " + money.GHS(total) + " in all. Tap more items to add them, or tap Done on the sheet and we will settle them one by one."
+	sendShelfSheetBody(from, shop, page, body)
 }

@@ -171,6 +171,19 @@ type Session struct {
 	PendingAdd *catalogue.Product
 	SizeQueue  []int
 
+	// ShelfPicks holds the product ids a buyer has tapped
+	// onto her selection from the shelf sheet, in the order
+	// she picked them (see shelf.go). Before she taps Done
+	// they are simply her picks, still changeable; after
+	// Done they are the queue still waiting to be settled,
+	// one by one, into this same order. ShelfSettling marks
+	// that Done has been tapped and the settling is under
+	// way. ShelfPage is the sheet she is looking at, so a
+	// tap's answer reopens the same page she tapped from.
+	ShelfPicks    []string
+	ShelfSettling bool
+	ShelfPage     int
+
 	// RememberedFulfil is how a returning buyer's goods
 	// reached her last time, held up at the fulfilment
 	// step for her to confirm or change (see returning.go).
