@@ -4,6 +4,7 @@
     {
       "id": "PAYOUT",
       "title": "Your payout details",
+      "terminal": true,
       "data": {},
       "layout": {
         "type": "SingleColumnLayout",

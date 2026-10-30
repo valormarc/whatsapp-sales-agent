@@ -4,6 +4,7 @@
     {
       "id": "DETAILS",
       "title": "Your delivery details",
+      "terminal": true,
       "data": {},
       "layout": {
         "type": "SingleColumnLayout",
