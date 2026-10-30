@@ -94,6 +94,14 @@ type Order struct {
 	PackageName string `json:"packageName,omitempty"`
 	Note        string `json:"note,omitempty"`
 
+	// DeliveryPhone and Landmark are the delivery details a
+	// details form can carry (see the agent's flows): the
+	// number the rider calls, and the landmark or station
+	// that finds her. They ride to the merchant in the same
+	// notice, beside the package name.
+	DeliveryPhone string `json:"deliveryPhone,omitempty"`
+	Landmark      string `json:"landmark,omitempty"`
+
 	// Size is the buyer's chosen size when the product comes
 	// in sizes, verified against the listing's own list
 	// before the order was made. It rides to the seller in

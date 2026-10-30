@@ -82,6 +82,16 @@ type webhookPayload struct {
 							ID    string `json:"id"`
 							Title string `json:"title"`
 						} `json:"button_reply"`
+						ListReply *struct {
+							ID          string `json:"id"`
+							Title       string `json:"title"`
+							Description string `json:"description"`
+						} `json:"list_reply"`
+						NFMReply *struct {
+							ResponseJSON string `json:"response_json"`
+							Name         string `json:"name"`
+							Body         string `json:"body"`
+						} `json:"nfm_reply"`
 					} `json:"interactive"`
 				} `json:"messages"`
 			} `json:"value"`
@@ -169,16 +179,29 @@ func Handler() http.Handler {
 							}
 							agent.HandleInbound(agent.Inbound{From: msg.From, ImageID: imageID, Caption: caption, MessageID: msg.ID, ContextID: contextID, ContextFrom: contextFrom})
 						case "interactive":
-							// A tap on a reply button the agent sent.
-							// Only the button's id travels inward; the
-							// agent decides what a tap means, and a tap
-							// on anything it does not know is ignored.
-							buttonID := ""
-							if msg.Interactive != nil && msg.Interactive.ButtonReply != nil {
-								buttonID = msg.Interactive.ButtonReply.ID
+							// A tap on a reply button the agent sent,
+							// or a row of a list sheet. Only the id
+							// travels inward; the agent decides what
+							// a tap means, and a tap on anything it
+							// does not know is ignored.
+							buttonID, listID, flowReply := "", "", ""
+							if msg.Interactive != nil {
+								if msg.Interactive.ButtonReply != nil {
+									buttonID = msg.Interactive.ButtonReply.ID
+								}
+								if msg.Interactive.ListReply != nil {
+									listID = msg.Interactive.ListReply.ID
+								}
+								if msg.Interactive.NFMReply != nil {
+									flowReply = msg.Interactive.NFMReply.ResponseJSON
+								}
 							}
 							if buttonID != "" {
 								agent.HandleInbound(agent.Inbound{From: msg.From, ButtonID: buttonID, MessageID: msg.ID, ContextID: contextID, ContextFrom: contextFrom})
+							} else if listID != "" {
+								agent.HandleInbound(agent.Inbound{From: msg.From, ListID: listID, MessageID: msg.ID, ContextID: contextID, ContextFrom: contextFrom})
+							} else if flowReply != "" {
+								agent.HandleInbound(agent.Inbound{From: msg.From, FlowReply: flowReply, MessageID: msg.ID, ContextID: contextID, ContextFrom: contextFrom})
 							}
 						}
 					}()

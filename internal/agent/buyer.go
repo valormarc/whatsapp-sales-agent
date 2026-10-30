@@ -639,7 +639,8 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	}
 
 	if greetingRe.MatchString(lower) {
-		sendPieces(from, welcomeFor(merchant, from), productListText(shopID))
+		whatsapp.SendText(from, welcomeFor(merchant, from))
+		presentShelf(from, merchant)
 		return
 	}
 

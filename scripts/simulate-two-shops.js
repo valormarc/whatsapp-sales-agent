@@ -136,14 +136,21 @@ async function waitForHealth() {
 }
 
 // Per-recipient drain, as in the onboarding simulation: one inbound
-// can answer two numbers (the buyer and her shop's owner).
+// can answer two numbers (the buyer and her shop's owner). A list
+// sheet's text includes its rows, as a phone presents them.
 const seen = {};
 function drain(to) {
   const lines = readFileSync(OUTBOX, 'utf8').trim().split('\n').filter(Boolean);
   const mine = lines.map((l) => JSON.parse(l)).filter((m) => m.to === to);
   const fresh = mine.slice(seen[to] || 0);
   seen[to] = mine.length;
-  return fresh.map((m) => m.body);
+  return fresh.map((m) => {
+    if (m.kind === 'list' && Array.isArray(m.sections)) {
+      const rows = m.sections.flatMap((s) => [s.title, ...s.rows.flatMap((r) => [r.title, r.description || ''])]);
+      return [m.body, ...rows].join(' ');
+    }
+    return m.body;
+  });
 }
 
 async function say(from, label, line) {

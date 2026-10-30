@@ -51,7 +51,7 @@ func TestSecondSameNameShopGetsHyphenNumberCode(t *testing.T) {
 	// Her link's entry text lands a buyer on her shelf only.
 	buyer := "233550007101"
 	c.say(t, buyer, "SHOP-BELORA-2")
-	got := strings.Join(c.replies(t, buyer), "\n")
+	got := strings.Join(c.replies(t, buyer), "\n") + "\n" + sheetText(t, dir, buyer)
 	if !strings.Contains(got, "Belora Collection") || !strings.Contains(got, "Ankara Headwrap") {
 		t.Fatalf("SHOP-BELORA-2 entry = %q", got)
 	}
@@ -62,7 +62,7 @@ func TestSecondSameNameShopGetsHyphenNumberCode(t *testing.T) {
 	// The bare hyphen code, typed without the link, lands there too.
 	buyer2 := "233550007102"
 	c.say(t, buyer2, "belora-2")
-	got = strings.Join(c.replies(t, buyer2), "\n")
+	got = strings.Join(c.replies(t, buyer2), "\n") + "\n" + lastSheetText(t, dir, buyer2)
 	if !strings.Contains(got, "Ankara Headwrap") || strings.Contains(got, "Silk Scarf") {
 		t.Fatalf("bare belora-2 entry = %q", got)
 	}
@@ -70,7 +70,7 @@ func TestSecondSameNameShopGetsHyphenNumberCode(t *testing.T) {
 	// The plain code still belongs to the first shop, untouched.
 	buyer3 := "233550007103"
 	c.say(t, buyer3, "SHOP-BELORA")
-	got = strings.Join(c.replies(t, buyer3), "\n")
+	got = strings.Join(c.replies(t, buyer3), "\n") + "\n" + lastSheetText(t, dir, buyer3)
 	if !strings.Contains(got, "Silk Scarf") || strings.Contains(got, "Ankara Headwrap") {
 		t.Fatalf("SHOP-BELORA entry = %q", got)
 	}

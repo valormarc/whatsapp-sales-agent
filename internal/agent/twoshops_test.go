@@ -67,13 +67,13 @@ func ordersOnDisk(t *testing.T, dir string) []map[string]any {
 }
 
 func TestShopCodeEntryBindsBuyerToThatShopOnly(t *testing.T) {
-	_, c := setupTwoShops(t)
+	dir, c := setupTwoShops(t)
 
 	// Entry greetings arrive in pieces (welcome, then the goods), so
 	// these read the whole reply rather than its last message.
 	buyer := "233550004001"
 	c.say(t, buyer, "SHOP-AMA")
-	got := strings.Join(c.replies(t, buyer), "\n")
+	got := strings.Join(c.replies(t, buyer), "\n") + "\n" + sheetText(t, dir, buyer)
 	if !strings.Contains(got, "Ama's Stall") || !strings.Contains(got, "Smoked Tilapia") {
 		t.Fatalf("SHOP-AMA entry greeting = %q", got)
 	}
@@ -83,7 +83,7 @@ func TestShopCodeEntryBindsBuyerToThatShopOnly(t *testing.T) {
 
 	buyer2 := "233550004002"
 	c.say(t, buyer2, "shop:efua")
-	got = strings.Join(c.replies(t, buyer2), "\n")
+	got = strings.Join(c.replies(t, buyer2), "\n") + "\n" + lastSheetText(t, dir, buyer2)
 	if !strings.Contains(got, "Efua's Store") || !strings.Contains(got, "Handmade Beaded Bag") {
 		t.Fatalf("shop:efua entry greeting = %q", got)
 	}
@@ -138,7 +138,7 @@ func TestBuyerWithNoCodeIsHelpedButNotSold(t *testing.T) {
 }
 
 func TestSwitchingShopsResetsTheSession(t *testing.T) {
-	_, c := setupTwoShops(t)
+	dir, c := setupTwoShops(t)
 	buyer := "233550004020"
 
 	c.say(t, buyer, "SHOP-EFUA")
@@ -153,12 +153,12 @@ func TestSwitchingShopsResetsTheSession(t *testing.T) {
 	// She walks into Ama's shop instead. The switch is announced,
 	// and the Efua haggle does not follow her.
 	c.say(t, buyer, "SHOP-AMA")
-	got := c.last(t, buyer)
+	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "left Efua's Store") || !strings.Contains(got, "now at Ama's Stall") {
 		t.Fatalf("switch announcement = %q", got)
 	}
-	if strings.Contains(got, "Beaded Bag") {
-		t.Fatalf("switch greeting leaked the old shop's shelf: %q", got)
+	if leaked := lastSheetText(t, dir, buyer); strings.Contains(leaked, "Beaded Bag") || !strings.Contains(leaked, "Smoked Tilapia") {
+		t.Fatalf("switch greeting leaked the old shop's shelf: %q", leaked)
 	}
 
 	// The old product cannot be quoted, offered on, or closed here.

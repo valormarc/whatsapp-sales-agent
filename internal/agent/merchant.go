@@ -1109,6 +1109,10 @@ func retryPaymentSetup(from string, merchant *catalogue.Merchant, lower string) 
 }
 
 func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant, text, lower string) bool {
+	if payoutDetailsRe.MatchString(lower) {
+		return offerPayoutDetailsFlow(from, s, merchant)
+	}
+
 	if myCatalogueRe.MatchString(lower) {
 		lines := []string{"Here is your catalogue:"}
 		for _, p := range merchant.Products {

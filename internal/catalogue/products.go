@@ -296,6 +296,20 @@ func SetSubaccount(merchantID, code, holderName string) error {
 	})
 }
 
+// SetPayoutDetails records where a shop's money settles:
+// the MoMo number and the name on that account, as the
+// merchant herself gave them (her payout form carries both
+// in one go). The subaccount that pays the number is a
+// separate record (SetSubaccount), remade by the caller
+// when the number changes.
+func SetPayoutDetails(merchantID, phone, holderName string) error {
+	return updateMerchant(merchantID, func(m *Merchant) error {
+		m.PayoutPhone = phone
+		m.PayoutHolderName = holderName
+		return nil
+	})
+}
+
 // SetDeliveryStyle sets how the shop's delivery fees are
 // known: "set" (given up front) or "quote" (the seller names
 // the fee for each delivery order as it comes).

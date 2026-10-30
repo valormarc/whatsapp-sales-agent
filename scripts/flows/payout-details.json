@@ -1,0 +1,19 @@
+{
+  "version": "7.3",
+  "screens": [
+    {
+      "id": "PAYOUT",
+      "title": "Your payout details",
+      "data": {},
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextBody", "text": "This is the MoMo account your sales settle to. Keep it correct: it is where your money goes."},
+          {"type": "TextInput", "name": "holder", "label": "Name on the MoMo account", "required": true, "input-type": "text"},
+          {"type": "TextInput", "name": "phone", "label": "MoMo number", "required": true, "input-type": "phone"},
+          {"type": "Footer", "label": "Save my payout details", "on-click-action": {"name": "complete", "payload": {"holder": "${form.holder}", "phone": "${form.phone}"}}}
+        ]
+      }
+    }
+  ]
+}

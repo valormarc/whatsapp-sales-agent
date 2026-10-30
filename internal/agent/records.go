@@ -200,6 +200,12 @@ func orderNoticeLines(o *orders.Order, merchant *catalogue.Merchant) []string {
 	if o.PackageName != "" {
 		lines = append(lines, "Package name: "+o.PackageName)
 	}
+	if o.Landmark != "" {
+		lines = append(lines, "Landmark: "+o.Landmark)
+	}
+	if o.DeliveryPhone != "" {
+		lines = append(lines, "Delivery phone: "+o.DeliveryPhone)
+	}
 	if o.Note != "" {
 		lines = append(lines, "Buyer's message: "+o.Note)
 	}

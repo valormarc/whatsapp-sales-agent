@@ -1,0 +1,21 @@
+{
+  "version": "7.3",
+  "screens": [
+    {
+      "id": "DETAILS",
+      "title": "Your delivery details",
+      "data": {},
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {"type": "TextBody", "text": "Fill these once and the shop has everything it needs to send your order."},
+          {"type": "TextInput", "name": "buyer_name", "label": "Name for the package", "required": true, "input-type": "text"},
+          {"type": "TextInput", "name": "phone", "label": "Phone number the rider can call", "required": true, "input-type": "phone"},
+          {"type": "TextInput", "name": "town", "label": "Town or area", "required": true, "input-type": "text"},
+          {"type": "TextInput", "name": "landmark", "label": "Nearest landmark or station (if any)", "required": false, "input-type": "text"},
+          {"type": "Footer", "label": "Send my details", "on-click-action": {"name": "complete", "payload": {"buyer_name": "${form.buyer_name}", "phone": "${form.phone}", "town": "${form.town}", "landmark": "${form.landmark}"}}}
+        ]
+      }
+    }
+  ]
+}

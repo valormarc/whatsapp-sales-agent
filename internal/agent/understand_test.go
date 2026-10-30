@@ -281,7 +281,7 @@ func TestOrderStatusAndShelfFromThinking(t *testing.T) {
 	if !actOnBuyerUnderstanding(buyer, s, shop, MerchantID, &understood{Intent: intentShelf}) {
 		t.Fatal("a shelf ask must be answered")
 	}
-	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Handmade Beaded Bag") {
+	if got := strings.Join(c.replies(t, buyer), "\n") + "\n" + sheetText(t, dir, buyer); !strings.Contains(got, "Handmade Beaded Bag") {
 		t.Fatalf("shelf answer = %q", got)
 	}
 }

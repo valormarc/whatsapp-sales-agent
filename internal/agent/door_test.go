@@ -133,7 +133,7 @@ func TestStrangerGreetingGetsTheDoorOnce(t *testing.T) {
 }
 
 func TestDoorBuyTapAsksForTheShopCodeAndEntryStillWorks(t *testing.T) {
-	_, c := setupTwoShops(t)
+	dir, c := setupTwoShops(t)
 	stranger := "233550008002"
 
 	c.say(t, stranger, "Hello")
@@ -143,7 +143,7 @@ func TestDoorBuyTapAsksForTheShopCodeAndEntryStillWorks(t *testing.T) {
 		t.Fatalf("Buy tap reply = %q, want the shop code ask", got)
 	}
 	c.say(t, stranger, "SHOP-AMA")
-	got := strings.Join(c.replies(t, stranger), "\n")
+	got := strings.Join(c.replies(t, stranger), "\n") + "\n" + sheetText(t, dir, stranger)
 	if !strings.Contains(got, "Ama's Stall") || !strings.Contains(got, "Smoked Tilapia") {
 		t.Fatalf("entry after the door = %q", got)
 	}

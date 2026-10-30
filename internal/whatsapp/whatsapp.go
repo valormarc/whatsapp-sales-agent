@@ -95,6 +95,15 @@ type outboxRecord struct {
 	// shown) when the agent picked it up. To and Body stay
 	// empty on such a record; nothing was sent to anyone.
 	ReadID string `json:"readId,omitempty"`
+	// Sections holds the sections and rows of a list message
+	// (Kind "list"), ids included, so tests and simulators
+	// can tap exactly what a phone would show.
+	Sections []ListSection `json:"sections,omitempty"`
+	// FlowToken is set on a record of Kind "flow": the token
+	// the flow carries, which its completion brings back in
+	// the webhook, so the agent can match a finished form to
+	// the conversation that opened it.
+	FlowToken string `json:"flowToken,omitempty"`
 }
 
 type sendPayload struct {
@@ -421,6 +430,152 @@ func buildButtonsPayload(to, body string, buttons []Button) buttonsPayload {
 		btn.Reply.Title = b.Title
 		payload.Interactive.Action.Buttons = append(payload.Interactive.Action.Buttons, btn)
 	}
+	return payload
+}
+
+// ListRow is one tappable row of a list message: the title
+// and description are what the reader sees in the slide-up
+// sheet; the id is what her tap reports back in the webhook.
+type ListRow struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+}
+
+// ListSection is one titled group of rows in a list message.
+type ListSection struct {
+	Title string    `json:"title"`
+	Rows  []ListRow `json:"rows"`
+}
+
+type listPayload struct {
+	MessagingProduct string `json:"messaging_product"`
+	To               string `json:"to"`
+	Type             string `json:"type"`
+	Interactive      struct {
+		Type string `json:"type"`
+		Body struct {
+			Text string `json:"text"`
+		} `json:"body"`
+		Action struct {
+			Button   string        `json:"button"`
+			Sections []ListSection `json:"sections"`
+		} `json:"action"`
+	} `json:"interactive"`
+}
+
+// SendList sends one interactive list message: a short body
+// with a button that slides up a sheet of tappable rows when
+// the reader taps it (WhatsApp's own sheet; ten rows at
+// most). In dry-run mode it is logged to the outbox as kind
+// "list" with its sections recorded whole, so tests and
+// simulators see — and can tap — exactly what a phone shows.
+func SendList(to, body, buttonLabel string, sections []ListSection) Result {
+	token := os.Getenv("WHATSAPP" + "_TOKEN")
+	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")
+	_ = os.MkdirAll(datadir.Dir(), 0o755)
+	record := outboxRecord{At: nowISO(), To: to, Body: body, Kind: "list", Buttons: []string{buttonLabel}, Sections: sections}
+
+	if token == "" || phoneID == "" {
+		dry := record
+		dry.DryRun = true
+		dry.ID = newDryID()
+		appendOutbox(dry)
+		noteSent(dry)
+		fmt.Printf("[dry-run list -> %s] %s (%s)\n", to, body, buttonLabel)
+		return Result{DryRun: true, MessageID: dry.ID}
+	}
+
+	return post(record, buildListPayload(to, body, buttonLabel, sections))
+}
+
+// buildListPayload shapes one list message the way the Graph
+// API's schema demands: the interactive type is "list", the
+// action carries the button label that opens the sheet and
+// the sections of rows. Any other shape is refused by Meta
+// as a schema violation and the message silently never
+// reaches the phone, which is how this shape earned a test.
+func buildListPayload(to, body, buttonLabel string, sections []ListSection) listPayload {
+	payload := listPayload{MessagingProduct: "whatsapp", To: to, Type: "interactive"}
+	payload.Interactive.Type = "list"
+	payload.Interactive.Body.Text = body
+	payload.Interactive.Action.Button = buttonLabel
+	payload.Interactive.Action.Sections = sections
+	return payload
+}
+
+type flowPayload struct {
+	MessagingProduct string `json:"messaging_product"`
+	To               string `json:"to"`
+	Type             string `json:"type"`
+	Interactive      struct {
+		Type string `json:"type"`
+		Body struct {
+			Text string `json:"text"`
+		} `json:"body"`
+		Action struct {
+			Name       string `json:"name"`
+			Parameters struct {
+				FlowMessageVersion string `json:"flow_message_version"`
+				FlowToken          string `json:"flow_token"`
+				FlowID             string `json:"flow_id"`
+				FlowCTA            string `json:"flow_cta"`
+				FlowAction         string `json:"flow_action"`
+				FlowActionPayload  struct {
+					Screen string `json:"screen"`
+				} `json:"flow_action_payload"`
+			} `json:"parameters"`
+		} `json:"action"`
+	} `json:"interactive"`
+}
+
+// SendFlow sends one message carrying a WhatsApp Flow: a
+// button that opens a slide-up form panel (the platform's
+// own form screens) whose answers come back in one webhook
+// when the reader completes it. The token rides along and
+// returns with the completion, so a finished form can be
+// matched to the conversation that opened it. In dry-run
+// mode it is logged to the outbox as kind "flow" with the
+// token recorded, so tests and simulators can complete
+// exactly the form a phone would show.
+func SendFlow(to, body, ctaText, flowID, flowToken, screen string) Result {
+	token := os.Getenv("WHATSAPP" + "_TOKEN")
+	phoneID := os.Getenv("WHATSAPP_PHONE_NUMBER_ID")
+	_ = os.MkdirAll(datadir.Dir(), 0o755)
+	record := outboxRecord{At: nowISO(), To: to, Body: body, Kind: "flow", Buttons: []string{ctaText}, FlowToken: flowToken}
+
+	if token == "" || phoneID == "" {
+		dry := record
+		dry.DryRun = true
+		dry.ID = newDryID()
+		appendOutbox(dry)
+		noteSent(dry)
+		fmt.Printf("[dry-run flow -> %s] %s (%s)\n", to, body, ctaText)
+		return Result{DryRun: true, MessageID: dry.ID}
+	}
+
+	return post(record, buildFlowPayload(to, body, ctaText, flowID, flowToken, screen))
+}
+
+// buildFlowPayload shapes one flow message the way the
+// Graph API's schema demands: the interactive type is
+// "flow", the action's name is "flow", and its parameters
+// carry the flow's id, the opening screen and the token.
+// Any other shape is refused by Meta as a schema violation
+// and the message silently never reaches the phone, which
+// is how this shape earned a test.
+func buildFlowPayload(to, body, ctaText, flowID, flowToken, screen string) flowPayload {
+	payload := flowPayload{MessagingProduct: "whatsapp", To: to, Type: "interactive"}
+	payload.Interactive.Type = "flow"
+	payload.Interactive.Body.Text = body
+	payload.Interactive.Action.Name = "flow"
+	p := &payload.Interactive.Action.Parameters
+	p.FlowMessageVersion = "3"
+	p.FlowToken = flowToken
+	p.FlowID = flowID
+	p.FlowCTA = ctaText
+	p.FlowAction = "navigate"
+	p.FlowActionPayload.Screen = screen
 	return payload
 }
 

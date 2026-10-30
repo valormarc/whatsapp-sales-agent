@@ -33,6 +33,13 @@ type fulfilment struct {
 	// in sizes, asked for in the same details or taken from
 	// the one she labelled herself earlier in the chat.
 	Size string
+	// Phone and Landmark are delivery details a form can
+	// carry in one go (see flows.go): the number the rider
+	// calls, and the landmark or station that finds her.
+	// Chat collection fills the name and place; these two
+	// ride along when she gives them.
+	Phone    string
+	Landmark string
 }
 
 // shopHasDeliveryTerms reports whether the shop states its own
@@ -778,9 +785,11 @@ func beginPackageName(from string, s *Session, f fulfilment) {
 	sessions[key] = s
 	if remembered := rememberedPackageName(s.MerchantID, from); remembered != "" {
 		whatsapp.SendText(from, "What name should go on the package? Last time it was "+remembered+". Say same, or give me the name.")
+		offerDeliveryDetailsFlow(from, s)
 		return
 	}
 	whatsapp.SendText(from, "What name should go on the package?")
+	offerDeliveryDetailsFlow(from, s)
 }
 
 // askPackageMessage moves the details onto their second question.

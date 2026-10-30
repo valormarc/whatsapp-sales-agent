@@ -134,6 +134,8 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		Collector:      f.Collector,
 		PackageName:    f.PackageName,
 		Note:           f.Note,
+		DeliveryPhone:  f.Phone,
+		Landmark:       f.Landmark,
 		Size:           f.Size,
 		DeliveryPaidTo: paidTo,
 		Quantity:       s.Qty,

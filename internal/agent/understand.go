@@ -394,7 +394,8 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		whatsapp.SendText(from, reply)
 		return true
 	case intentShelf:
-		sendPieces(from, welcomeFor(merchant, from), productListText(shopID))
+		whatsapp.SendText(from, welcomeFor(merchant, from))
+		presentShelf(from, merchant)
 		return true
 	case intentOrderStatus:
 		o := orders.Default.NewestFor(shopID, from)
@@ -678,7 +679,7 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 // merchantHelpText is the last resort for a merchant message
 // nothing understood: plain, honest, and it names what she can
 // ask for, in her own chat.
-const merchantHelpText = "I did not catch that one. I can show your catalogue, add a product when you describe it or send its photo, change a price or a last price, set your daily allowance, tell you how today is going, and tell you what needs your attention. Say \"my catalogue\", or ask me what needs your attention."
+const merchantHelpText = "I did not catch that one. I can show your catalogue, add a product when you describe it or send its photo, change a price or a last price, set your daily allowance, set or change your payout details, tell you how today is going, and tell you what needs your attention. Say \"my catalogue\", \"payout details\", or ask me what needs your attention."
 
 // courtesyRe reads a closing pleasantry in the no-model net:
 // thanks and goodbyes are part of the shop's conversation and

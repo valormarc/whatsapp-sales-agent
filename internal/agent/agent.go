@@ -240,6 +240,16 @@ type Session struct {
 	// all once she has set an allowance herself.
 	AllowanceNagDate string
 
+	// PendingFlow is the token of a details form currently
+	// open from this conversation, and FlowKind which form
+	// it is ("delivery" in a buyer's chat, "payout" in the
+	// merchant's). A completion is only ever read against
+	// the token this session issued: a form finished
+	// against another conversation, or long after its
+	// moment passed, fills nothing here.
+	PendingFlow string
+	FlowKind    string
+
 	// Signup is a new merchant's open-a-shop flow, held on the
 	// pre-shop session until her shop exists; then she gets a normal
 	// owner session in her own shop.
@@ -488,6 +498,14 @@ type Inbound struct {
 	// the agent sent (an interactive button_reply webhook), and
 	// empty for every typed message.
 	ButtonID string
+	// ListID is set when the message is a tap on a row of a
+	// list sheet the agent sent (an interactive list_reply
+	// webhook): the row's id, which names what she picked.
+	ListID string
+	// FlowReply carries a completed form's answers, as the
+	// raw response_json of an interactive nfm_reply webhook,
+	// when the message is a WhatsApp Flow completion.
+	FlowReply string
 	// ContextID is the id of the message this one quotes,
 	// when the sender replied with a quote, and ContextFrom
 	// is who sent that quoted message. Together they tell the
@@ -645,6 +663,19 @@ func HandleInbound(in Inbound) {
 		return
 	}
 
+	// A completed details form (see flows.go). The form was
+	// opened from a conversation on one side of the counter
+	// or the other, and its completion is matched to that
+	// conversation by the token it carries — before the
+	// mode dispatch below, because the merchant's own
+	// payout form completes in her chat (which the merchant
+	// branch would otherwise swallow as an empty message)
+	// and the buyer's delivery form in hers.
+	if in.FlowReply != "" {
+		handleFlowReply(from, in.FlowReply)
+		return
+	}
+
 	// The merchant herself gets merchant mode for her own shop.
 	// A tap on a yes/no button in her chat is translated into
 	// the word she would have typed, so a tap and a typed
@@ -658,6 +689,18 @@ func HandleInbound(in Inbound) {
 			text = "no"
 		}
 		handleMerchantMessageCtx(from, text, shop.ID, in.ContextID)
+		return
+	}
+
+	// A tap on a shelf sheet row (see shelf.go). The sheet is
+	// only ever sent to a buyer standing in a shop, so a tap
+	// is read there; a tap with no shop behind it, or while
+	// her own signup owns her attention, is let go quietly.
+	if in.ListID != "" {
+		if pre, ok := sessions[sessionKey("", from)]; ok && pre.Signup != nil {
+			return
+		}
+		routeShelfTap(from, in.ListID)
 		return
 	}
 
@@ -742,7 +785,8 @@ func HandleInbound(in Inbound) {
 				oldName = old.Name
 			}
 			if rest == "" {
-				whatsapp.SendText(from, "You have left "+oldName+". You are now at "+shop.Name+". "+productListText(shop.ID))
+				whatsapp.SendText(from, "You have left "+oldName+". You are now at "+shop.Name+".")
+				presentShelf(from, shop)
 				return
 			}
 			whatsapp.SendText(from, "You have left "+oldName+". You are now at "+shop.Name+".")
@@ -801,7 +845,8 @@ func HandleInbound(in Inbound) {
 	// way a person types them, not as one block.
 	if strings.TrimSpace(lower) == "" {
 		if shop := catalogue.GetMerchant(boundID); shop != nil {
-			sendPieces(from, welcomeFor(shop, from), productListText(shop.ID))
+			whatsapp.SendText(from, welcomeFor(shop, from))
+			presentShelf(from, shop)
 			return
 		}
 	}
