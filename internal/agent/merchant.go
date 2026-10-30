@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/checkout"
@@ -564,6 +565,35 @@ func enterDupChoice(from string, s *Session, flow *OnboardingFlow) bool {
 	return true
 }
 
+// walkPriceShape reports whether a message at one of the
+// walk's price steps is shaped like a price answer. The
+// burst batch learned this first (see burstAnswerShape):
+// once the figures are scrubbed out, only currency words,
+// price words and the soft lead-ins a person answering a
+// price question actually uses may remain ("450", "it is
+// 450", "450 cedis only", "fixed price 450"). Any other
+// word makes the message a sentence, and a figure inside a
+// sentence is usually about something else: "I have 2
+// pairs in stock" at the last price step once saved a
+// product at GH₵2. A falsely refused answer costs her one
+// more message; a falsely accepted one costs a wrongly
+// priced product.
+func walkPriceShape(text string) bool {
+	residue := burstFigureScrub.ReplaceAllString(strings.ToLower(text), " ")
+	for _, w := range strings.FieldsFunc(residue, func(r rune) bool {
+		return !unicode.IsLetter(r)
+	}) {
+		switch w {
+		case "gh", "ghc", "cedis", "price", "is", "it", "its", "the", "a", "an", "my", "i",
+			"list", "last", "at", "for", "selling", "sell", "sold", "goes", "going",
+			"be", "will", "that", "this", "only", "fixed", "about", "take":
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // advanceOnboarding feeds one merchant message to the onboarding flow.
 func advanceOnboarding(from string, s *Session, text, lower string) {
 	// When this turn ends the listing, a kept burst batch is
@@ -663,7 +693,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			flow.Step = "list"
 			whatsapp.SendText(from, "Alright, that price is out. What is the list price for "+flow.Name+", in cedis? For example, "+money.GHS(450)+".")
 		default:
-			if amount := parseOffer(lower); amount != nil && *amount > 0 {
+			if amount := parseOffer(lower); amount != nil && *amount > 0 && walkPriceShape(text) {
 				flow.ListPrice = *amount
 				flow.PriceConfirmed = true
 				flow.PriceNeedsConfirm = false
@@ -773,6 +803,10 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			whatsapp.SendText(from, "I could not read that as a price. What is the list price for "+flow.Name+", in cedis? For example, "+money.GHS(450)+".")
 			return
 		}
+		if !walkPriceShape(text) {
+			whatsapp.SendText(from, "I did not take a price from that: it reads as a sentence, and a figure inside a sentence is usually about something else. What is the list price for "+flow.Name+", in cedis? Just the figure is fine, for example "+money.GHS(450)+".")
+			return
+		}
 		flow.ListPrice = *amount
 		gotoNextOnboardingStep(from, flow)
 
@@ -790,6 +824,10 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		}
 		if amount == nil || *amount <= 0 {
 			whatsapp.SendText(from, "I could not read that as a price. What is your last price for "+flow.Name+", in cedis? Or say non-negotiable if the price does not move. If the list price itself is wrong, correct it like this: price is 500.")
+			return
+		}
+		if !walkPriceShape(text) {
+			whatsapp.SendText(from, "I did not take a last price from that: it reads as a sentence, and a figure inside a sentence is usually about something else. What is your last price for "+flow.Name+", in cedis? Just the figure is fine. Or say non-negotiable if the price does not move.")
 			return
 		}
 		if *amount > flow.ListPrice {
