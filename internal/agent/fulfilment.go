@@ -107,10 +107,51 @@ func beginFulfilment(from string, s *Session, price float64) {
 	shopID := s.MerchantID
 	key := sessionKey(shopID, from)
 	merchant := catalogue.GetMerchant(shopID)
+
+	// An agreement on the whole hand lands here wearing
+	// one coat: the total is shared back across the picks
+	// first (see totalhaggle.go), all but the last parked
+	// in the basket, the last left as the pending item at
+	// its own share — and from there the ordinary road
+	// runs, one fulfilment for the whole order, its deal
+	// line naming the total she agreed.
+	if len(s.TotalHand) > 0 {
+		hand := s.TotalHand
+		s.TotalHand = nil
+		prices := apportionTotal(hand, price)
+		for i := 0; i+1 < len(hand); i++ {
+			p := hand[i]
+			s.Basket = append(s.Basket, BasketItem{Product: &p, AgreedPrice: prices[i]})
+		}
+		last := hand[len(hand)-1]
+		s.Product = &last
+		s.Qty, s.Unit = 0, ""
+		price = prices[len(prices)-1]
+		s.ShelfPicks = nil
+		s.ShelfSettling = false
+		sessions[key] = s
+	}
+
 	s.Stage = "fulfilment"
 	s.AgreedPrice = price
 	s.Ask = price
 	sessions[key] = s
+
+	// An agreement on one of her picks, reached by any
+	// road — a spoken offer, a buy at the price — starts
+	// the settling from here: the agreed item leaves the
+	// picks and the rest queue behind it, so a pick is
+	// never stranded while an order completes without it
+	// and takes the session, and the picks, with it.
+	if !s.ShelfSettling && s.Product != nil {
+		for i, id := range s.ShelfPicks {
+			if id == s.Product.ID {
+				s.ShelfPicks = append(s.ShelfPicks[:i], s.ShelfPicks[i+1:]...)
+				s.ShelfSettling = true
+				break
+			}
+		}
+	}
 
 	// Picks from the shelf settle one by one into this
 	// order: when a price agreement lands and picks are

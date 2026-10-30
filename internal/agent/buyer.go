@@ -125,6 +125,19 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		carryBudget(from, s, b)
 	}
 
+	// Done picking, in plain words: the shelf's Done row
+	// has a typed shape too, and it is a control word, not
+	// a judgement — the same philosophy as the yes and no
+	// the buttons translate into. While she holds picks and
+	// no question is open, "done" starts the settling
+	// exactly as the tap does. The thinking never sees it:
+	// read as chat, it wanders off with her picks in hand
+	// and the settling never starts.
+	if (s.Stage == "browsing" || s.Stage == "") && !s.PendingClose && s.FulfilStep == "" && len(s.ShelfPicks) > 0 && !s.ShelfSettling && donePickingRe.MatchString(lower) {
+		serveShelfDone(from, merchant)
+		return
+	}
+
 	// Thinking first. On an open turn (not inside a guided
 	// flow: no haggle running, no fulfilment, no pending close,
 	// no onboarding), the agent thinks before it answers: the
@@ -297,7 +310,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				p := s.Product
 				lastPrice := s.Ask
 				daybook.Default.RecordWalkAway(shopID, daybook.Options{Allowance: merchant.DailyGiveawayAllowance})
-				if len(s.Basket) > 0 {
+				if len(s.Basket) > 0 && len(s.TotalHand) == 0 {
 					// She let this one go, but the order she has
 					// already built is still hers: the first
 					// parked item becomes the pending sale
@@ -520,6 +533,14 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// which item is it for.
 	if s.Stage == "browsing" {
 		if offer := parseOffer(lower); offer != nil {
+			// An offer that can only be read on the whole
+			// hand she is holding opens the haggle on the
+			// total instead of binding to one item (see
+			// totalhaggle.go). While the settling runs,
+			// offers belong to the item in front of her.
+			if !s.ShelfSettling && openTotalHaggle(from, s, merchant, *offer, msg) {
+				return
+			}
 			target := catalogue.FindProduct(shopID, lower)
 			if target == nil {
 				target = s.LastViewed

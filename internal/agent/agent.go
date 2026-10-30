@@ -184,6 +184,16 @@ type Session struct {
 	ShelfSettling bool
 	ShelfPage     int
 
+	// TotalHand holds her picks as they stood when she
+	// offered on all of them together (see totalhaggle.go):
+	// while it is set, the session's haggle is over the
+	// picks' combined price, the session's Product is the
+	// hand wearing one coat, and an agreement apportions
+	// the total back across these products before the
+	// order is laid out. It is consumed at that agreement
+	// and never outlives it.
+	TotalHand []catalogue.Product
+
 	// RememberedFulfil is how a returning buyer's goods
 	// reached her last time, held up at the fulfilment
 	// step for her to confirm or change (see returning.go).
