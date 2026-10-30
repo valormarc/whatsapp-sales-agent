@@ -21,9 +21,12 @@ package agent
 //
 // An offer that names an item is that item's, as always,
 // and an offer no bigger than the dearest pick can belong
-// to one item, so those roads are untouched: this gate
-// fires only where the figure itself leaves no other
-// honest reading.
+// to one item, so those roads are untouched — unless she
+// declares the scope herself: "for all", "for the lot",
+// "everything together". The declared scope is read at
+// any figure, the way a figure framed as her budget is
+// never an offer at all; only a bare figure with no scope
+// declared keeps the conservative rule.
 
 import (
 	"regexp"
@@ -41,14 +44,28 @@ import (
 // word can only mean she has finished picking.
 var donePickingRe = regexp.MustCompile(`^(i am done|i'm done|done|finished|that'?s all|that is all)[.!]?$`)
 
+// totalFrameRe is the wording that frames a figure as
+// being for the whole hand: "for all", "for the lot",
+// "everything together". A figure's scope is part of its
+// shape, the same way a figure framed as her budget is
+// never an offer (see haggle.go): when she declares the
+// scope herself, the declaration is read at any figure,
+// and only a bare figure with no scope declared keeps
+// the conservative rule below.
+var totalFrameRe = regexp.MustCompile(`for all\b|for the lot\b|the whole lot\b|for them all\b|for everything\b|everything together\b|all together\b`)
+
 // handPicks resolves her pick ids to the products
 // themselves, in the order she picked them. A pick the
-// shelf no longer holds is simply not in the hand.
+// shelf no longer holds is simply not in the hand — and
+// neither is one the shop can no longer supply: stock is
+// re-read here, at the moment the hand is acted on, the
+// same protection the settling walk gives a pick whose
+// stock has gone since it was chosen.
 func handPicks(s *Session, shopID string) []catalogue.Product {
 	var hand []catalogue.Product
 	for _, id := range s.ShelfPicks {
 		for _, p := range catalogue.ListProducts(shopID) {
-			if p.ID == id {
+			if p.ID == id && p.Stock > 0 {
 				hand = append(hand, p)
 				break
 			}
@@ -84,10 +101,11 @@ func handLabel(hand []catalogue.Product) string {
 
 // openTotalHaggle takes a buyer's offer as an offer on
 // her whole hand when the figure leaves no other reading,
-// and reports whether it did. The haggle that follows is
-// the ordinary one, over a product built from the hand;
-// the hand itself rides on the session so the agreement
-// can be shared back across the real items.
+// or when she declares that scope herself, and reports
+// whether it did. The haggle that follows is the ordinary
+// one, over a product built from the hand; the hand itself
+// rides on the session so the agreement can be shared back
+// across the real items.
 func openTotalHaggle(from string, s *Session, merchant *catalogue.Merchant, offer float64, msg string) bool {
 	shopID := s.MerchantID
 	if catalogue.FindProduct(shopID, strings.ToLower(msg)) != nil {
@@ -109,8 +127,9 @@ func openTotalHaggle(from string, s *Session, merchant *catalogue.Merchant, offe
 			allFixed = false
 		}
 	}
-	if offer <= dearest {
-		return false // this figure can belong to one item; it is read there
+	if offer <= dearest && !totalFrameRe.MatchString(strings.ToLower(msg)) {
+		return false // this figure can belong to one item, and she
+		// did not declare it for the lot; it is read there
 	}
 	synth := &catalogue.Product{
 		Name:       handLabel(hand),

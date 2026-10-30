@@ -180,13 +180,22 @@ func completeDeliveryFlow(from string, s *Session, a flowAnswers) {
 	}
 }
 
-// completePayoutFlow settles a merchant's payout details:
-// the number and the name are recorded, and the payment
-// account that settles to the number is remade against
-// them, the same creation her signup ran. When creation
-// cannot complete, the record still stands — and she is
-// told exactly which half is done and how the other half
-// finishes, in the desk's own words.
+// createSubaccountFn is the payment-account creation, a
+// variable so tests can stand in for the provider.
+var createSubaccountFn = checkout.CreateSubaccount
+
+// completePayoutFlow changes a merchant's payout details.
+// The order is the safety: the replacement payment account
+// is created and verified FIRST, and only then do the
+// number, the name and the account switch together, in
+// one write. The order this replaces recorded the new
+// number first and remade the account after, so a failed
+// creation left the record showing the new number while
+// payment links still routed money through the old
+// account — a mismatch a shop's money could fall into.
+// A failed replacement now leaves the old payout standing
+// exactly as it was, and she is told so, with the old
+// details named.
 func completePayoutFlow(from string, s *Session, merchant *catalogue.Merchant, a flowAnswers) {
 	phone := strings.TrimSpace(a.Phone)
 	holder := strings.TrimSpace(a.Holder)
@@ -194,15 +203,24 @@ func completePayoutFlow(from string, s *Session, merchant *catalogue.Merchant, a
 		whatsapp.SendText(from, "That form came back without the number or the name on the account, so nothing has changed.")
 		return
 	}
-	if err := catalogue.SetPayoutDetails(merchant.ID, phone, holder); err != nil {
-		whatsapp.SendText(from, "I could not save those payout details just now. Nothing has changed; your payout still settles as it did.")
-		return
+	still := "you have no payout account set up yet"
+	if merchant.PayoutPhone != "" && merchant.PayoutHolderName != "" {
+		still = "your payout still settles to " + checkout.LocalNumber(merchant.PayoutPhone) + " in the name " + merchant.PayoutHolderName
+	} else if merchant.PayoutPhone != "" {
+		still = "your payout still settles to " + checkout.LocalNumber(merchant.PayoutPhone)
 	}
-	code, ok := checkout.CreateSubaccount(merchant.Name, phone, holder)
+	code, ok := createSubaccountFn(merchant.Name, phone, holder)
 	if !ok {
-		whatsapp.SendText(from, "Saved: your payout details now read "+checkout.LocalNumber(phone)+" in the name "+holder+". The payment account itself could not be remade just now — say \"set up my payment\" and I will finish it.")
+		whatsapp.SendText(from, "That did not go through, so nothing has changed: "+still+". Try the form again whenever you are ready.")
 		return
 	}
-	_ = catalogue.SetSubaccount(merchant.ID, code, holder)
+	// The account exists; switching the record is one
+	// write of all three fields. If even that write fails,
+	// the active payout is untouched — the new account
+	// simply stands unused until she sends the form again.
+	if err := catalogue.SetPayoutDetails(merchant.ID, phone, holder, code); err != nil {
+		whatsapp.SendText(from, "That did not go through, so nothing has changed: "+still+". Try the form again whenever you are ready.")
+		return
+	}
 	whatsapp.SendText(from, "Done. Your payout now settles to "+checkout.LocalNumber(phone)+" in the name "+holder+", usually the next day.")
 }

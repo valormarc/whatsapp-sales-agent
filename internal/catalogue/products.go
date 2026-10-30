@@ -296,16 +296,19 @@ func SetSubaccount(merchantID, code, holderName string) error {
 	})
 }
 
-// SetPayoutDetails records where a shop's money settles:
-// the MoMo number and the name on that account, as the
-// merchant herself gave them (her payout form carries both
-// in one go). The subaccount that pays the number is a
-// separate record (SetSubaccount), remade by the caller
-// when the number changes.
-func SetPayoutDetails(merchantID, phone, holderName string) error {
+// SetPayoutDetails switches where a shop's money settles,
+// all of it in one write: the MoMo number, the name on that
+// account, and the Seev subaccount code that pays the
+// number. The three move together or not at all — a record
+// showing a new number while links still route through an
+// old account is a mismatch money can fall into, so the
+// caller creates and verifies the replacement account
+// first and calls this only with a code in hand.
+func SetPayoutDetails(merchantID, phone, holderName, subaccountCode string) error {
 	return updateMerchant(merchantID, func(m *Merchant) error {
 		m.PayoutPhone = phone
 		m.PayoutHolderName = holderName
+		m.SubaccountCode = subaccountCode
 		return nil
 	})
 }

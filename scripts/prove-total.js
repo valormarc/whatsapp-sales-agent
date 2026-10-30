@@ -12,7 +12,11 @@
 //     the deal names that order total;
 //   - leg 4: the journey completes as ONE order whose
 //     three items each sit at or above their own last
-//     price and sum to the agreed total exactly.
+//     price and sum to the agreed total exactly;
+//   - leg 5: "I will give you 250 for all" — a declared
+//     total BELOW the dearest pick (the 270 rack) — is
+//     still read on the whole hand, because she said
+//     what the figure was for.
 // Run:
 //   META_MODEL_API_KEY=<redacted> node scripts/prove-total.js
 "use strict";
@@ -32,6 +36,7 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const OWNER = "233551209301";
 const BUYER_A = "233551209401";
 const BUYER_B = "233551209402";
+const BUYER_C = "233551209403";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "total-"));
 const cat = { merchants: { hand: { id: "hand", name: "Hand Shop", shopCode: "HAND", ownerWhatsApp: OWNER, payoutPhone: OWNER, dailyGiveawayAllowance: 300, deliveryFee: 20, deliveryNote: "Sent by bus to your station", products: [
   { id: "rack", name: "Double Clothes Rack", description: "Black metal double clothes rack.", listPrice: 270, floorPrice: 250, stock: 2 },
@@ -175,6 +180,20 @@ async function waitHealth() {
       }
     }
     check(orderOK, "leg 4: one order, three items, none below its last price, summing to the agreed total", evidence);
+
+    // Leg 5: the declared total below the dearest pick.
+    await say(BUYER_C, "SHOP-HAND");
+    await fresh(BUYER_C);
+    await tap(BUYER_C, "shelf_rack", "Double Clothes Rack");
+    await fresh(BUYER_C, 60000);
+    await tap(BUYER_C, "shelf_ribbed", "Ribbed Off-Shoulder");
+    await fresh(BUYER_C, 60000);
+    await tap(BUYER_C, "shelf_halter", "Halter Pleated Maxi");
+    await fresh(BUYER_C, 60000);
+    await say(BUYER_C, "I will give you 250 for all");
+    recs = await fresh(BUYER_C);
+    check(texts(recs).includes("For all of them together") && texts(recs).includes("GH₵550"),
+      "leg 5: '250 for all' is read on the whole hand even though it is below the dearest pick", texts(recs));
   } finally {
     child.kill("SIGTERM");
   }

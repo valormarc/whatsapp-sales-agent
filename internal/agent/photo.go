@@ -402,8 +402,13 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	// colour on the open listing would corrupt its colour
 	// rule at save.
 	var photoColour string
+	// The photo itself, kept in hand for the turn: a fold
+	// into a kept burst item may need its own identity
+	// judgement against that item (see burst.go).
+	var photoDataURI string
 	if data, mime, ok := downloadMediaBytesFn(imageID); ok {
 		dataURI := "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)
+		photoDataURI = dataURI
 		openName, openDesc := "", ""
 		if s.Onboarding != nil && flow.PhotoOpened && flow.Name != "" {
 			openName, openDesc = flow.Name, flow.Description
@@ -471,7 +476,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	if s.Onboarding != nil && flow.Photo && flow.Name != "" && draft.Name != "" &&
 		draft.ListPrice > 0 &&
 		(identityVerdict == "different" || (identityVerdict == "" && !sameProductName(flow.Name, draft.Name))) {
-		addToBurst(s, draft, imageID, caption, photoColour)
+		addToBurst(s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
 		if photoAckCovered(flow.HeldAckAt) {
 			return
 		}
@@ -509,7 +514,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			// either: it is parked as a held item of its own,
 			// to open as its own listing once this one
 			// finishes (see burst.go).
-			parkPendingPhoto(s, draft, imageID, caption, photoColour)
+			parkPendingPhoto(s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
 			if photoAckCovered(flow.HeldAckAt) {
 				return
 			}
@@ -581,7 +586,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	if s.Onboarding != nil && flow.PhotoOpened {
 		switch {
 		case flow.Name == "" && draft.Name != "" && draft.ListPrice > 0:
-			addToBurst(s, draft, imageID, caption, photoColour)
+			addToBurst(s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
 			if photoAckCovered(flow.HeldAckAt) {
 				return
 			}
@@ -589,7 +594,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			whatsapp.SendText(from, "Got it ✅ I have kept "+draft.Name+" to add with the others. "+photoStepReminder(flow))
 			return
 		case flow.Name == "" || !photoPositivelyMatches(flow, draft, identityVerdict):
-			parkPendingPhoto(s, draft, imageID, caption, photoColour)
+			parkPendingPhoto(s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
 			if photoAckCovered(flow.HeldAckAt) {
 				return
 			}

@@ -7,11 +7,15 @@
 // sends. What is proven is the whole working chain:
 //   - leg 1: the merchant says "payout details" and the
 //     payout form is offered with a fresh token;
-//   - leg 2: its completion records the new MoMo number
-//     and holder name in the catalogue itself (the Seev
-//     remake is unconfigured in this scratch world, so
-//     the reply takes the saved-and-finish-later branch,
-//     and says so);
+//   - leg 2: its completion tries to create the
+//     replacement payment account FIRST; the provider is
+//     unconfigured in this scratch world, so the creation
+//     fails and NOTHING is recorded — the old payout
+//     stands exactly as it was, and the reply says so.
+//     (The order once recorded the new number first and
+//     left links routing to the old account when the
+//     remake failed; that mismatch is what this leg now
+//     guards.);
 //   - leg 3: a buyer closing a delivery order is offered
 //     the delivery form beside the package-name question;
 //   - leg 4: completing it fills the order she is making —
@@ -121,8 +125,8 @@ async function waitHealth() {
       await completeFlow(OWNER, { flow_token: payoutForm.flowToken, holder: "Efua Mensah", phone: "0244987654" });
       recs = await fresh(OWNER, 60000);
       const shop = JSON.parse(fs.readFileSync(path.join(dir, "catalogue.json"), "utf8")).merchants.flows;
-      check(shop.payoutPhone === "0244987654" && shop.payoutHolderName === "Efua Mensah" && texts(recs).includes("Saved"),
-        "leg 2: the completion records the number and the name in the book", texts(recs) + " | book: " + shop.payoutPhone + "/" + shop.payoutHolderName);
+      check(shop.payoutPhone === OWNER && !shop.payoutHolderName && !shop.subaccountCode && texts(recs).includes("nothing has changed"),
+        "leg 2: a payout change that cannot create its replacement account records nothing — the old payout stands", texts(recs) + " | book: " + shop.payoutPhone + "/" + shop.payoutHolderName + "/" + shop.subaccountCode);
     }
 
     // Legs 3-4: the buyer's delivery form, inside a real close.

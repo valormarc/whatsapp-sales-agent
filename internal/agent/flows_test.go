@@ -70,18 +70,62 @@ func TestAFormCompletionWithAnotherTokenFillsNothing(t *testing.T) {
 	}
 }
 
-func TestPayoutFormRecordsTheNumberAndTheName(t *testing.T) {
+// A payout change whose replacement account cannot be
+// created changes NOTHING: the old number, the old name
+// and the old account all stay exactly as they were, so
+// the record can never show one number while links route
+// money to another.
+func TestPayoutFormFailureLeavesTheOldPayoutStanding(t *testing.T) {
 	owner := "233550010003"
 	dir := setupChat(t, owner, shopWithBag)
 	c := &chat{dir: dir}
+	if err := catalogue.SetPayoutDetails(MerchantID, "0244111222", "Efua Old", "OLD_CODE"); err != nil {
+		t.Fatal(err)
+	}
+	old := createSubaccountFn
+	createSubaccountFn = func(businessName, phone, holderName string) (string, bool) { return "", false }
+	t.Cleanup(func() { createSubaccountFn = old })
 
 	s := &Session{Stage: "merchant", MerchantID: MerchantID, PendingFlow: "payout-test1", FlowKind: flowKindPayout}
 	sessions[sessionKey(MerchantID, owner)] = s
 
 	HandleInbound(Inbound{From: owner, FlowReply: `{"flow_token":"payout-test1","holder":"Efua Mensah","phone":"0244987654"}`})
 	shop := catalogue.GetMerchant(MerchantID)
-	if shop == nil || shop.PayoutPhone != "0244987654" || shop.PayoutHolderName != "Efua Mensah" {
-		t.Fatalf("the payout form should record the number and the name, got %+v", shop)
+	if shop == nil || shop.PayoutPhone != "0244111222" || shop.PayoutHolderName != "Efua Old" || shop.SubaccountCode != "OLD_CODE" {
+		t.Fatalf("a failed replacement must leave the old payout intact, got %+v", shop)
+	}
+	got := strings.Join(c.replies(t, owner), "\n")
+	if !strings.Contains(got, "nothing has changed") || !strings.Contains(got, "0244111222") {
+		t.Fatalf("she should be told nothing changed and where her money still settles, got %q", got)
+	}
+}
+
+// A payout change whose replacement account IS created
+// switches the number, the name and the account together,
+// in the one write.
+func TestPayoutFormSuccessSwitchesEverythingTogether(t *testing.T) {
+	owner := "233550010013"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+	if err := catalogue.SetPayoutDetails(MerchantID, "0244111222", "Efua Old", "OLD_CODE"); err != nil {
+		t.Fatal(err)
+	}
+	old := createSubaccountFn
+	createSubaccountFn = func(businessName, phone, holderName string) (string, bool) {
+		if phone != "0244987654" || holderName != "Efua Mensah" {
+			t.Errorf("the new account should be created for the new details, got %q / %q", phone, holderName)
+		}
+		return "NEW_CODE", true
+	}
+	t.Cleanup(func() { createSubaccountFn = old })
+
+	s := &Session{Stage: "merchant", MerchantID: MerchantID, PendingFlow: "payout-test2", FlowKind: flowKindPayout}
+	sessions[sessionKey(MerchantID, owner)] = s
+
+	HandleInbound(Inbound{From: owner, FlowReply: `{"flow_token":"payout-test2","holder":"Efua Mensah","phone":"0244987654"}`})
+	shop := catalogue.GetMerchant(MerchantID)
+	if shop == nil || shop.PayoutPhone != "0244987654" || shop.PayoutHolderName != "Efua Mensah" || shop.SubaccountCode != "NEW_CODE" {
+		t.Fatalf("a successful change should switch number, name and account together, got %+v", shop)
 	}
 	got := strings.Join(c.replies(t, owner), "\n")
 	if !strings.Contains(got, "0244987654") && !strings.Contains(got, "244987654") {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
+	"github.com/valormarc/hackathon-agent/internal/model"
 )
 
 // finishHeld drives one held burst item through its intake
@@ -89,6 +90,152 @@ func TestBurstBatchIsPricedTogetherAndSaved(t *testing.T) {
 	}
 	if s.BurstAwaiting || len(s.BurstBatch) != 0 || len(s.BurstHeld) != 0 {
 		t.Fatalf("the burst should be finished, got awaiting=%v batch=%v held=%v", s.BurstAwaiting, s.BurstBatch, s.BurstHeld)
+	}
+}
+
+// The fixed-price phrase is read with its negation: a
+// seller saying she does NOT want fixed prices has not
+// set anything fixed, however exactly her sentence
+// contains the trigger words. A clean clause still sets
+// them, and "no bargaining" beside it is not a negation
+// of the fixed price itself.
+func TestBurstFixedPhraseReadsNegation(t *testing.T) {
+	cases := map[string]bool{
+		"i don't want a fixed price; customers can bargain": false,
+		"i don't want a fixed price":                        false,
+		"not fixed price, they can bargain":                 false,
+		"it is not a fixed price shop":                      false,
+		"fixed price":                                       true,
+		"all fixed price":                                   true,
+		"price is final":                                    true,
+		"non-negotiable":                                    true,
+		"no bargaining, fixed price":                        true,
+	}
+	for msg, want := range cases {
+		if got := burstFixedPhrase(msg); got != want {
+			t.Errorf("burstFixedPhrase(%q) = %v, want %v", msg, got, want)
+		}
+	}
+}
+
+// End to end: the negated sentence is not claimed as the
+// batch's answer at all — nothing saves, the batch keeps
+// waiting — and a plain "fixed price" afterwards still
+// sets every item fixed, exactly as before.
+func TestBurstNegatedFixedSentenceSavesNothing(t *testing.T) {
+	owner := "233550002610"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+
+	c.photo(t, owner, "Corner Rack\nSteel frame with 4 tiers\nGH₵270")
+	c.photo(t, owner, "Dinner Set\n16 pieces for the family\nGH₵180")
+	c.photo(t, owner, "Serving Bowls\nShiny steel, polished finish\nGH₵170")
+	c.say(t, owner, "250")
+	c.replies(t, owner)
+	c.say(t, owner, "whole")
+	c.replies(t, owner)
+
+	c.say(t, owner, "I don't want a fixed price; customers can bargain")
+	c.replies(t, owner)
+	s := sessions[sessionKey(MerchantID, owner)]
+	if s == nil || !s.BurstAwaiting || len(s.BurstBatch) != 2 {
+		t.Fatalf("the negated sentence should leave the batch waiting, got %+v", s)
+	}
+	for _, p := range catalogue.ListProducts(MerchantID) {
+		if p.ListPrice == 180 || p.ListPrice == 170 {
+			t.Fatalf("nothing from the batch should have saved, got %+v", p)
+		}
+	}
+
+	c.say(t, owner, "fixed price")
+	joined := strings.Join(c.replies(t, owner), "\n")
+	if strings.Count(joined, "Added ✅") != 2 {
+		t.Fatalf("a plain fixed price should save both items, got %q", joined)
+	}
+	for _, p := range catalogue.ListProducts(MerchantID) {
+		if (p.ListPrice == 180 || p.ListPrice == 170) && !p.Fixed {
+			t.Fatalf("both batch items should be fixed, got %+v", p)
+		}
+	}
+}
+
+// Two different products that read under one name at one
+// price do not fold into each other: the model's identity
+// verdict against the kept item is what decides, the way
+// it decides against an open listing. A further photo the
+// model judges the SAME product still folds, as an angle
+// should.
+func TestBurstFoldTakesTheIdentityVerdict(t *testing.T) {
+	stubPhotoMedia(t)
+	stubDraftListing(t, func(caption, openName string) *model.ListingDraft {
+		switch {
+		case openName == "":
+			return &model.ListingDraft{}
+		case openName == "Metal Rack" && strings.Contains(caption, "White single"):
+			return &model.ListingDraft{SameAsOpen: "different"}
+		case openName == "Metal Rack" && strings.Contains(caption, "from the side"):
+			return &model.ListingDraft{SameAsOpen: "same"}
+		default:
+			return &model.ListingDraft{SameAsOpen: "different"}
+		}
+	})
+	owner := "233550002611"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+
+	c.photo(t, owner, "Corner Rack\nSteel frame with 4 tiers\nGH₵270")
+	c.photo(t, owner, "Metal Rack\nBlack double rack with bottom shelf\nGH₵270")
+	c.photo(t, owner, "Metal Rack\nWhite single rack with wheels\nGH₵270")
+	s := sessions[sessionKey(MerchantID, owner)]
+	if s == nil || len(s.BurstBatch) != 2 {
+		t.Fatalf("two different racks under one name should stay two batch items, got %+v", s)
+	}
+	if !strings.Contains(s.BurstBatch[0].Description, "Black double") ||
+		!strings.Contains(s.BurstBatch[1].Description, "White single") {
+		t.Fatalf("each design should keep its own details, got %+v", s.BurstBatch)
+	}
+
+	c.photo(t, owner, "Metal Rack\nBlack double rack from the side\nGH₵270")
+	if len(s.BurstBatch) != 2 || len(s.BurstBatch[0].PhotoRefs) != 2 {
+		t.Fatalf("an angle of the first design should fold into it, got %+v", s.BurstBatch)
+	}
+
+	// And both designs complete: the open listing saves,
+	// the batch presents both racks, and one reply prices
+	// them. The shelf keeps one product per name, so the
+	// second design saves under its name qualified by its
+	// own detail — neither is refused into a loop that
+	// could never save it.
+	c.say(t, owner, "250")
+	c.replies(t, owner)
+	c.say(t, owner, "whole")
+	joined := strings.Join(c.replies(t, owner), "\n")
+	if !strings.Contains(joined, "kept 2 more items") {
+		t.Fatalf("the batch should present both designs, got %q", joined)
+	}
+	c.say(t, owner, "240, 240")
+	joined = strings.Join(c.replies(t, owner), "\n")
+	if strings.Count(joined, "Added ✅") != 2 {
+		t.Fatalf("both designs should save on the one reply, got %q", joined)
+	}
+	var racks []catalogue.Product
+	for _, p := range catalogue.ListProducts(MerchantID) {
+		if strings.HasPrefix(p.Name, "Metal Rack") {
+			racks = append(racks, p)
+		}
+	}
+	if len(racks) != 2 || racks[0].Name == racks[1].Name {
+		t.Fatalf("the two designs should stand on the shelf under distinct names, got %+v", racks)
+	}
+	photos := map[string]int{}
+	for _, r := range racks {
+		photos[r.Name] = len(r.Photos)
+		if r.ListPrice != 270 || r.FloorPrice != 240 {
+			t.Fatalf("each design should carry its own prices, got %+v", r)
+		}
+	}
+	if photos[racks[0].Name]+photos[racks[1].Name] != 3 {
+		t.Fatalf("all three photos should survive, one design with two angles and one with one, got %v", photos)
 	}
 }
 

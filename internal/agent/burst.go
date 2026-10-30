@@ -45,13 +45,49 @@ type burstItem struct {
 	Colours      []string
 	PhotoRefs    []string
 	Caption      string
+	// VisionDesc is what the model's own read of this
+	// item's photo said it is — construction detail the
+	// seller's caption shorthand may not carry. It is the
+	// reference a later photo's identity verdict is judged
+	// against: a caption line like "with gold studs" names
+	// one shared feature and two different designs can
+	// both match it, while the read of the item's own
+	// photo says how the thing is actually made.
+	VisionDesc string
+}
+
+// burstIdentityVerdict asks the model's eyes whether the
+// photo in hand is the same product as a kept item, judged
+// against that item's own name and description — the same
+// against-judgement a photo gets against an open listing.
+// It returns "same", "different" or "unsure" when the
+// model judged, and "" when there was no photo to judge or
+// no model read: an absent verdict never blocks a fold on
+// its own, but a "different" verdict always does. Two
+// different products can share a name and a price (two
+// rack designs both read as "Metal Rack" at GH₵270), and
+// folding those on words alone keeps the first and loses
+// the second's details entirely.
+func burstIdentityVerdict(dataURI, caption string, item burstItem) string {
+	if dataURI == "" || item.Name == "" {
+		return ""
+	}
+	reference := item.VisionDesc
+	if reference == "" {
+		reference = item.Description
+	}
+	md := draftListingFn(dataURI, caption, item.Name, reference)
+	if md == nil {
+		return ""
+	}
+	return md.SameAsOpen
 }
 
 // addToBurst keeps one read photo as a burst item, or folds
 // it into the item it belongs to when the batch already
 // holds that product: a later angle of a batched item joins
 // it exactly as an angle joins an open listing.
-func addToBurst(s *Session, draft throwDraft, imageID, caption, colour string) {
+func addToBurst(s *Session, draft throwDraft, imageID, caption, colour, dataURI, visionDesc string) {
 	for i := range s.BurstBatch {
 		// A photo folds into a kept item only when the name
 		// matches AND the priced facts are compatible: two
@@ -63,7 +99,12 @@ func addToBurst(s *Session, draft throwDraft, imageID, caption, colour string) {
 		// same compatibility rule the held-photo path uses.
 		priceCompatible := draft.ListPrice <= 0 || s.BurstBatch[i].ListPrice <= 0 ||
 			draft.ListPrice == s.BurstBatch[i].ListPrice
-		if sameProductName(s.BurstBatch[i].Name, draft.Name) && priceCompatible {
+		// And when the model's eyes judge the photo a
+		// different product from the kept item, it does not
+		// fold however well the words match: identity is
+		// judged, not spelled.
+		if sameProductName(s.BurstBatch[i].Name, draft.Name) && priceCompatible &&
+			burstIdentityVerdict(dataURI, caption, s.BurstBatch[i]) != "different" {
 			refs := append([]string{}, s.BurstBatch[i].PhotoRefs...)
 			probe := &OnboardingFlow{PhotoRefs: refs}
 			if collectFlowPhoto(probe, imageID) {
@@ -84,6 +125,9 @@ func addToBurst(s *Session, draft throwDraft, imageID, caption, colour string) {
 			if s.BurstBatch[i].Description == "" {
 				s.BurstBatch[i].Description = draft.Description
 			}
+			if s.BurstBatch[i].VisionDesc == "" {
+				s.BurstBatch[i].VisionDesc = visionDesc
+			}
 			return
 		}
 	}
@@ -96,6 +140,7 @@ func addToBurst(s *Session, draft throwDraft, imageID, caption, colour string) {
 		BaseQty:      draft.BaseQty,
 		Sizes:        draft.Sizes,
 		Caption:      caption,
+		VisionDesc:   visionDesc,
 	}
 	if colour != "" {
 		item.Colours = []string{colour}
@@ -117,7 +162,7 @@ func addToBurst(s *Session, draft throwDraft, imageID, caption, colour string) {
 // already held is not kept twice, and a further angle that
 // positively reads as a held item's own product joins that
 // item, exactly as an angle joins a listing.
-func parkPendingPhoto(s *Session, draft throwDraft, imageID, caption, colour string) {
+func parkPendingPhoto(s *Session, draft throwDraft, imageID, caption, colour, dataURI, visionDesc string) {
 	if imageID == "" {
 		return
 	}
@@ -129,7 +174,8 @@ func parkPendingPhoto(s *Session, draft throwDraft, imageID, caption, colour str
 		}
 		if draft.Name != "" && s.BurstHeld[i].Name != "" &&
 			sameProductName(s.BurstHeld[i].Name, draft.Name) &&
-			(draft.ListPrice <= 0 || s.BurstHeld[i].ListPrice <= 0 || draft.ListPrice == s.BurstHeld[i].ListPrice) {
+			(draft.ListPrice <= 0 || s.BurstHeld[i].ListPrice <= 0 || draft.ListPrice == s.BurstHeld[i].ListPrice) &&
+			burstIdentityVerdict(dataURI, caption, s.BurstHeld[i]) != "different" {
 			refs := append([]string{}, s.BurstHeld[i].PhotoRefs...)
 			probe := &OnboardingFlow{PhotoRefs: refs}
 			if collectFlowPhoto(probe, imageID) {
@@ -150,6 +196,9 @@ func parkPendingPhoto(s *Session, draft throwDraft, imageID, caption, colour str
 			if s.BurstHeld[i].Description == "" {
 				s.BurstHeld[i].Description = draft.Description
 			}
+			if s.BurstHeld[i].VisionDesc == "" {
+				s.BurstHeld[i].VisionDesc = visionDesc
+			}
 			return
 		}
 	}
@@ -163,6 +212,7 @@ func parkPendingPhoto(s *Session, draft throwDraft, imageID, caption, colour str
 		Sizes:        draft.Sizes,
 		PhotoRefs:    []string{imageID},
 		Caption:      caption,
+		VisionDesc:   visionDesc,
 	}
 	if colour != "" {
 		item.Colours = []string{colour}
@@ -317,13 +367,65 @@ func burstLines(s *Session) []string {
 	return lines
 }
 
-// burstFixedPhrase reports whether her words set every price
+// burstFixedTriggers are the phrases that set every price
 // as final, the batch form of a seller's fixed price.
+var burstFixedTriggers = []string{"non-negotiable", "non negotiable", "fixed price", "price is final"}
+
+// burstFixedNegations are the cues that take a fixed-price
+// phrase back in the clause that carries it: "I don't want
+// a fixed price; customers can bargain" contains the
+// trigger words and means the opposite of them.
+var burstFixedNegations = []string{"don't", "do not", "not ", "no ", "never", "isn't", "is not", "aren't", "won't", "can't", "cannot"}
+
+// burstFixedPhrase reports whether her words set every
+// price as final. Phrase containment alone is not enough:
+// the message is read clause by clause (split on sentence
+// punctuation and "but"), and a trigger inside a clause
+// that also carries a negation is the negation that
+// counts, not the trigger. A clean clause anywhere —
+// "no bargaining, fixed price" — still sets them fixed.
 func burstFixedPhrase(lower string) bool {
-	return strings.Contains(lower, "non-negotiable") ||
-		strings.Contains(lower, "non negotiable") ||
-		strings.Contains(lower, "fixed price") ||
-		strings.Contains(lower, "price is final")
+	clauses := strings.FieldsFunc(strings.ReplaceAll(lower, " but ", ";"),
+		func(r rune) bool { return r == ';' || r == ',' || r == '.' || r == '\n' })
+	for _, clause := range clauses {
+		hit := false
+		for _, trig := range burstFixedTriggers {
+			if strings.Contains(clause, trig) {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			continue
+		}
+		negated := false
+		for _, neg := range burstFixedNegations {
+			if strings.Contains(clause, neg) {
+				negated = true
+				break
+			}
+		}
+		if !negated {
+			return true
+		}
+	}
+	return false
+}
+
+// batchQualifier is the distinguishing detail a
+// same-named batch item is saved under: the colour its
+// own photo was read as, when it has one, else the
+// opening words of its own description. It is composed
+// only from the item's own read facts.
+func batchQualifier(item burstItem) string {
+	if len(item.Colours) > 0 {
+		return item.Colours[0]
+	}
+	words := strings.Fields(item.Description)
+	if len(words) > 3 {
+		words = words[:3]
+	}
+	return strings.Trim(strings.Join(words, " "), " .,;")
 }
 
 // allFigures reads every figure in a message, in order. A
@@ -439,6 +541,21 @@ func handleBurstAnswer(from string, s *Session, text, lower string) bool {
 		}
 		fixed := a.fixed || a.floor == item.ListPrice
 		name, desc := applyColourRuleFor(item.Colours, item.Name, item.Description)
+		// Two different products can share the name she
+		// captioned them with — this batch may hold both,
+		// and the first of them saved a moment ago in this
+		// very loop. The shelf keeps one product per name
+		// (buyers ask for goods by name), so a colliding
+		// item is qualified with its own distinguishing
+		// detail and saves under that; she sees the name
+		// it took in the Added line below. Without this the
+		// second product could never save at all: priced,
+		// refused, presented again, forever.
+		if catalogue.FindByName(s.MerchantID, name) != nil {
+			if q := batchQualifier(item); q != "" {
+				name = name + " (" + q + ")"
+			}
+		}
 		product, err := catalogue.AddProduct(s.MerchantID, catalogue.Product{
 			Name:        name,
 			Description: desc,

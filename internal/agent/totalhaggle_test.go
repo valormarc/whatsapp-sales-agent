@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/orders"
 )
 
@@ -25,13 +26,17 @@ const totalHandCatalogue = `{"merchants":{"demo":{"id":"demo","name":"Hand Shop"
 
 const totalHandOwner = "233550009301"
 
-func pickThree(t *testing.T, c *chat, buyer string) {
+// pickThree stands a buyer up in the hand shop and picks
+// all three items. Message ids are unique per test — the
+// message book is process-wide and a repeated id is
+// dropped as a redelivery.
+func pickThree(t *testing.T, c *chat, buyer, idPrefix string) {
 	t.Helper()
 	c.say(t, buyer, "SHOP-HAND")
 	c.replies(t, buyer)
-	HandleInbound(Inbound{From: buyer, ListID: "shelf_rack", MessageID: "wamid.TOTAL-P1"})
-	HandleInbound(Inbound{From: buyer, ListID: "shelf_ribbed", MessageID: "wamid.TOTAL-P2"})
-	HandleInbound(Inbound{From: buyer, ListID: "shelf_halter", MessageID: "wamid.TOTAL-P3"})
+	HandleInbound(Inbound{From: buyer, ListID: "shelf_rack", MessageID: "wamid." + idPrefix + "-P1"})
+	HandleInbound(Inbound{From: buyer, ListID: "shelf_ribbed", MessageID: "wamid." + idPrefix + "-P2"})
+	HandleInbound(Inbound{From: buyer, ListID: "shelf_halter", MessageID: "wamid." + idPrefix + "-P3"})
 }
 
 func TestTypedDoneStartsTheSettling(t *testing.T) {
@@ -61,7 +66,7 @@ func TestTotalOfferSettlesTheWholeHand(t *testing.T) {
 	dir := setupChat(t, totalHandOwner, totalHandCatalogue)
 	c := &chat{dir: dir}
 	buyer := "233550009402"
-	pickThree(t, c, buyer)
+	pickThree(t, c, buyer, "TOTAL")
 
 	c.say(t, buyer, "I will give you 509")
 	got := strings.Join(c.replies(t, buyer), "\n")
@@ -155,6 +160,58 @@ func TestAgreedPickStartsTheSettling(t *testing.T) {
 	got = strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "How do you want to get it?") {
 		t.Fatalf("settling the last pick should open the fulfilment, got %q", got)
+	}
+}
+
+// Her declared scope is read at any figure: "250 for all"
+// is below the dearest pick (the 270 rack), so the bare-
+// figure rule alone would send it to one item — but she
+// said what the figure is for, and the haggle opens on
+// the whole 550 hand.
+func TestDeclaredTotalOfferBelowDearestItem(t *testing.T) {
+	dir := setupChat(t, totalHandOwner, totalHandCatalogue)
+	c := &chat{dir: dir}
+	buyer := "233550009405"
+	pickThree(t, c, buyer, "DECL")
+
+	c.say(t, buyer, "I will give you 250 for all")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "For all of them together") || !strings.Contains(got, "GH₵550") {
+		t.Fatalf("a declared total offer should open the haggle on the whole hand, got %q", got)
+	}
+	s := sessions[sessionKey(MerchantID, buyer)]
+	if s == nil || len(s.TotalHand) != 3 {
+		t.Fatalf("the haggle should be over the three-item hand, got %+v", s)
+	}
+}
+
+// A pick whose stock has gone since she chose it is not
+// in the hand any more: the total is struck over what
+// the shop can still supply, and the figures she is shown
+// never counted it either.
+func TestTotalHaggleSkipsAStockedOutPick(t *testing.T) {
+	dir := setupChat(t, totalHandOwner, totalHandCatalogue)
+	c := &chat{dir: dir}
+	buyer := "233550009406"
+	pickThree(t, c, buyer, "STOK")
+	c.replies(t, buyer)
+
+	if _, err := catalogue.SetStock(MerchantID, "Ribbed Off-Shoulder Bodycon Maxi Dress", 0); err != nil {
+		t.Fatal(err)
+	}
+	s := sessions[sessionKey(MerchantID, buyer)]
+	if count, total := picksFigure(s, MerchantID); count != 2 || total != 420 {
+		t.Fatalf("the picks figure should count only suppliable goods, got %d / %v", count, total)
+	}
+
+	c.say(t, buyer, "I will give you 509")
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "GH₵420") || strings.Contains(got, "Ribbed") {
+		t.Fatalf("the total should be struck over the two suppliable picks only, got %q", got)
+	}
+	s = sessions[sessionKey(MerchantID, buyer)]
+	if s == nil || len(s.TotalHand) != 0 || len(s.Basket) != 1 || s.Product == nil || s.Product.ID != "halter" {
+		t.Fatalf("the two-item hand should be apportioned into the order, got %+v", s)
 	}
 }
 

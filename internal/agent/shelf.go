@@ -105,14 +105,16 @@ func pickedIDs(s *Session) map[string]bool {
 
 // picksFigure is what her picks come to at list prices:
 // how many of them still resolve to goods on the shelf,
-// and their total.
+// and their total. A pick the shop can no longer supply
+// counts for nothing: the figure she is shown only ever
+// counts goods that can still be settled for her.
 func picksFigure(s *Session, shopID string) (count int, total float64) {
 	if s == nil {
 		return 0, 0
 	}
 	for _, id := range s.ShelfPicks {
 		for _, p := range catalogue.ListProducts(shopID) {
-			if p.ID == id {
+			if p.ID == id && p.Stock > 0 {
 				count++
 				total += p.ListPrice
 				break
