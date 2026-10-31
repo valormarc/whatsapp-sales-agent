@@ -34,7 +34,7 @@ Nothing here is a script of stored answers. The formats are shapes; the words ar
 
 ## An honest note on what is mine and when
 
-The building period for this event runs from the kickoff on 26 October to 4 November 2026. I had explored this idea before the event: a foundation from 20 to 22 October, and a short spike of the model integration on the morning of 26 October, before the organisers confirmed that the building period opens after the kickoff session. That earlier work is mine too, but it is not what I am presenting. Everything in this repository is the event build, written this week.
+The building period for this event runs from the kickoff on 26 October to 4 November 2026. I had explored this idea before the event, and the earlier work was this: from 20 to 22 October I built a small local scaffold in Node, a webhook server with Meta's verification handshake and signature check, a WhatsApp client that logged messages to an outbox instead of sending them, a catalogue store with one seeded demo shop, a haggling engine, a Paystack link stub and a local simulator; and on the morning of 26 October, a short spike of the model integration, before the organisers confirmed that the building period opens after the kickoff session. That earlier work is mine too, but it is not what I am presenting. Everything in this repository is the event build, written this week.
 
 I created this repository on the first day of the event. The build is published here as it is completed and tested.
 
