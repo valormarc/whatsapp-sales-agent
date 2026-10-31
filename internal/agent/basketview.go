@@ -130,7 +130,7 @@ func serveBasketView(from string, s *Session, shopID string) bool {
 	}
 	lines := []string{"Here is what you have so far:"}
 	if len(agreed) > 0 {
-		lines = append(lines, orderItemLines(agreed)...)
+		lines = append(lines, orderItemBlock(agreed)...)
 		settled := 0.0
 		for _, it := range agreed {
 			settled += it.Price
@@ -145,7 +145,7 @@ func serveBasketView(from string, s *Session, shopID string) bool {
 		if len(agreed) > 0 {
 			lines = append(lines, "", "Picked, not settled yet:")
 		}
-		lines = append(lines, orderItemLines(unsettled)...)
+		lines = append(lines, orderItemBlock(unsettled)...)
 		if len(agreed) == 0 {
 			sum := 0.0
 			for _, it := range unsettled {

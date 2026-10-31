@@ -84,7 +84,7 @@ func orderReadback(merchant *catalogue.Merchant, o *orders.Order) string {
 		// prices, under the reference, with the total at
 		// the foot: a receipt, not a sentence.
 		block := []string{"Order " + o.Reference + ":"}
-		block = append(block, orderItemLines(o.Items)...)
+		block = append(block, orderItemBlock(o.Items)...)
 		block = append(block, "That is "+money.GHS(o.Price)+" in all.")
 		pieces = append(pieces, strings.Join(block, "\n"))
 	} else {

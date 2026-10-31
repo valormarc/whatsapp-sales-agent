@@ -893,9 +893,9 @@ func discoveryTaste() (string, []ShownProduct) {
 		return "", nil
 	}
 	// The taste is a list, not a sentence: one block per
-	// shop in the directory shape, blocks parted by a
-	// blank line.
-	return "Here is some of what the shops have:\n\n" + strings.Join(bits, "\n\n") + "\n\nWhat else are you looking for?", shown
+	// shop in the directory shape, inside the code box
+	// every shop list wears.
+	return "Here is some of what the shops have:\n\n" + codeBox(bits) + "\n\nWhat else are you looking for?", shown
 }
 
 // discoveryNet is the no-model net for the unbound buyer: a
@@ -993,22 +993,35 @@ func discoveryNet(from, text string) {
 		return
 	}
 	if len(hits) > 0 {
-		var lines []string
 		pre, ok := sessions.lookup(sessionKey("", from))
 		if !ok {
 			pre = &Session{Stage: "unbound"}
 			sessions.put(sessionKey("", from), pre)
 		}
 		pre.DiscoveryShown = pre.DiscoveryShown[:0]
+		// The net's results wear the same shape the
+		// thinking's do: one boxed message, each shop's
+		// matches under its code.
+		var blocks []string
+		byShop := map[string][]orders.OrderItem{}
+		var order []string
 		for i, h := range hits {
 			if i >= 5 {
 				break
 			}
-			lines = append(lines, h.shop.ShopCode+" has: "+h.product.Name+" - "+money.GHS(h.product.ListPrice))
+			if _, ok := byShop[h.shop.ShopCode]; !ok {
+				order = append(order, h.shop.ShopCode)
+			}
+			byShop[h.shop.ShopCode] = append(byShop[h.shop.ShopCode], orders.OrderItem{Name: h.product.Name, Price: h.product.ListPrice})
 			pre.DiscoveryShown = append(pre.DiscoveryShown, ShownProduct{ShopID: h.shop.ID, ProductID: h.product.ID})
 		}
-		lines = append(lines, "Which one do you want to look at?")
-		sendPieces(from, lines...)
+		for _, code := range order {
+			block := []string{code}
+			block = append(block, orderItemLines(byShop[code])...)
+			blocks = append(blocks, strings.Join(block, "\n"))
+		}
+		whatsapp.SendText(from, codeBox(blocks))
+		whatsapp.SendText(from, "Which one do you want to look at?")
 		return
 	}
 	key := sessionKey("", from)

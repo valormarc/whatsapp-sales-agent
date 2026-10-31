@@ -1264,7 +1264,7 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 	if myCatalogueRe.MatchString(lower) {
 		lines := []string{"Here is your catalogue:"}
 		for _, p := range merchant.Products {
-			line := "- " + p.Name + " - " + money.GHS(p.ListPrice)
+			line := p.Name + " - " + money.GHS(p.ListPrice)
 			if p.ByMeasure() {
 				line += " (" + money.GHS(p.UnitPrice()) + " per " + p.Unit + ", sold by the " + p.Unit + ")"
 			}
@@ -1321,6 +1321,16 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 		}
 		if merchant.SubaccountCode != "" {
 			lines = append(lines, "Your payment account is set up: link money settles to your MoMo in the name "+merchant.PayoutHolderName+".")
+		}
+				if len(merchant.Products) > 0 {
+			// The catalogue's goods sit in the code box
+			// every list wears; the heading and the notes
+			// under it stay ordinary text.
+			boxed := []string{lines[0], "```"}
+			boxed = append(boxed, lines[1:1+len(merchant.Products)]...)
+			boxed = append(boxed, "```")
+			boxed = append(boxed, lines[1+len(merchant.Products):]...)
+			lines = boxed
 		}
 		whatsapp.SendText(from, strings.Join(lines, "\n"))
 		return true

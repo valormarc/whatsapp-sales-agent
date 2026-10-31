@@ -69,6 +69,21 @@ func TestProductsStrungGuard(t *testing.T) {
 	}
 }
 
+// The basket's items sit in the code box, the shape the
+// owner set with his screenshot: the heading and the
+// total stay ordinary text, the list itself is fenced.
+func TestBasketViewArrivesBoxed(t *testing.T) {
+	dir := setupChat(t, stockOwner, totalHandCatalogue)
+	c := &chat{dir: dir}
+	buyer := "233550009558"
+	pickRackAndHalter(t, c, buyer, "jf2")
+	c.say(t, buyer, "show me my basket")
+	got := c.last(t, buyer)
+	if !strings.Contains(got, "```\nDouble Clothes Rack - GH₵270") || !strings.Contains(got, "Halter Pleated Maxi Dress - GH₵150\n```") {
+		t.Fatalf("the basket should arrive with its items in the code box, got %q", got)
+	}
+}
+
 // The haggle's holding frames speak of a hand as all of
 // them, never as its joined label with a singular verb.
 func TestHandHoldsSpeakOfAllOfThem(t *testing.T) {

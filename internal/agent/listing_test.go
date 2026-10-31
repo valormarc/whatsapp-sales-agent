@@ -23,7 +23,7 @@ func TestHandHaggleListsItemsLineByLine(t *testing.T) {
 
 	c.say(t, buyer, "I will give you 509")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "For all of them together, then:\nDouble Clothes Rack - GH₵270") ||
+	if !strings.Contains(got, "For all of them together, then:\n```\nDouble Clothes Rack - GH₵270") ||
 		!strings.Contains(got, "Ribbed Off-Shoulder Bodycon Maxi Dress - GH₵130") ||
 		!strings.Contains(got, "Halter Pleated Maxi Dress - GH₵150") ||
 		!strings.Contains(got, "That is GH₵550 in all.") {
@@ -49,7 +49,7 @@ func TestScopeQuestionListsTheSettledItems(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "I will give you 400 for all")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "These are already settled:\nDouble Clothes Rack - GH₵270") {
+	if !strings.Contains(got, "These are already settled:\n```\nDouble Clothes Rack - GH₵270\n```") {
 		t.Fatalf("the settled items should be listed, got %q", got)
 	}
 }
@@ -153,7 +153,7 @@ func TestPaymentRecordListsSeveralItems(t *testing.T) {
 			{Name: "Double Clothes Rack", Price: 250},
 		},
 	})
-	if !strings.Contains(rec, "Payment confirmed\nThong Sandals - GH₵80\nDouble Clothes Rack - GH₵250\nAmount: GH₵330") {
+	if !strings.Contains(rec, "Payment confirmed\n```\nThong Sandals - GH₵80\nDouble Clothes Rack - GH₵250\n```\nAmount: GH₵330") {
 		t.Fatalf("the payment record should list the items, got %q", rec)
 	}
 	if strings.Contains(rec, "Item: Thong Sandals and Double Clothes Rack") {
@@ -175,7 +175,7 @@ func TestOrderReadbackListsItemsLineByLine(t *testing.T) {
 		},
 	})
 	rb := orderReadback(shop, orders.Default.GetOrder("HAND-6003"))
-	if !strings.Contains(rb, "Order HAND-6003:\nDouble Clothes Rack - GH₵260.8") ||
+	if !strings.Contains(rb, "Order HAND-6003:\n```\nDouble Clothes Rack - GH₵260.8") ||
 		!strings.Contains(rb, "Halter Pleated Maxi Dress - GH₵140.8") ||
 		!strings.Contains(rb, "That is GH₵527 in all.") {
 		t.Fatalf("the readback should list the items, got %q", rb)

@@ -210,7 +210,7 @@ func beginFulfilment(from string, s *Session, price float64) {
 		// share the total gave it, then the total itself,
 		// so she sees what each item came to instead of
 		// one item named at a share she cannot place.
-		lines := append(orderItemLines(handDeal), "Deal. That makes your order "+money.GHS(handTotal)+" in all.")
+		lines := append(orderItemBlock(handDeal), "Deal. That makes your order "+money.GHS(handTotal)+" in all.")
 		deal = strings.Join(lines, "\n")
 	} else if len(s.Basket) > 0 {
 		deal += " That makes your order " + money.GHS(basketGoods(s)+price) + " in all."
@@ -1317,7 +1317,7 @@ func composeOrderRecap(s *Session, f fulfilment, turn string) string {
 	// a listing is scanned, not read out of a sentence.
 	lines := []string{"Please confirm your order:"}
 	items := orderItemsOf(s, f, s.AgreedPrice)
-	lines = append(lines, orderItemLines(items)...)
+	lines = append(lines, orderItemBlock(items)...)
 	if len(s.Basket) > 0 {
 		lines = append(lines, "Your items come to "+money.GHS(basketGoods(s)+s.AgreedPrice)+" in all.")
 	} else if f.Size != "" {

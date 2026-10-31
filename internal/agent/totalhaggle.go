@@ -166,7 +166,7 @@ func startTotalHaggle(from string, s *Session, merchant *catalogue.Merchant, han
 		items = append(items, orders.OrderItem{Name: p.Name, Price: p.ListPrice})
 	}
 	lines := []string{"For all of them together, then:"}
-	lines = append(lines, orderItemLines(items)...)
+	lines = append(lines, orderItemBlock(items)...)
 	lines = append(lines, "That is "+money.GHS(totalList)+" in all.")
 	whatsapp.SendText(from, strings.Join(lines, "\n"))
 	processOffer(from, ns, merchant, offer, msg)
@@ -377,7 +377,7 @@ func serveSettlingHandOffer(from string, s *Session, merchant *catalogue.Merchan
 		}
 	}
 	lines := []string{"These are already settled:"}
-	lines = append(lines, orderItemLines(settledItems)...)
+	lines = append(lines, orderItemBlock(settledItems)...)
 	lines = append(lines, "Is the "+money.GHS(offer)+" for everything, those included, or for the rest of them?")
 	whatsapp.SendText(from, strings.Join(lines, "\n"))
 	return true

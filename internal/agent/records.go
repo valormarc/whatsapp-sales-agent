@@ -84,9 +84,15 @@ func sendProductViewLead(from, lead string, p *catalogue.Product, invite string)
 func totalRecord(items []orders.OrderItem, deliveryFee, chargedFee float64, mode, location, paidTo, deliveryNote string) string {
 	var lines []string
 	goods := 0.0
+	if len(items) > 1 {
+		lines = append(lines, "```")
+	}
 	for _, it := range items {
 		lines = append(lines, it.Name+" - "+money.GHS(it.Price))
 		goods += it.Price
+	}
+	if len(items) > 1 {
+		lines = append(lines, "```")
 	}
 	if mode == "delivery" && deliveryFee > 0 {
 		line := "Delivery"
@@ -116,6 +122,22 @@ func totalRecord(items []orders.OrderItem, deliveryFee, chargedFee float64, mode
 // lines instead of stringing the items into a sentence, so
 // a buyer scans the list instead of reading through prose
 // to find what is in her deal.
+// orderItemBlock is orderItemLines inside WhatsApp's
+// code fences, so the list lands as the monospace card:
+// the shop lists set the shape (a directory the owner
+// asked to see rendered as a code box), and every list
+// the platform prints wears it — the basket, the haggle
+// opening, the deal, the recap, the readback, the payment
+// record. Headings, totals and questions stay outside
+// the fences as ordinary text in the same message; only
+// the items sit in the box.
+func orderItemBlock(items []orders.OrderItem) []string {
+	lines := []string{"```"}
+	lines = append(lines, orderItemLines(items)...)
+	lines = append(lines, "```")
+	return lines
+}
+
 func orderItemLines(items []orders.OrderItem) []string {
 	lines := make([]string, 0, len(items))
 	for _, it := range items {
@@ -162,7 +184,7 @@ func paymentConfirmedRecord(o *orders.Order) string {
 		// prices, the way the total record listed them:
 		// a receipt names its goods line by line, never
 		// by a joined label.
-		lines = append(lines, orderItemLines(o.Items)...)
+		lines = append(lines, orderItemBlock(o.Items)...)
 	} else {
 		lines = append(lines, "Item: "+orderItemLabel(o))
 	}
