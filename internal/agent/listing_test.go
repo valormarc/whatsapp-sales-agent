@@ -54,6 +54,57 @@ func TestScopeQuestionListsTheSettledItems(t *testing.T) {
 	}
 }
 
+func TestBasketViewListsSettledAndInFront(t *testing.T) {
+	dir := setupChat(t, totalHandOwner, totalHandCatalogue)
+	c := &chat{dir: dir}
+	buyer := "233550009604"
+	pickRackAndHalter(t, c, buyer, "BV1")
+
+	c.say(t, buyer, "270")
+	c.replies(t, buyer)
+	c.say(t, buyer, "show me what's in my basket")
+	got := c.last(t, buyer)
+	if !strings.Contains(got, "Here is what you have so far:") ||
+		!strings.Contains(got, "Double Clothes Rack: GH₵270") ||
+		!strings.Contains(got, "settled so far") ||
+		!strings.Contains(got, "Picked, not settled yet:") ||
+		!strings.Contains(got, "Halter Pleated Maxi Dress: GH₵150") {
+		t.Fatalf("the basket should list the settled rack and the waiting halter apart, got %q", got)
+	}
+}
+
+func TestBasketViewListsPicksOnly(t *testing.T) {
+	dir := setupChat(t, totalHandOwner, totalHandCatalogue)
+	c := &chat{dir: dir}
+	buyer := "233550009605"
+
+	c.say(t, buyer, "SHOP-HAND")
+	c.replies(t, buyer)
+	HandleInbound(Inbound{From: buyer, ListID: "shelf_rack", MessageID: "wamid.BV2-P1"})
+	HandleInbound(Inbound{From: buyer, ListID: "shelf_halter", MessageID: "wamid.BV2-P2"})
+	c.replies(t, buyer)
+	c.say(t, buyer, "show me my basket")
+	got := c.last(t, buyer)
+	if !strings.Contains(got, "Double Clothes Rack: GH₵270") ||
+		!strings.Contains(got, "Halter Pleated Maxi Dress: GH₵150") ||
+		!strings.Contains(got, "at shelf prices") {
+		t.Fatalf("the picks should be listed at their shelf prices, got %q", got)
+	}
+}
+
+func TestBasketViewEmptyBasket(t *testing.T) {
+	dir := setupChat(t, totalHandOwner, totalHandCatalogue)
+	c := &chat{dir: dir}
+	buyer := "233550009606"
+
+	c.say(t, buyer, "SHOP-HAND")
+	c.replies(t, buyer)
+	c.say(t, buyer, "show me what's in my basket")
+	if got := c.last(t, buyer); !strings.Contains(got, "Your basket is empty") {
+		t.Fatalf("an empty basket should be answered plainly, got %q", got)
+	}
+}
+
 func TestOrderReadbackListsItemsLineByLine(t *testing.T) {
 	setupChat(t, totalHandOwner, totalHandCatalogue)
 	shop := catalogue.GetMerchant(MerchantID)

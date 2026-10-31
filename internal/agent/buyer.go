@@ -159,6 +159,18 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		}
 	}
 
+	// The basket view: "show me what's in my basket" is a
+	// structural ask with one referent, her own standing in
+	// this order, and it is answered from the session ahead
+	// of the thinking and the guided flows alike, because
+	// at every stage the answer is the same list (see
+	// basketview.go). Read as chat it was answered from the
+	// model's drafted words, which strung her items into a
+	// sentence with no prices, or misread the ask entirely.
+	if basketViewRe.MatchString(lower) && serveBasketView(from, s, shopID) {
+		return
+	}
+
 	// Thinking first. On an open turn (not inside a guided
 	// flow: no haggle running, no fulfilment, no pending close,
 	// no onboarding), the agent thinks before it answers: the
