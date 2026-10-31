@@ -4,9 +4,6 @@
       "id": "ama",
       "name": "Ama's Stall",
       "dailyGiveawayAllowance": 200,
-      "deliveryFee": 15,
-      "deliveryNote": "Rider brings it to you in town, same day.",
-      "deliveryPaidTo": "carrier",
       "products": [
         {
           "id": "smoked-tilapia",
@@ -25,15 +22,15 @@
           "stock": 25
         }
       ],
-      "shopCode": "AMA"
+      "shopCode": "AMA",
+      "deliveryFee": 15,
+      "deliveryNote": "Rider brings it to you in town, same day.",
+      "deliveryPaidTo": "carrier"
     },
     "demo": {
       "id": "demo",
       "name": "Efua's Store",
       "dailyGiveawayAllowance": 300,
-      "deliveryFee": 25,
-      "deliveryNote": "Sent by bus to your station; you collect it the next day.",
-      "deliveryPaidTo": "carrier",
       "products": [
         {
           "id": "ankara",
@@ -51,7 +48,7 @@
           "description": "Hand-beaded evening bag with a gold clasp.",
           "listPrice": 850,
           "floorPrice": 680,
-          "stock": 3
+          "stock": 2
         },
         {
           "id": "shea",
@@ -62,7 +59,10 @@
           "stock": 40
         }
       ],
-      "shopCode": "EFUA"
+      "shopCode": "EFUA",
+      "deliveryFee": 25,
+      "deliveryNote": "Sent by bus to your station; you collect it the next day.",
+      "deliveryPaidTo": "carrier"
     }
   }
 }

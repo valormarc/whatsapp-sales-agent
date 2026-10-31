@@ -62,13 +62,38 @@ type burstItem struct {
 // against-judgement a photo gets against an open listing.
 // It returns "same", "different" or "unsure" when the
 // model judged, and "" when there was no photo to judge or
-// no model read: an absent verdict never blocks a fold on
-// its own, but a "different" verdict always does. Two
-// different products can share a name and a price (two
-// rack designs both read as "Metal Rack" at GH₵270), and
-// folding those on words alone keeps the first and loses
-// the second's details entirely.
-func burstIdentityVerdict(dataURI, caption string, item burstItem) string {
+// no model read. Only a positive "same" verdict folds (see
+// addToBurst): two different products can share a name and
+// a price (two rack designs both read as "Metal Rack" at
+// GH₵270), and folding those on words alone keeps the
+// first and loses the second's details entirely.
+// burstFoldOK decides whether a new photo folds into a
+// kept burst item. An explicit "different" verdict is the
+// strongest identity signal there is and is never
+// overridden: the third audit found fact equality (same
+// description, price, unit) folding photos the judge had
+// called different — two similar products collapsed into
+// one listing. Fact equality folds only the UNJUDGED
+// case, where no verdict exists to override.
+func burstFoldOK(dataURI, caption string, item burstItem, draft throwDraft, turn string) bool {
+	switch burstIdentityVerdict(dataURI, caption, item, turn) {
+	case "same":
+		return true
+	case "different":
+		return false
+	}
+	// No verdict — the photo could not be judged, or the
+	// model was unsure — is not an identity. Folding on
+	// caption fact equality alone merged unjudged photos
+	// into a kept item they may never have belonged to
+	// (the fifth audit); an unjudged photo stands as its
+	// own item, as the burst's contract promises, and
+	// the seller separates or merges it with her own
+	// eyes on the batch.
+	return false
+}
+
+func burstIdentityVerdict(dataURI, caption string, item burstItem, turn string) string {
 	if dataURI == "" || item.Name == "" {
 		return ""
 	}
@@ -76,18 +101,60 @@ func burstIdentityVerdict(dataURI, caption string, item burstItem) string {
 	if reference == "" {
 		reference = item.Description
 	}
-	md := draftListingFn(dataURI, caption, item.Name, reference)
+	md := draftListingFn(dataURI, caption, item.Name, reference, turn)
 	if md == nil {
 		return ""
 	}
 	return md.SameAsOpen
 }
 
+// sameBurstFacts reports whether a fresh draft carries
+// exactly the kept item's facts — same description, price,
+// unit, base quantity and sizes. Folding an exact
+// re-read discards nothing: there is no second product's
+// distinct fact to lose, which is the harm the positive
+// verdict requirement guards. Any difference at all, and
+// only the model's "same" verdict can fold the photo.
+func sameBurstFacts(item burstItem, draft throwDraft) bool {
+	if strings.TrimSpace(item.Description) != strings.TrimSpace(draft.Description) ||
+		item.ListPrice != draft.ListPrice ||
+		item.Unit != draft.Unit || item.BaseQty != draft.BaseQty {
+		return false
+	}
+	// Colours are not compared: a colour is a variant of
+	// the product, and the fold itself records the new
+	// colour on the item — another colourway of identical
+	// facts is an angle, not another product.
+	if len(item.Sizes) != len(draft.Sizes) {
+		return false
+	}
+	for i := range item.Sizes {
+		if item.Sizes[i] != draft.Sizes[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // addToBurst keeps one read photo as a burst item, or folds
 // it into the item it belongs to when the batch already
 // holds that product: a later angle of a batched item joins
 // it exactly as an angle joins an open listing.
-func addToBurst(s *Session, draft throwDraft, imageID, caption, colour, dataURI, visionDesc string) {
+func addToBurst(from string, s *Session, draft throwDraft, imageID, caption, colour, dataURI, visionDesc string) {
+	// Media identity dedupes before any verdict is
+	// consulted (the sixth audit): a redelivery of a
+	// photo the batch already holds is the same item,
+	// whatever the re-judgement says — the identity fold
+	// below correctly refuses to fold without a positive
+	// 'same', and without this guard the redelivery
+	// became a second batch item for one photograph.
+	for i := range s.BurstBatch {
+		for _, ref := range s.BurstBatch[i].PhotoRefs {
+			if ref == imageID && imageID != "" {
+				return
+			}
+		}
+	}
 	for i := range s.BurstBatch {
 		// A photo folds into a kept item only when the name
 		// matches AND the priced facts are compatible: two
@@ -99,12 +166,18 @@ func addToBurst(s *Session, draft throwDraft, imageID, caption, colour, dataURI,
 		// same compatibility rule the held-photo path uses.
 		priceCompatible := draft.ListPrice <= 0 || s.BurstBatch[i].ListPrice <= 0 ||
 			draft.ListPrice == s.BurstBatch[i].ListPrice
-		// And when the model's eyes judge the photo a
-		// different product from the kept item, it does not
-		// fold however well the words match: identity is
-		// judged, not spelled.
+		// And the fold needs the model's eyes to judge the
+		// photo the SAME product as the kept item: identity
+		// is judged, not spelled, and the absence of a
+		// verdict is not a match — the second audit found
+		// caption-only drafts (vision read or download
+		// failed, every verdict empty) folding distinct
+		// products together and discarding the second's
+		// description, sizes and unit whole. An unjudged
+		// photo stands as its own item of the batch, where
+		// she can see it and decide.
 		if sameProductName(s.BurstBatch[i].Name, draft.Name) && priceCompatible &&
-			burstIdentityVerdict(dataURI, caption, s.BurstBatch[i]) != "different" {
+			burstFoldOK(dataURI, caption, s.BurstBatch[i], draft, turnTokenFor(from)) {
 			refs := append([]string{}, s.BurstBatch[i].PhotoRefs...)
 			probe := &OnboardingFlow{PhotoRefs: refs}
 			if collectFlowPhoto(probe, imageID) {
@@ -162,7 +235,7 @@ func addToBurst(s *Session, draft throwDraft, imageID, caption, colour, dataURI,
 // already held is not kept twice, and a further angle that
 // positively reads as a held item's own product joins that
 // item, exactly as an angle joins a listing.
-func parkPendingPhoto(s *Session, draft throwDraft, imageID, caption, colour, dataURI, visionDesc string) {
+func parkPendingPhoto(from string, s *Session, draft throwDraft, imageID, caption, colour, dataURI, visionDesc string) {
 	if imageID == "" {
 		return
 	}
@@ -175,7 +248,7 @@ func parkPendingPhoto(s *Session, draft throwDraft, imageID, caption, colour, da
 		if draft.Name != "" && s.BurstHeld[i].Name != "" &&
 			sameProductName(s.BurstHeld[i].Name, draft.Name) &&
 			(draft.ListPrice <= 0 || s.BurstHeld[i].ListPrice <= 0 || draft.ListPrice == s.BurstHeld[i].ListPrice) &&
-			burstIdentityVerdict(dataURI, caption, s.BurstHeld[i]) != "different" {
+			burstFoldOK(dataURI, caption, s.BurstHeld[i], draft, turnTokenFor(from)) {
 			refs := append([]string{}, s.BurstHeld[i].PhotoRefs...)
 			probe := &OnboardingFlow{PhotoRefs: refs}
 			if collectFlowPhoto(probe, imageID) {
@@ -434,7 +507,7 @@ func batchQualifier(item burstItem) string {
 func allFigures(text string) []float64 {
 	var out []float64
 	for _, tok := range figureTokenRe.FindAllString(text, -1) {
-		if v, err := strconv.ParseFloat(strings.ReplaceAll(tok, ",", ""), 64); err == nil && v > 0 {
+		if v, err := parseFigure(tok); err == nil && v > 0 {
 			out = append(out, v)
 		}
 	}
@@ -451,10 +524,15 @@ func allFigures(text string) []float64 {
 // figures in it is hers to spend elsewhere, and the batch
 // simply keeps waiting.
 
-// burstFigureScrub matches a figure as allFigures reads
-// one, so the shape test below sees the same numbers the
-// answer parser would claim.
-var burstFigureScrub = regexp.MustCompile(`[0-9][0-9,]*(\.[0-9]+)?[kK]?`)
+// burstFigureScrub matches a figure as the figure
+// tokeniser reads one, so the shape test below sees the
+// same numbers the answer parser would claim. The k
+// counts only at a figure boundary (the sixth audit):
+// the old unconditional k scrubbed "900k5" as one figure
+// where the tokeniser reads two — 900, then 5 — and the
+// shape test priced the message on a reading the parser
+// never made.
+var burstFigureScrub = regexp.MustCompile(`[0-9][0-9,]*(?:\.[0-9]+)?[kK]\b|[0-9][0-9,]*(?:\.[0-9]+)?`)
 
 // burstAnswerShape reports whether a message is shaped
 // like a price answer: once its figures are removed, only

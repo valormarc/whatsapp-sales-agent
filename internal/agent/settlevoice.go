@@ -58,10 +58,10 @@ func ComposeMerchantSettleText(o *orders.Order, fee, net float64) string {
 // back to its bare factual net, and the late draft is
 // discarded. A reply must never be held hostage by a slow
 // model.
-func draftWithBudget(system, facts string) string {
+func draftWithBudget(turn, system, facts string) string {
 	ch := make(chan string, 1)
 	go func() {
-		r := model.Chat([]model.Message{{Role: "user", Content: facts}}, model.Options{System: &system, Kind: model.KindDraft})
+		r := model.Chat([]model.Message{{Role: "user", Content: facts}}, model.Options{System: &system, Kind: model.KindDraft, Turn: turn})
 		if r == nil {
 			ch <- ""
 		} else {

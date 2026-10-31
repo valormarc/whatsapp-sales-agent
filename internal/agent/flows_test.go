@@ -26,8 +26,8 @@ func TestDeliveryFormFillsTheFulfilmentAndMovesTheWalkOn(t *testing.T) {
 		FulfilStep:    "pkgname",
 		PendingFlow:   "delivery-test1", FlowKind: flowKindDelivery,
 	}
-	sessions[sessionKey(MerchantID, buyer)] = s
-	bindings[buyer] = MerchantID
+	sessions.put(sessionKey(MerchantID, buyer), s)
+	bindings.put(buyer, MerchantID)
 
 	HandleInbound(Inbound{From: buyer, FlowReply: `{"flow_token":"delivery-test1","buyer_name":"Ama Serwaa","phone":"0244123456","town":"Kasoa","landmark":"Near the station"}`})
 	got := strings.Join(c.replies(t, buyer), "\n")
@@ -58,8 +58,8 @@ func TestAFormCompletionWithAnotherTokenFillsNothing(t *testing.T) {
 		FulfilStep:    "pkgname",
 		PendingFlow:   "delivery-mine", FlowKind: flowKindDelivery,
 	}
-	sessions[sessionKey(MerchantID, buyer)] = s
-	bindings[buyer] = MerchantID
+	sessions.put(sessionKey(MerchantID, buyer), s)
+	bindings.put(buyer, MerchantID)
 
 	HandleInbound(Inbound{From: buyer, FlowReply: `{"flow_token":"delivery-someone-elses","buyer_name":"Ama Serwaa","phone":"0244123456","town":"Kasoa"}`})
 	if got := c.replies(t, buyer); len(got) != 0 {
@@ -87,7 +87,7 @@ func TestPayoutFormFailureLeavesTheOldPayoutStanding(t *testing.T) {
 	t.Cleanup(func() { createSubaccountFn = old })
 
 	s := &Session{Stage: "merchant", MerchantID: MerchantID, PendingFlow: "payout-test1", FlowKind: flowKindPayout}
-	sessions[sessionKey(MerchantID, owner)] = s
+	sessions.put(sessionKey(MerchantID, owner), s)
 
 	HandleInbound(Inbound{From: owner, FlowReply: `{"flow_token":"payout-test1","holder":"Efua Mensah","phone":"0244987654"}`})
 	shop := catalogue.GetMerchant(MerchantID)
@@ -120,7 +120,7 @@ func TestPayoutFormSuccessSwitchesEverythingTogether(t *testing.T) {
 	t.Cleanup(func() { createSubaccountFn = old })
 
 	s := &Session{Stage: "merchant", MerchantID: MerchantID, PendingFlow: "payout-test2", FlowKind: flowKindPayout}
-	sessions[sessionKey(MerchantID, owner)] = s
+	sessions.put(sessionKey(MerchantID, owner), s)
 
 	HandleInbound(Inbound{From: owner, FlowReply: `{"flow_token":"payout-test2","holder":"Efua Mensah","phone":"0244987654"}`})
 	shop := catalogue.GetMerchant(MerchantID)
@@ -140,8 +140,8 @@ func TestAFormFinishedAfterItsMomentAttachesToNothing(t *testing.T) {
 	c := &chat{dir: dir}
 
 	s := &Session{Stage: "browsing", MerchantID: MerchantID, PendingFlow: "delivery-late", FlowKind: flowKindDelivery}
-	sessions[sessionKey(MerchantID, buyer)] = s
-	bindings[buyer] = MerchantID
+	sessions.put(sessionKey(MerchantID, buyer), s)
+	bindings.put(buyer, MerchantID)
 
 	HandleInbound(Inbound{From: buyer, FlowReply: `{"flow_token":"delivery-late","buyer_name":"Ama Serwaa","phone":"0244123456","town":"Kasoa"}`})
 	got := strings.Join(c.replies(t, buyer), "\n")
@@ -160,7 +160,7 @@ func TestDeliveryFormIsOfferedOnlyWhenConfigured(t *testing.T) {
 	c := &chat{dir: dir}
 
 	s := &Session{Stage: "browsing", MerchantID: MerchantID, PendingFulfil: fulfilment{Mode: "delivery"}}
-	sessions[sessionKey(MerchantID, buyer)] = s
+	sessions.put(sessionKey(MerchantID, buyer), s)
 
 	offerDeliveryDetailsFlow(buyer, s)
 	if got := c.replies(t, buyer); len(got) != 0 {

@@ -102,7 +102,7 @@ func TestAttentionActServesTheList(t *testing.T) {
 	c := &chat{seen: map[string]int{}}
 	merchant := catalogue.GetMerchant("efua")
 	attentionOrder("EFUA-1002", "paid", nil)
-	if !actOnMerchantUnderstanding(attentionOwner, merchant, "efua", "what needs my attention today?", &understood{Intent: intentAttention}) {
+	if !inTurn(attentionOwner, func() bool { return actOnMerchantUnderstanding(attentionOwner, merchant, "efua", "what needs my attention today?", &understood{Intent: intentAttention}) }) {
 		t.Fatal("attention act did not serve")
 	}
 	got := strings.Join(c.replies(t, attentionOwner), "\n")

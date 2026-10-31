@@ -30,8 +30,12 @@ func countingServer(t *testing.T) *atomic.Int64 {
 }
 
 func chatOnce(kind int) *string {
+	return chatOnceTurn(kind, "")
+}
+
+func chatOnceTurn(kind int, turn string) *string {
 	sys := "test"
-	return Chat([]Message{{Role: "user", Content: "hi"}}, Options{System: &sys, Kind: kind})
+	return Chat([]Message{{Role: "user", Content: "hi"}}, Options{System: &sys, Kind: kind, Turn: turn})
 }
 
 func TestTurnBudgetEnforced(t *testing.T) {
@@ -39,14 +43,7 @@ func TestTurnBudgetEnforced(t *testing.T) {
 	// Leave the package as the test found it: unarmed, so
 	// the other tests in this package keep their uncounted
 	// contract.
-	t.Cleanup(func() {
-		turnArmed.Store(false)
-		turnUnderstand.Store(0)
-		turnDraft.Store(0)
-	})
-
-	// Before any BeginTurn, calls are uncounted.
-	turnArmed.Store(false)
+	// Calls carrying no turn token are uncounted.
 	for i := 0; i < 3; i++ {
 		if chatOnce(KindUnderstand) == nil {
 			t.Fatal("unarmed calls must not be refused")
@@ -57,36 +54,54 @@ func TestTurnBudgetEnforced(t *testing.T) {
 	}
 
 	// One turn: understanding capped at one, drafting at two.
-	BeginTurn()
-	if chatOnce(KindUnderstand) == nil {
+	turn := BeginTurn()
+	defer EndTurn(turn)
+	if chatOnceTurn(KindUnderstand, turn) == nil {
 		t.Fatal("the turn's understanding call must go through")
 	}
-	if chatOnce(KindUnderstand) != nil {
+	if chatOnceTurn(KindUnderstand, turn) != nil {
 		t.Fatal("a second understanding call in one turn must be refused")
 	}
-	if chatOnce(KindDraft) == nil || chatOnce(KindDraft) == nil {
+	if chatOnceTurn(KindDraft, turn) == nil || chatOnceTurn(KindDraft, turn) == nil {
 		t.Fatal("two drafting calls fit the turn")
 	}
-	if chatOnce(KindDraft) != nil {
+	if chatOnceTurn(KindDraft, turn) != nil {
 		t.Fatal("a third drafting call in one turn must be refused")
 	}
-	if got := hits.Load(); got != 6 {
-		t.Fatalf("hits = %d, want 6 (3 unarmed + 1 understand + 2 drafts)", got)
+	// A second turn running alongside keeps its own budget:
+	// the first turn's spent calls never refuse it.
+	other := BeginTurn()
+	defer EndTurn(other)
+	if chatOnceTurn(KindUnderstand, other) == nil {
+		t.Fatal("a parallel turn's understanding call must go through")
+	}
+	if got := hits.Load(); got != 7 {
+		t.Fatalf("hits = %d, want 7 (3 uncounted + 1 understand + 2 drafts + 1 parallel understand)", got)
 	}
 
-	// JudgeShape is drafting-class: it spends draft budget,
-	// never the understanding call.
-	BeginTurn()
-	if _, _, _ = JudgeShape("Heels", "Nice heels"); hits.Load() != 7 {
-		t.Fatalf("hits = %d, want 7 after JudgeShape", hits.Load())
+	// JudgeShape is drafting-class and charged to the
+	// turn that calls it (run-2: in-turn callers passed no
+	// token and bypassed the budget entirely). It must not
+	// touch the turn's understanding budget either way.
+	turn2 := BeginTurn()
+	defer EndTurn(turn2)
+	if _, _, _ = JudgeShape("Heels", "Nice heels", turn2); hits.Load() != 8 {
+		t.Fatalf("hits = %d, want 8 after JudgeShape", hits.Load())
 	}
-	if chatOnce(KindUnderstand) == nil {
+	// Two drafting calls fit the turn; the third is
+	// refused before it reaches the wire.
+	_, _, _ = JudgeShape("Heels", "Nice heels", turn2)
+	if _, _, _ = JudgeShape("Heels", "Nice heels", turn2); hits.Load() != 9 {
+		t.Fatalf("hits = %d, want 9: the third drafting call in a turn must be refused", hits.Load())
+	}
+	if chatOnceTurn(KindUnderstand, turn2) == nil {
 		t.Fatal("the understanding call must still be free after a drafting judgement")
 	}
 
 	// A new turn reopens both budgets.
-	BeginTurn()
-	if chatOnce(KindUnderstand) == nil {
+	turn3 := BeginTurn()
+	defer EndTurn(turn3)
+	if chatOnceTurn(KindUnderstand, turn3) == nil {
 		t.Fatal("a fresh turn must allow an understanding call again")
 	}
 }

@@ -27,8 +27,8 @@ package agent
 import (
 	"encoding/json"
 	"regexp"
-	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/model"
@@ -50,14 +50,18 @@ func (c salesCandidate) label() string {
 
 // --- The carried budget ---
 
-var budgetRe = regexp.MustCompile(`(?i)\b(?:budget|around|under|below|up to|not more than|max(?:imum)?|spend)\b[^0-9]{0,14}(\d[\d,]*(?:\.\d+)?)|(\d[\d,]*(?:\.\d+)?)\s*(?:is|na)?\s*(?:my|the)?\s*budget\b`)
+// The captures carry the optional k: "my budget is 5k"
+// is a budget of GH₵5,000, and a reader that takes the
+// figure at face value works every sales pick to GH₵5
+// (the fifth audit). parseFigure applies the thousand.
+var budgetRe = regexp.MustCompile(`(?i)\b(?:budget|around|under|below|up to|not more than|max(?:imum)?|spend)\b[^0-9]{0,14}(\d[\d,]*(?:\.\d+)?[kK]?\b)|(\d[\d,]*(?:\.\d+)?[kK]?\b)\s*(?:is|na)?\s*(?:my|the)?\s*budget\b`)
 
 // budgetFigureIn reports whether a stated budget figure
 // appears in her own words, the verification every carried
 // fact must pass before the platform holds it.
 func budgetFigureIn(text string, budget float64) bool {
 	for _, tok := range figureTokenRe.FindAllString(text, -1) {
-		if v, err := strconv.ParseFloat(strings.ReplaceAll(tok, ",", ""), 64); err == nil && v == budget {
+		if v, err := parseFigure(tok); err == nil && v == budget {
 			return true
 		}
 	}
@@ -73,7 +77,7 @@ func netBudget(lower string) float64 {
 	}
 	for _, g := range m[1:] {
 		if g != "" {
-			if v, err := strconv.ParseFloat(strings.ReplaceAll(g, ",", ""), 64); err == nil && v > 0 {
+			if v, err := parseFigure(g); err == nil && v > 0 {
 				return v
 			}
 		}
@@ -91,7 +95,7 @@ func carryBudget(from string, s *Session, budget float64) {
 	if s != nil {
 		s.Budget = budget
 	}
-	if pre, ok := sessions[sessionKey("", from)]; ok && pre != s {
+	if pre, ok := sessions.lookup(sessionKey("", from)); ok && pre != s {
 		pre.Budget = budget
 	}
 }
@@ -103,7 +107,7 @@ func budgetOf(from string, s *Session) float64 {
 	if s != nil && s.Budget > 0 {
 		return s.Budget
 	}
-	if pre, ok := sessions[sessionKey("", from)]; ok {
+	if pre, ok := sessions.lookup(sessionKey("", from)); ok {
 		return pre.Budget
 	}
 	return 0
@@ -127,7 +131,37 @@ const objectionSystem = `You are the salesperson of a small shop in Ghana. The b
 // verifies everything it used: both products must be among
 // the candidates, and every figure in the reply must be a
 // candidate price or the budget itself.
-func draftSalesPick(system string, ask string, budget float64, candidates []salesCandidate) (pick, alt *salesCandidate, reply string, ok bool) {
+// containsNameBounded reports whether name appears in
+// text as itself — bounded on both sides by a non-word
+// character or the string's edge — not as a substring of
+// a longer word or a longer name.
+func containsNameBounded(text, name string) bool {
+	if name == "" {
+		return false
+	}
+	isWord := func(r rune) bool {
+		return unicode.IsLetter(r) || unicode.IsDigit(r)
+	}
+	for start := 0; ; {
+		i := strings.Index(text[start:], name)
+		if i < 0 {
+			return false
+		}
+		i += start
+		beforeOK := i == 0 || !isWord(rune(text[i-1]))
+		end := i + len(name)
+		afterOK := end >= len(text) || !isWord(rune(text[end]))
+		if beforeOK && afterOK {
+			return true
+		}
+		start = i + 1
+		if start >= len(text) {
+			return false
+		}
+	}
+}
+
+func draftSalesPick(from, system string, ask string, budget float64, candidates []salesCandidate) (pick, alt *salesCandidate, reply string, ok bool) {
 	if !model.Enabled() || len(candidates) == 0 {
 		return nil, nil, "", false
 	}
@@ -142,7 +176,7 @@ func draftSalesPick(system string, ask string, budget float64, candidates []sale
 	}
 	// The pick and its words are a drafting job, separately
 	// budgeted from the turn's one understanding call.
-	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &system, Kind: model.KindDraft})
+	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &system, Kind: model.KindDraft, Turn: turnTokenFor(from)})
 	if out == nil {
 		return nil, nil, "", false
 	}
@@ -182,7 +216,79 @@ func draftSalesPick(system string, ask string, budget float64, candidates []sale
 			return nil, nil, "", false
 		}
 	}
+	// The budget rule is a floor, not a prompt hope (the
+	// fifth audit: it lived only in the system text, and
+	// the draft was never checked against it, while both
+	// code floors enforce it deterministically). When
+	// any candidate fits her budget, neither the pick nor
+	// the alternative may stand over it.
+	if budget > 0 {
+		anyFits := false
+		for _, c := range candidates {
+			if c.Product.ListPrice <= budget {
+				anyFits = true
+				break
+			}
+		}
+		if anyFits && (pickC.Product.ListPrice > budget || (altC != nil && altC.Product.ListPrice > budget)) {
+			return nil, nil, "", false
+		}
+	}
 	reply = strings.TrimSpace(d.Reply)
+	// The prose is bound to the resolution EXCLUSIVELY
+	// (the fifth audit bound it by presence; the sixth
+	// found presence alone lets the words name products
+	// and shops outside the resolved set, misattribute
+	// the alternative to the wrong shop, and pass on
+	// substring accidents). The reply must name the
+	// resolved pick — and the alternative, when one
+	// resolved — on word boundaries; in a multi-shop set
+	// it must place EACH of them at its own shop, by name
+	// or by code; and it must name no other product or
+	// shop the platform can enumerate.
+	lowerReply := strings.ToLower(reply)
+	if !containsNameBounded(lowerReply, strings.ToLower(pickC.Product.Name)) {
+		return nil, nil, "", false
+	}
+	if altC != nil && !containsNameBounded(lowerReply, strings.ToLower(altC.Product.Name)) {
+		return nil, nil, "", false
+	}
+	shops := map[string]bool{}
+	for _, c := range candidates {
+		shops[c.Shop.ShopCode] = true
+	}
+	if len(shops) > 1 {
+		places := func(c *salesCandidate) bool {
+			return containsNameBounded(lowerReply, strings.ToLower(c.Shop.Name)) ||
+				strings.Contains(lowerReply, strings.ToLower("SHOP-"+c.Shop.ShopCode))
+		}
+		if !places(pickC) {
+			return nil, nil, "", false
+		}
+		if altC != nil && !places(altC) {
+			return nil, nil, "", false
+		}
+	}
+	allowedProducts := map[string]bool{strings.ToLower(pickC.Product.Name): true}
+	allowedShops := map[string]bool{strings.ToLower(pickC.Shop.Name): true, strings.ToLower("shop-" + pickC.Shop.ShopCode): true}
+	if altC != nil {
+		allowedProducts[strings.ToLower(altC.Product.Name)] = true
+		allowedShops[strings.ToLower(altC.Shop.Name)] = true
+		allowedShops[strings.ToLower("shop-"+altC.Shop.ShopCode)] = true
+	}
+	for _, m := range catalogue.ListMerchants() {
+		if !allowedShops[strings.ToLower(m.Name)] && len(m.Name) >= 3 && containsNameBounded(lowerReply, strings.ToLower(m.Name)) {
+			return nil, nil, "", false
+		}
+		if !allowedShops[strings.ToLower("shop-"+m.ShopCode)] && strings.Contains(lowerReply, strings.ToLower("SHOP-"+m.ShopCode)) {
+			return nil, nil, "", false
+		}
+		for _, p := range catalogue.ListProducts(m.ID) {
+			if !allowedProducts[strings.ToLower(p.Name)] && len(p.Name) >= 3 && containsNameBounded(lowerReply, strings.ToLower(p.Name)) {
+				return nil, nil, "", false
+			}
+		}
+	}
 	allowed := []float64{pickC.Product.ListPrice}
 	if altC != nil {
 		allowed = append(allowed, altC.Product.ListPrice)
@@ -237,16 +343,24 @@ func codeSalesPick(candidates []salesCandidate, budget float64) (pick, alt *sale
 			pool = append(pool, sorted[i])
 		}
 	}
-	if budget > 0 {
+	if budget > 0 && pick.Product.ListPrice <= budget {
+		// The pick fits her budget, so the alternative is
+		// drawn from inside it UNCONDITIONALLY (the sixth
+		// audit): the old conditional pool silently
+		// reverted to the unfiltered shelf when the pick
+		// was the only fit, presenting an over-budget
+		// alternative at budget with no flag. An empty
+		// pool simply means no alternative. When nothing
+		// fits at all, the pick is the closest overall
+		// and the pool stays whole — that case carries
+		// its own disclaimer in the presenter.
 		var under []salesCandidate
 		for _, c := range pool {
 			if c.Product.ListPrice <= budget {
 				under = append(under, c)
 			}
 		}
-		if len(under) > 0 {
-			pool = under
-		}
+		pool = under
 	}
 	bestDiff := -1.0
 	for i := range pool {
@@ -313,7 +427,10 @@ func factualRecommend(pick, alt *salesCandidate, budget float64) string {
 // front of her with its photo when it has one, and it
 // becomes the thing she is looking at.
 func recommendInShop(from string, s *Session, merchant *catalogue.Merchant, shopID, ask string) bool {
-	products := catalogue.ListProducts(shopID)
+	// The candidate set is the stocked shelf only (the
+	// seventh audit): a sold-out product is never the
+	// recommended fit or the named alternative.
+	products := stockedProducts(shopID)
 	if len(products) == 0 {
 		return false
 	}
@@ -323,7 +440,7 @@ func recommendInShop(from string, s *Session, merchant *catalogue.Merchant, shop
 		candidates = append(candidates, salesCandidate{Shop: merchant, Product: &pp})
 	}
 	budget := budgetOf(from, s)
-	pick, alt, reply, ok := draftSalesPick(recommendSystem, ask, budget, candidates)
+	pick, alt, reply, ok := draftSalesPick(from, recommendSystem, ask, budget, candidates)
 	if !ok {
 		pick, alt = codeSalesPick(candidates, budget)
 		if pick == nil {
@@ -331,10 +448,10 @@ func recommendInShop(from string, s *Session, merchant *catalogue.Merchant, shop
 		}
 		reply = factualRecommend(pick, alt, budget)
 	}
-	sendProductPhotos(from, pick.Product)
+	sendProductPhotos(from, pick.Shop.ID, pick.Product)
 	whatsapp.SendText(from, reply)
 	s.LastViewed = pick.Product
-	sessions[sessionKey(shopID, from)] = s
+	sessions.put(sessionKey(shopID, from), s)
 	return true
 }
 
@@ -348,7 +465,11 @@ func offerCheaperAlternative(from string, s *Session, merchant *catalogue.Mercha
 	}
 	var candidates []salesCandidate
 	for _, p := range catalogue.ListProducts(shopID) {
-		if p.ID == current.ID || p.ListPrice >= current.ListPrice {
+		if p.ID == current.ID || p.ListPrice >= current.ListPrice || p.AvailableUnits() <= 0 {
+			// Sold-out goods are not a cheaper alternative
+			// (the seventh audit): when only they are
+			// cheaper, the road falls through to the
+			// haggle invitation on the current product.
 			continue
 		}
 		pp := p
@@ -359,7 +480,7 @@ func offerCheaperAlternative(from string, s *Session, merchant *catalogue.Mercha
 		return true
 	}
 	budget := budgetOf(from, s)
-	pick, _, reply, ok := draftSalesPick(objectionSystem, ask, budget, candidates)
+	pick, _, reply, ok := draftSalesPick(from, objectionSystem, ask, budget, candidates)
 	if !ok {
 		pick = dearestFit(candidates, budget)
 		if pick == nil {
@@ -367,10 +488,10 @@ func offerCheaperAlternative(from string, s *Session, merchant *catalogue.Mercha
 		}
 		reply = "I hear you. A cheaper way to the same end: the " + pick.Product.Name + " at " + money.GHS(pick.Product.ListPrice) + ". Or make me an offer on the " + current.Name + " and let us see."
 	}
-	sendProductPhotos(from, pick.Product)
+	sendProductPhotos(from, pick.Shop.ID, pick.Product)
 	whatsapp.SendText(from, reply)
 	s.LastViewed = pick.Product
-	sessions[sessionKey(shopID, from)] = s
+	sessions.put(sessionKey(shopID, from), s)
 	return true
 }
 

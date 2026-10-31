@@ -43,6 +43,9 @@ func handleBuyerPhotoMatch(from, shopID, imageID, caption string) bool {
 			return false
 		}
 		for _, p := range catalogue.ListProducts(shopID) {
+			if p.AvailableUnits() <= 0 {
+				continue
+			}
 			pp := p
 			candidates = append(candidates, salesCandidate{Shop: shop, Product: &pp})
 		}
@@ -50,6 +53,9 @@ func handleBuyerPhotoMatch(from, shopID, imageID, caption string) bool {
 		for _, m := range catalogue.ListMerchants() {
 			shop := m
 			for _, p := range catalogue.ListProducts(shop.ID) {
+				if p.AvailableUnits() <= 0 {
+					continue
+				}
 				pp := p
 				candidates = append(candidates, salesCandidate{Shop: &shop, Product: &pp})
 			}
@@ -70,7 +76,7 @@ func handleBuyerPhotoMatch(from, shopID, imageID, caption string) bool {
 	if strings.TrimSpace(caption) != "" {
 		b.WriteString("Her words with the photo: \"" + strings.TrimSpace(caption) + "\"\n")
 	}
-	out := model.ChatVision(photoMatchSystem, b.String(), dataURI)
+	out := model.ChatVisionTurn(photoMatchSystem, b.String(), dataURI, turnTokenFor(from))
 	if out == nil {
 		return false
 	}
@@ -118,24 +124,24 @@ func handleBuyerPhotoMatch(from, shopID, imageID, caption string) bool {
 	lead += "."
 	var pieces []string
 	pieces = append(pieces, lead)
-	if d := strings.TrimSpace(m.Differences); d != "" && !strings.Contains(d, "₵") && voiceClean(d) {
+	if d := strings.TrimSpace(m.Differences); d != "" && figuresClean(d, match.Product.ListPrice) && voiceClean(d) {
 		pieces = append(pieces, "How it differs: "+d)
 	}
 	sendPieces(from, pieces...)
-	sendProductPhotos(from, match.Product)
+	sendProductPhotos(from, match.Shop.ID, match.Product)
 	if shopID != "" {
 		key := sessionKey(shopID, from)
-		s, ok := sessions[key]
+		s, ok := sessions.lookup(key)
 		if !ok || s == nil {
 			s = &Session{Stage: "browsing", MerchantID: shopID}
 		}
 		s.LastViewed = match.Product
-		sessions[key] = s
+		sessions.put(key, s)
 	} else {
-		pre, ok := sessions[sessionKey("", from)]
+		pre, ok := sessions.lookup(sessionKey("", from))
 		if !ok || pre == nil {
 			pre = &Session{Stage: "unbound"}
-			sessions[sessionKey("", from)] = pre
+			sessions.put(sessionKey("", from), pre)
 		}
 		pre.DiscoveryShown = []ShownProduct{{ShopID: match.Shop.ID, ProductID: match.Product.ID}}
 	}

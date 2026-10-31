@@ -19,7 +19,7 @@ func TestPendingFigureIsNotInheritedByTheNextPhoto(t *testing.T) {
 	c.replies(t, owner)
 	c.say(t, owner, "250")
 	c.replies(t, owner)
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil || s.Onboarding.PendingFigure != 250 || s.Onboarding.FloorPrice != 0 {
 		t.Fatalf("the figure should be pending and unattached, flow = %+v", s)
 	}
@@ -28,7 +28,7 @@ func TestPendingFigureIsNotInheritedByTheNextPhoto(t *testing.T) {
 	// listing is still unnamed.
 	c.photo(t, owner, "Dinner Set\n16 pieces for the family\nGH₵180")
 	c.replies(t, owner)
-	s = sessions[sessionKey(MerchantID, owner)]
+	s = sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil {
 		t.Fatal("the first listing should still be open")
 	}
@@ -63,14 +63,14 @@ func TestSamePriceDifferentDescriptionPhotoIsParked(t *testing.T) {
 
 	c.photo(t, owner, "Corner Rack\nSteel frame with 4 tiers\nGH₵270")
 	c.replies(t, owner)
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil || s.Onboarding.Name != "Corner Rack" {
 		t.Fatalf("the first photo should open its listing, session = %+v", s)
 	}
 
 	c.photo(t, owner, "Polished steel frame with four wide shelves 270gh")
 	got := strings.Join(c.replies(t, owner), "\n")
-	s = sessions[sessionKey(MerchantID, owner)]
+	s = sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil || len(s.Onboarding.PhotoRefs) != 1 {
 		t.Fatalf("the ambiguous photo must not join the open listing, session = %+v", s)
 	}

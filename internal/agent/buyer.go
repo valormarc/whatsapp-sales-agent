@@ -24,19 +24,28 @@ func offerInvite(p *catalogue.Product, invite string) string {
 	return invite
 }
 
+// soldOutAnswer is the buyer-facing presenters' shared
+// honest answer for a named product the shelf no longer
+// holds (the seventh audit): the plain truth, then the
+// stocked shelf (productListText is stocked-only), never
+// a price presented as an offer she can take.
+func soldOutAnswer(from, shopID string, p *catalogue.Product) {
+	whatsapp.SendText(from, "That one has sold out just now. Here is what is on the shelf:\n"+productListText(shopID))
+}
+
 func handleBuyerTurn(from, boundID, msg, lower string) {
 	merchant := catalogue.GetMerchant(boundID)
 	if merchant == nil {
-		delete(bindings, from)
+		bindings.del(from)
 		handleUnboundBuyer(from, msg)
 		return
 	}
 	shopID := merchant.ID
 	key := sessionKey(shopID, from)
-	s, ok := sessions[key]
+	s, ok := sessions.lookup(key)
 	if !ok {
 		s = &Session{Stage: "browsing", MerchantID: shopID}
-		sessions[key] = s
+		sessions.put(key, s)
 	}
 	noteSpeakerWords(s, msg)
 
@@ -44,7 +53,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// her message quotes a product's bubble, that product is
 	// the one she is looking at now, however long ago the
 	// bubble was sent and whatever she viewed since.
-	applyQuotedFocus(s, shopID)
+	applyQuotedFocus(from, s, shopID)
 
 	// A place she states anywhere in the chat is kept on her
 	// session, so the fulfilment step never asks for it twice.
@@ -52,7 +61,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		if loc := extractStatedLocation(msg); loc != "" {
 			s.Location = loc
 		}
-	} else if turnQuote != nil && turnQuote.Known && turnQuote.Author == "user" {
+	} else if q := turnQuoteOf(from); q != nil && q.Known && q.Author == "user" {
 		// She is quoting her own earlier words to correct
 		// them: a place she names against her own quoted
 		// statement replaces the place those words settled.
@@ -235,6 +244,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		case stageIntentConfirm:
 			price := s.ClosePrice
 			s.PendingClose = false
+			s.clearYesNo("close")
 			beginFulfilment(from, s, price)
 			return
 		case stageIntentAsk:
@@ -246,15 +256,18 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			}
 		}
 		switch {
-		case isClearYes(lower):
+		case isClearYes(lower) && s.yesNoFor("close"):
 			price := s.ClosePrice
 			s.PendingClose = false
+			s.clearYesNo("close")
 			beginFulfilment(from, s, price)
-		case restatesQuotedPrice(msg, s, merchant):
+		case restatesQuotedPrice(msg, s, merchant) && s.yesNoFor("close"):
 			price := s.ClosePrice
 			s.PendingClose = false
+			s.clearYesNo("close")
 			beginFulfilment(from, s, price)
-		case isClearNo(lower):
+		case isClearNo(lower) && s.yesNoFor("close"):
+			s.clearYesNo("close")
 			clearPendingClose(s)
 			whatsapp.SendText(from, "No problem. The "+name+" is here whenever you are ready.")
 		case s.CloseReasked:
@@ -321,7 +334,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 					rescued := &Session{Stage: "browsing", MerchantID: shopID, Location: s.Location, History: s.History,
 						Basket: s.Basket[1:], Product: first.Product, AgreedPrice: first.AgreedPrice, Qty: first.Qty, Unit: first.Unit,
 						ShelfPicks: s.ShelfPicks, ShelfSettling: s.ShelfSettling}
-					sessions[key] = rescued
+					sessions.put(key, rescued)
 					whatsapp.SendText(from, "No problem at all. "+money.GHS(*offer)+" would leave me at a loss on the "+p.Name+", so I will let that one go with thanks.")
 					beginFulfilment(from, rescued, first.AgreedPrice)
 					return
@@ -335,7 +348,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				if ns.ShelfSettling {
 					nextPick = takeNextShelfPick(ns, shopID)
 				}
-				sessions[key] = ns
+				sessions.put(key, ns)
 				// The let-go carries the next step: the total with
 				// delivery, and the link ready the moment she says
 				// so. A bare "that is final" is where real chats go
@@ -353,7 +366,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				}
 				if nextPick != nil {
 					whatsapp.SendText(from, "Now the next one you picked:")
-					presentShelfPick(from, nextPick)
+					presentShelfPick(from, shopID, nextPick)
 				}
 			}
 			return
@@ -380,13 +393,13 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		// the quoted goods, carrying what this order has
 		// already settled, and the offer is heard there.
 		if offer := parseOffer(lower); offer != nil && !howMuchRe.MatchString(lower) {
-			if qp := quotedProductIn(shopID); qp != nil && (s.Product == nil || qp.ID != s.Product.ID) {
+			if qp := quotedProductIn(shopID, from); qp != nil && (s.Product == nil || qp.ID != s.Product.ID) {
 				loc, hist, basket := s.Location, s.History, s.Basket
 				picks, settling := s.ShelfPicks, s.ShelfSettling
 				s = openHaggle(shopID, merchant, qp)
 				s.Location, s.History, s.Basket = loc, hist, basket
 				s.ShelfPicks, s.ShelfSettling = picks, settling
-				sessions[key] = s
+				sessions.put(key, s)
 				processOffer(from, s, merchant, *offer, msg)
 				return
 			}
@@ -416,7 +429,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				if p.Fixed {
 					tail = " That price is fixed."
 				}
-				if sendProductPhotos(from, p) {
+				if sendProductPhotos(from, shopID, p) {
 					whatsapp.SendText(from, p.Description+" The price stands at "+money.GHS(s.Ask)+"."+tail)
 					return
 				}
@@ -461,7 +474,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			// the clarifier phrases the ask from the shelf
 			// when the model can be read (see clarify.go);
 			// the plain variants below are its fallback.
-			if line := clarifyLine(merchant, msg); line != "" {
+			if line := clarifyLine(from, merchant, msg); line != "" {
 				whatsapp.SendText(from, line)
 				s.Acks++
 				return
@@ -554,6 +567,10 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			if target == nil {
 				target = s.LastViewed
 			}
+			if target != nil && target.AvailableUnits() <= 0 {
+				soldOutAnswer(from, shopID, target)
+				return
+			}
 			if target != nil {
 				loc := s.Location
 				hist := s.History
@@ -573,7 +590,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				s.Basket = basket // nor what she has already agreed in this order
 				s.ShelfPicks = picks
 				s.ShelfSettling = settling
-				sessions[key] = s
+				sessions.put(key, s)
 				processOffer(from, s, merchant, *offer, msg)
 				return
 			}
@@ -591,7 +608,26 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		if target == nil {
 			target = s.LastViewed
 		}
+		if target != nil && target.AvailableUnits() <= 0 {
+			soldOutAnswer(from, shopID, target)
+			return
+		}
 		if target != nil {
+			// A quantity she settled earlier in this
+			// conversation is part of this purchase: the
+			// third audit found this road quoting and
+			// closing the WHOLE piece's price while the
+			// session still carried her "3 yards" — she
+			// was quoted 225 for the cut and charged 450
+			// for the piece. Price the remembered
+			// quantity, the same scaled copy the measure
+			// road itself confirms on.
+			if s.Qty > 0 && target.ByMeasure() {
+				scaled := scaledCopy(target, s.Qty)
+				s.Unit = target.Unit
+				startConfirmation(from, s, merchant, &scaled, scaled.ListPrice, true)
+				return
+			}
 			startConfirmation(from, s, merchant, target, target.ListPrice, true)
 			return
 		}
@@ -615,9 +651,13 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			presentShelf(from, merchant)
 			return
 		}
+		if target != nil && target.AvailableUnits() <= 0 {
+			whatsapp.SendText(from, "The "+target.Name+" has sold out just now, so it is not available to buy.")
+			return
+		}
 		if target != nil {
 			s.LastViewed = target
-			if sendProductPhotos(from, target) {
+			if sendProductPhotos(from, shopID, target) {
 				sendProductView(from, target, " Make me an offer and let us see.")
 				return
 			}
@@ -630,6 +670,19 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// Price question or product mention: quote and open the haggle,
 	// with the day book setting the posture for this customer.
 	product := catalogue.FindProduct(shopID, lower)
+	if product != nil && product.AvailableUnits() <= 0 {
+		// Every direct-mention presenter below shares this
+		// gate (the seventh audit): a named product the
+		// shelf no longer holds is answered honestly —
+		// never "Still available.", never priced as an
+		// offer, no haggle, confirmation or fulfilment
+		// opened on it. FindProduct itself keeps
+		// resolving sold-out goods for the merchant's own
+		// stock commands and readbacks; the guard lives
+		// at the buyer-facing presenters, not the resolver.
+		soldOutAnswer(from, shopID, product)
+		return
+	}
 	if product != nil && intentRe.MatchString(lower) {
 		loc := s.Location
 		hist := s.History
@@ -642,7 +695,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		s.Basket = basket // nor what she has already agreed in this order
 		s.ShelfPicks = picks
 		s.ShelfSettling = settling
-		sessions[key] = s
+		sessions.put(key, s)
 		whatsapp.SendText(from, product.Name+": "+product.Description+" The price is "+money.GHS(product.ListPrice)+"."+offerInvite(product, " Make me an offer and let us see."))
 		return
 	}
@@ -653,7 +706,15 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		// offer on what she is looking at must bind on her second
 		// purchase exactly as it did on her first.
 		if s.Stage == "agreed" {
+			// The agreed shell sheds its sale identity
+			// with its stage (the sixth audit): a rebound
+			// SaleID/PaymentURL left standing here was
+			// treated by the mint-only-if-empty guards as
+			// a live sale, attaching a completed purchase's
+			// identity to her next one.
 			s.Stage = "browsing"
+			s.SaleID = ""
+			s.PaymentURL = ""
 		}
 		// Looking at a different item ends the old item's pending
 		// quantity: a remembered measure belongs to what it was
@@ -734,7 +795,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// be read (see clarify.go); the fixed line and the
 	// catalogue are the model-down fallback, kept for
 	// exactly that case.
-	if line := clarifyLine(merchant, msg); line != "" {
+	if line := clarifyLine(from, merchant, msg); line != "" {
 		whatsapp.SendText(from, line)
 		return
 	}

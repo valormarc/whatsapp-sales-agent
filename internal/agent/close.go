@@ -4,6 +4,8 @@
 package agent
 
 import (
+	"strings"
+
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/orders"
@@ -63,12 +65,21 @@ func clearPendingClose(s *Session) {
 // reach her is not settled yet; only her clear yes at this step
 // moves on, into the fulfilment step, where the total is settled.
 func startConfirmation(from string, s *Session, merchant *catalogue.Merchant, product *catalogue.Product, price float64, fromView bool) {
+	// A confirmation opened on a different product than
+	// the session's standing sale starts a NEW purchase:
+	// the old sale's identity is shed here (the sixth
+	// audit), so beginFulfilment can never treat a
+	// foreign SaleID as this purchase's own.
+	if s.Product != nil && s.Product.ID != product.ID {
+		s.SaleID = ""
+		s.PaymentURL = ""
+	}
 	s.Product = product
 	s.PendingClose = true
 	s.ClosePrice = price
 	s.CloseReasked = false
 	s.CloseFromView = fromView
-	sessions[sessionKey(s.MerchantID, from)] = s
+	sessions.put(sessionKey(s.MerchantID, from), s)
 	// A measured close quotes the amount, not the whole item:
 	// the session's quantity names it ("3 yards of ...").
 	name := product.Name
@@ -81,17 +92,17 @@ func startConfirmation(from string, s *Session, merchant *catalogue.Merchant, pr
 			// to whoever brings the item, when it arrives.
 			sendPieces(from,
 				"The "+name+" is "+money.GHS(price)+". If you want it sent, delivery is "+money.GHS(fee)+", paid to "+carrierTarget(merchant.DeliveryNote)+" when it reaches you.")
-			sendYesNo(from, "Shall I send the payment link?", "Yes, send it", "Not yet")
+			askYesNo(from, s, "close", product.Name, "Shall I send the payment link?", "Yes, send it", "Not yet")
 			return
 		}
 		sendPieces(from,
 			"The "+name+" is "+money.GHS(price)+", plus "+money.GHS(fee)+" delivery if you want it sent to you.")
-		sendYesNo(from, "Shall I send the payment link?", "Yes, send it", "Not yet")
+		askYesNo(from, s, "close", product.Name, "Shall I send the payment link?", "Yes, send it", "Not yet")
 		return
 	}
 	sendPieces(from,
 		"The "+name+" is "+money.GHS(price)+".")
-	sendYesNo(from, "Shall I send the payment link?", "Yes, send it", "Not yet")
+	askYesNo(from, s, "close", product.Name, "Shall I send the payment link?", "Yes, send it", "Not yet")
 }
 
 // answerDeliveryOrTotal answers a delivery question, or the demand
@@ -103,6 +114,14 @@ func startConfirmation(from string, s *Session, merchant *catalogue.Merchant, pr
 func answerDeliveryOrTotal(from string, s *Session, merchant *catalogue.Merchant, lower string) bool {
 	p := catalogue.FindProduct(s.MerchantID, lower)
 	named := p != nil
+	if named && p.AvailableUnits() <= 0 && (s.Product == nil || p.ID != s.Product.ID) {
+		// A named product that has sold out gets no total
+		// and no place in her view (the seventh audit);
+		// the in-play product of an open sale is the one
+		// exception, and it is not this branch.
+		whatsapp.SendText(from, "The "+p.Name+" has sold out, so there is no total I can quote for it just now.")
+		return true
+	}
 	if p == nil {
 		p = s.Product
 	}
@@ -119,7 +138,38 @@ func answerDeliveryOrTotal(from string, s *Session, merchant *catalogue.Merchant
 	if s.Product != nil && p.ID == s.Product.ID && s.Ask > 0 {
 		price = s.Ask
 	}
-	fee := deliveryFeeOf(merchant)
+	// A quote-style shop's retained set fee is NOT the
+	// delivery price — the platform itself tells the
+	// seller it is not being used — so it is never quoted
+	// to a buyer here as a definite figure or folded into
+	// a definite total (the sixth audit). The per-order
+	// quote path states the real fee when it comes.
+	if merchant != nil && deliveryStyleOf(merchant) == "quote" {
+		if totalRe.MatchString(lower) {
+			var lines []string
+			goods := 0.0
+			if parked := basketGoods(s); parked > 0 && s.Product != nil && p.ID == s.Product.ID {
+				for _, it := range s.Basket {
+					lines = append(lines, it.Product.Name+": "+money.GHS(it.AgreedPrice))
+					goods += it.AgreedPrice
+				}
+			}
+			lines = append(lines, p.Name+": "+money.GHS(price))
+			goods += price
+			lines = append(lines, "Delivery: the seller quotes it for each order, when you order.")
+			lines = append(lines, "Total: "+money.GHS(goods)+" plus the delivery quote.")
+			whatsapp.SendText(from, strings.Join(lines, "\n"))
+			return true
+		}
+		whatsapp.SendText(from, "Delivery is quoted by "+merchant.Name+" for each order, so there is no set fee I can give you here. The "+p.Name+" itself is "+money.GHS(price)+" with me.")
+		return true
+	}
+	// The fee is the one the order for her stated place
+	// will actually charge (the fifth audit: the total
+	// record priced delivery at the standard fee even
+	// when her place carries the shop's area fee, so the
+	// quoted record and the settled order disagreed).
+	fee := deliveryFeeFor(merchant, s.Location)
 	carrier := fee > 0 && deliveryPaidToOf(merchant) == "carrier"
 	if totalRe.MatchString(lower) {
 		// The total she asks for is a record: one message on

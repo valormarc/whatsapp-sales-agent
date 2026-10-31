@@ -148,7 +148,16 @@ func verifyLinkPayment(from string, merchant *catalogue.Merchant, order *orders.
 		if phone := merchantNotifyPhone(merchant); phone != "" {
 			whatsapp.SendText(phone, "Payment amount mismatch on order "+order.Reference+": the order is "+money.GHS(charged)+" but Seev reports "+money.GHS(*check.AmountMajor)+". The buyer reported she had paid; I have not marked it paid. Please check the Seev record with me.")
 		}
-	case checkout.IsPaidStatus(check.Status):
+	case checkout.IsPaidStatus(check.Status) && check.AmountMajor == nil:
+		// Paid, but the read-back states no amount: that
+		// proves nothing about the amount, so the order is
+		// not settled on it. The buyer is told it is being
+		// looked at, and the merchant is told the fact.
+		whatsapp.SendText(from, "I have checked with the payment service. Your payment shows as received, but the service did not state its amount, so I have asked "+merchant.Name+" to confirm it with me before your order is settled.")
+		if phone := merchantNotifyPhone(merchant); phone != "" {
+			whatsapp.SendText(phone, "Payment read-back without an amount on order "+order.Reference+": Seev reports the session paid but states no amount, so I have not marked the order of "+money.GHS(charged)+" paid. Please check the Seev record with me.")
+		}
+	case checkout.PaidAmountMatches(check, charged):
 		seevwebhook.SettleVerified(order, "I have checked with the payment service, and you are right: your payment for the "+order.ProductName+" has come through, confirmed at "+money.GHS(charged)+". "+merchant.Name+" has your order and will take it from here.")
 	case checkout.IsFailedStatus(check.Status):
 		sendPieces(from,

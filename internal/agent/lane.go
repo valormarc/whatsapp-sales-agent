@@ -82,7 +82,7 @@ func laneStrike(from string, s *Session, merchant *catalogue.Merchant, said stri
 		// The steer back to the shop is drafted from the
 		// shelf when the model can be read (see clarify.go);
 		// the fixed line and the list are its fallback.
-		ask := clarifyLine(merchant, said)
+		ask := clarifyLine(from, merchant, said)
 		if ask == "" {
 			ask = "Tell me what you are after and I will sort you out.\n" + productListText(merchant.ID)
 		}

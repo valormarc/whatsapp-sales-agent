@@ -33,6 +33,7 @@ import (
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/checkout"
+	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
@@ -79,7 +80,7 @@ func offerDeliveryDetailsFlow(from string, s *Session) {
 	token := newFlowToken(flowKindDelivery)
 	s.PendingFlow = token
 	s.FlowKind = flowKindDelivery
-	sessions[sessionKey(s.MerchantID, from)] = s
+	sessions.put(sessionKey(s.MerchantID, from), s)
 	whatsapp.SendFlow(from, "Or fill them all at once: the name for the package, the number the rider can call, and where it is going.", "Fill your details", id, token, "DETAILS")
 }
 
@@ -99,7 +100,7 @@ func offerPayoutDetailsFlow(from string, s *Session, merchant *catalogue.Merchan
 	token := newFlowToken(flowKindPayout)
 	s.PendingFlow = token
 	s.FlowKind = flowKindPayout
-	sessions[sessionKey(merchant.ID, from)] = s
+	sessions.put(sessionKey(merchant.ID, from), s)
 	whatsapp.SendFlow(from, "This is where your sales settle. The name must be the name on the MoMo account itself, exactly as it is registered.", "Set my payout details", id, token, "PAYOUT")
 	return true
 }
@@ -128,14 +129,14 @@ func handleFlowReply(from, raw string) {
 		return
 	}
 	if shop := ownerShopFor(from); shop != nil {
-		if s, ok := sessions[sessionKey(shop.ID, from)]; ok && s.FlowKind == flowKindPayout && s.PendingFlow == a.FlowToken {
+		if s, ok := sessions.lookup(sessionKey(shop.ID, from)); ok && s.FlowKind == flowKindPayout && s.PendingFlow == a.FlowToken {
 			s.PendingFlow, s.FlowKind = "", ""
 			completePayoutFlow(from, s, shop, a)
 			return
 		}
 	}
-	if shopID := bindings[from]; shopID != "" {
-		if s, ok := sessions[sessionKey(shopID, from)]; ok && s.FlowKind == flowKindDelivery && s.PendingFlow == a.FlowToken {
+	if shopID := bindings.get(from); shopID != "" {
+		if s, ok := sessions.lookup(sessionKey(shopID, from)); ok && s.FlowKind == flowKindDelivery && s.PendingFlow == a.FlowToken {
 			s.PendingFlow, s.FlowKind = "", ""
 			completeDeliveryFlow(from, s, a)
 			return
@@ -162,21 +163,82 @@ func completeDeliveryFlow(from string, s *Session, a flowAnswers) {
 		whatsapp.SendText(from, "Thank you. Those details came in after that order had moved on, so I have not attached them to anything.")
 		return
 	}
+	// The completion is bound to the state it was issued
+	// into (the fifth audit): the form answers the
+	// details questions, so it lands only while the walk
+	// stands at those steps, or at the recap those
+	// details feed. Past them — the fee wait, a closed
+	// sale, a fresh browse — its moment has passed, and
+	// nothing is attached.
+	switch s.FulfilStep {
+	case "pkgname", "pkgmessage", "confirm":
+	default:
+		whatsapp.SendText(from, "Thank you. Those details came in after that order had moved on, so I have not attached them to anything.")
+		return
+	}
 	f := s.PendingFulfil
-	if name := strings.TrimSpace(a.BuyerName); name != "" {
+	if name := flatLine(strings.TrimSpace(a.BuyerName)); name != "" {
 		f.PackageName = name
 	}
-	if town := strings.TrimSpace(a.Town); town != "" {
+	feeNote := ""
+	if town := flatLine(strings.TrimSpace(a.Town)); town != "" {
+		// A new town is a new delivery: the fee settled
+		// for the old place does not price the new one
+		// (the fourth audit — the form overwrote the
+		// place and left the fee and the recap bound to
+		// the place she had replaced). Where the shop
+		// prices delivery itself, the fee rebinds from
+		// its own terms for the new town, so the recap —
+		// whenever it is composed or re-asked — speaks
+		// for where the goods are actually going. Where
+		// the shop quotes per order, the quote was for
+		// the old place and is void: the fulfilment is
+		// parked and a fresh quote opens for the new
+		// town, pausing the sale at feewait exactly as a
+		// typed correction does, rather than the order
+		// settling quietly at the wrong place's price
+		// behind a notification (the fifth audit).
+		if f.Mode == "delivery" && !strings.EqualFold(town, strings.TrimSpace(f.Location)) {
+			if merchant := catalogue.GetMerchant(s.MerchantID); merchant != nil {
+				if deliveryStyleOf(merchant) == "quote" {
+					f.Location = town
+					s.Location = town
+					f.Phone = strings.TrimSpace(a.Phone)
+					f.Landmark = flatLine(strings.TrimSpace(a.Landmark))
+					f.Fee = 0
+					s.PendingFulfil = f
+					s.FeePark = &f
+					sessions.put(sessionKey(s.MerchantID, from), s)
+					whatsapp.SendText(from, "Got them, thank you.")
+					beginFeeQuote(from, s, merchant, town)
+					return
+				} else if fee := deliveryFeeFor(merchant, town); fee != f.Fee {
+					f.Fee = fee
+					feeNote = "Delivery to " + town + " is " + money.GHS(fee) + "."
+				}
+			}
+		}
 		f.Location = town
 		s.Location = town
 	}
 	f.Phone = strings.TrimSpace(a.Phone)
-	f.Landmark = strings.TrimSpace(a.Landmark)
+	f.Landmark = flatLine(strings.TrimSpace(a.Landmark))
 	s.PendingFulfil = f
-	sessions[sessionKey(s.MerchantID, from)] = s
+	sessions.put(sessionKey(s.MerchantID, from), s)
 	whatsapp.SendText(from, "Got them, thank you.")
+	if feeNote != "" {
+		whatsapp.SendText(from, feeNote)
+	}
 	if s.FulfilStep == "pkgname" {
 		askPackageMessage(from, s)
+	}
+	if s.FulfilStep == "confirm" {
+		// The recap she confirmed against has changed
+		// under her: it is read back to her in full
+		// before any yes can complete the sale, so the
+		// yes she gives is for the order as it now
+		// stands (the fifth audit).
+		sendOrderRecap(from, s, s.PendingFulfil)
 	}
 }
 
@@ -198,7 +260,7 @@ var createSubaccountFn = checkout.CreateSubaccount
 // details named.
 func completePayoutFlow(from string, s *Session, merchant *catalogue.Merchant, a flowAnswers) {
 	phone := strings.TrimSpace(a.Phone)
-	holder := strings.TrimSpace(a.Holder)
+	holder := flatLine(strings.TrimSpace(a.Holder))
 	if phone == "" || holder == "" {
 		whatsapp.SendText(from, "That form came back without the number or the name on the account, so nothing has changed.")
 		return

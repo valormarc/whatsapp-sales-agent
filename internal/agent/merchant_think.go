@@ -48,7 +48,7 @@ func merchantOrderPayment(from string, merchant *catalogue.Merchant, shopID, msg
 		switch {
 		case check == nil:
 			pieces = append(pieces, "I tried to check the payment link just now, but the payment service did not answer.")
-		case checkout.IsPaidStatus(check.Status) && (check.AmountMajor == nil || money.Round(*check.AmountMajor*100) == money.Round(order.Charged()*100)):
+		case checkout.PaidAmountMatches(check, order.Charged()):
 			seevwebhook.SettleVerified(order, "Payment received, thank you. Your "+order.ProductName+" is confirmed at "+money.GHS(order.Charged())+". The shop has your order and will take it from here.")
 			pieces = append(pieces, "I have just checked the payment link: the payment has come through there. I have settled the order and told the buyer.")
 		case checkout.IsPaidStatus(check.Status):
@@ -101,13 +101,18 @@ func merchantAskBuyer(from string, merchant *catalogue.Merchant, shopID string, 
 		return false
 	}
 	key := sessionKey(shopID, buyer)
-	bs, ok := sessions[key]
-	if !ok {
-		bs = &Session{Stage: "browsing", MerchantID: shopID}
-		sessions[key] = bs
-	}
-	bs.RelayOrderRef = order.Reference
-	bs.RelayShopID = shopID
+	// The buyer's session is written from the merchant's
+	// turn, so it is written under the buyer's turn lock:
+	// her own concurrent turn must not race the arming.
+	withCrossLock(from, buyer, func() {
+		bs, ok := sessions.lookup(key)
+		if !ok {
+			bs = &Session{Stage: "browsing", MerchantID: shopID}
+			sessions.put(key, bs)
+		}
+		bs.RelayOrderRef = order.Reference
+		bs.RelayShopID = shopID
+	})
 	whatsapp.SendText(buyer, question)
 	whatsapp.SendText(from, "I have asked your buyer about order "+order.Reference+". I will bring you her answer the moment she replies.")
 	return true
@@ -181,7 +186,7 @@ func verifyLinkPaymentForRelay(from string, merchant *catalogue.Merchant, order 
 	case check == nil:
 		whatsapp.SendText(from, "I could not reach the payment service to check just now. The moment it confirms your payment I will tell you, and "+merchant.Name+" will hear it from me at the same time.")
 		tell("I could not reach the payment service to check her link payment just now. I will confirm it the moment it answers.")
-	case checkout.IsPaidStatus(check.Status) && (check.AmountMajor == nil || money.Round(*check.AmountMajor*100) == money.Round(charged*100)):
+	case checkout.PaidAmountMatches(check, charged):
 		seevwebhook.SettleVerified(order, "I have checked with the payment service, and you are right: your payment for the "+order.ProductName+" has come through, confirmed at "+money.GHS(charged)+". "+merchant.Name+" has your order and will take it from here.")
 	case checkout.IsPaidStatus(check.Status):
 		whatsapp.SendText(from, "I have checked with the payment service. A payment came through, but the amount does not match your order, so I have told "+merchant.Name+" and we are looking at it together.")

@@ -155,6 +155,8 @@ func TestPackageNameIsRememberedForTheNextOrder(t *testing.T) {
 	buyer := "233550009005"
 
 	agreeBagAtList(t, c, buyer)
+	tap(t, buyer, "ff_pickup")
+	c.replies(t, buyer) // the pickup-kind buttons, drained
 	tap(t, buyer, "ff_self")
 	c.finishDetails(t, buyer)
 	c.replies(t, buyer)
@@ -165,6 +167,7 @@ func TestPackageNameIsRememberedForTheNextOrder(t *testing.T) {
 	c.last(t, buyer)
 	c.say(t, buyer, "850")
 	c.replies(t, buyer)
+	tap(t, buyer, "ff_pickup")
 	tap(t, buyer, "ff_self")
 	if got := c.last(t, buyer); !strings.Contains(got, "Last time it was Akosua Mensah") {
 		t.Fatalf("second order name question = %q, want the remembered name held up", got)
@@ -184,6 +187,8 @@ func TestDetailsDeclineAndCancel(t *testing.T) {
 	// A plain "no message" completes with no note on the order.
 	buyer := "233550009006"
 	agreeBagAtList(t, c, buyer)
+	tap(t, buyer, "ff_pickup")
+	c.replies(t, buyer) // the pickup-kind buttons, drained
 	tap(t, buyer, "ff_self")
 	c.say(t, buyer, "Akosua Mensah")
 	c.say(t, buyer, "no message")
@@ -202,6 +207,8 @@ func TestDetailsDeclineAndCancel(t *testing.T) {
 	// A cancel at the details questions still drops the sale.
 	buyer2 := "233550009007"
 	agreeBagAtList(t, c, buyer2)
+	tap(t, buyer2, "ff_pickup")
+	c.replies(t, buyer2) // the pickup-kind buttons, drained
 	tap(t, buyer2, "ff_self")
 	c.say(t, buyer2, "cancel")
 	if got := c.last(t, buyer2); !strings.Contains(got, "Okay, cancelled") {

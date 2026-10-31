@@ -45,7 +45,12 @@ func rememberedFulfilment(shopID, buyer string, merchant *catalogue.Merchant) (f
 	}
 	f := fulfilment{Mode: o.Fulfilment, Location: o.Location, Collector: o.Collector}
 	if f.Mode == "delivery" {
-		f.Fee = deliveryFeeOf(merchant)
+		// Her place's own fee, not the flat one: the
+		// third audit found a returning buyer to Kasoa
+		// re-priced at the shop's flat 40 over her area's
+		// 80, because this road read the flat helper the
+		// fresh-delivery and reorder roads never use.
+		f.Fee = deliveryFeeFor(merchant, f.Location)
 	}
 	return f, true
 }

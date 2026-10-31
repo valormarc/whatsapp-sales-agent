@@ -134,6 +134,8 @@ func TestPictureAskAtTheChoiceStepServesThePicNotTheSale(t *testing.T) {
 	}
 
 	// The choice is still open afterwards: her tap lands.
+	tap(t, buyer, "ff_pickup")
+	c.replies(t, buyer) // the pickup-kind buttons, drained
 	tap(t, buyer, "ff_self")
 	if got := c.last(t, buyer); !strings.Contains(got, "What name should go on the package?") {
 		t.Fatalf("after the pic ask the flow should still complete its choice, got %q", got)
@@ -145,6 +147,8 @@ func TestPictureAskAtThePackageQuestionIsNotTheName(t *testing.T) {
 	stubStageModel(t)
 	buyer := "233550009102"
 	agreeBagAtList(t, c, buyer)
+	tap(t, buyer, "ff_pickup")
+	c.replies(t, buyer) // the pickup-kind buttons, drained
 	tap(t, buyer, "ff_self")
 
 	c.say(t, buyer, "Show me pic")
@@ -170,6 +174,8 @@ func TestForgetItAtTheNoteStepCancelsAndANoteIsNotACancel(t *testing.T) {
 
 	buyer := "233550009103"
 	agreeBagAtList(t, c, buyer)
+	tap(t, buyer, "ff_pickup")
+	c.replies(t, buyer) // the pickup-kind buttons, drained
 	tap(t, buyer, "ff_self")
 	c.say(t, buyer, "Akosua Mensah")
 	c.say(t, buyer, "What? Just forget it")
@@ -183,6 +189,8 @@ func TestForgetItAtTheNoteStepCancelsAndANoteIsNotACancel(t *testing.T) {
 	// The same words carrying a place onward are a note.
 	buyer2 := "233550009104"
 	agreeBagAtList(t, c, buyer2)
+	tap(t, buyer2, "ff_pickup")
+	c.replies(t, buyer2) // the pickup-kind buttons, drained
 	tap(t, buyer2, "ff_self")
 	c.say(t, buyer2, "Akosua Mensah")
 	c.say(t, buyer2, "leave it at the gate")
@@ -284,6 +292,8 @@ func TestStageIntentReadsMeaningNotWords(t *testing.T) {
 
 	buyer2 := "233550009108"
 	agreeBagAtList(t, c, buyer2)
+	tap(t, buyer2, "ff_pickup")
+	c.replies(t, buyer2) // the pickup-kind buttons, drained
 	tap(t, buyer2, "ff_self")
 	c.say(t, buyer2, "Akosua Mensah")
 	c.say(t, buyer2, "Actually, drop the whole thing")
@@ -318,6 +328,8 @@ func TestStageQuestionIsAnsweredNotSwallowed(t *testing.T) {
 	// taken as her name, and her real name still lands after.
 	buyer2 := "233550009110"
 	agreeBagAtList(t, c, buyer2)
+	tap(t, buyer2, "ff_pickup")
+	c.replies(t, buyer2) // the pickup-kind buttons, drained
 	tap(t, buyer2, "ff_self")
 	c.say(t, buyer2, "Wait, does the price cover delivery?")
 	got = strings.Join(c.replies(t, buyer2), "\n")
@@ -482,6 +494,8 @@ func TestLinkCreationSurvivesAnIdempotencyCollision(t *testing.T) {
 	stubStageModel(t)
 	buyer := "233550009130"
 	agreeBagAtList(t, c, buyer)
+	tap(t, buyer, "ff_pickup")
+	c.replies(t, buyer) // the pickup-kind buttons, drained
 	tap(t, buyer, "ff_self")
 	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
@@ -571,6 +585,8 @@ func TestConfirmRecapButtons(t *testing.T) {
 	stubStageModel(t)
 	buyer := "233550009133"
 	agreeBagAtList(t, c, buyer)
+	tap(t, buyer, "ff_pickup")
+	c.replies(t, buyer) // the pickup-kind buttons, drained
 	tap(t, buyer, "ff_self")
 	c.say(t, buyer, "Akosua Mensah")
 	c.say(t, buyer, "no")

@@ -102,3 +102,43 @@ func TestPaymentLinkCarriesTheShopsSubaccount(t *testing.T) {
 		t.Fatalf("payment body subaccount = %v", last.body["subaccount"])
 	}
 }
+
+// Run-2 needs-validation closure: when Seev's creation
+// response echoes an account number, it must be the
+// number the subaccount was requested for. A code minted
+// for a different number is refused, never recorded.
+func TestCreateSubaccountRefusesForeignEcho(t *testing.T) {
+	base := stubServer(t)
+	useSeev(t, base, 200)
+	handler = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"subaccount_code": "SUB-FOREIGN",
+				"account_number":  "0201112223",
+			},
+		})
+	}
+	if code, ok := CreateSubaccount("Efua's Store", "233550000001", "Efua Mensah"); ok || code != "" {
+		t.Fatalf("a subaccount echoed for another number must be refused, got %q %v", code, ok)
+	}
+}
+
+func TestCreateSubaccountAcceptsMatchingEcho(t *testing.T) {
+	base := stubServer(t)
+	useSeev(t, base, 200)
+	handler = func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"success": true,
+			"data": map[string]any{
+				"subaccount_code": "SUB-OWN",
+				"account_number":  "0550000001",
+			},
+		})
+	}
+	if code, ok := CreateSubaccount("Efua's Store", "233550000001", "Efua Mensah"); !ok || code != "SUB-OWN" {
+		t.Fatalf("a matching echo must be accepted, got %q %v", code, ok)
+	}
+}

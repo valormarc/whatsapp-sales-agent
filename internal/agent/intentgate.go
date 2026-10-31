@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -123,7 +122,7 @@ func thinkStageIntentQ(from string, s *Session, merchant *catalogue.Merchant, ms
 	if w := recentSpeakerWords(s, 4); w != "" {
 		b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
 	}
-	b.WriteString(quoteFactLine())
+	b.WriteString(quoteFactLine(from))
 	if shelf, _ := shelfFacts(merchant.ID); shelf != "" {
 		b.WriteString("Also on this shop's shelf: " + shelf + ".\n")
 	}
@@ -141,7 +140,7 @@ func thinkStageIntentQ(from string, s *Session, merchant *catalogue.Merchant, ms
 	b.WriteString("Her message: \"" + msg + "\"")
 	sys := stageIntentCharter
 	timeout := 10000
-	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, TimeoutMs: &timeout})
+	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, TimeoutMs: &timeout, Turn: turnTokenFor(from)})
 	if out == nil {
 		return stageReading{}
 	}
@@ -187,7 +186,7 @@ func answerPictureAsk(from string, merchant *catalogue.Merchant, p *catalogue.Pr
 	if p == nil || merchant == nil {
 		return
 	}
-	if sendProductPhotos(from, p) {
+	if sendProductPhotos(from, merchant.ID, p) {
 		return
 	}
 	whatsapp.SendText(from, "I don't have the pic of the "+p.Name+" in this chat. Let me get it from the shop owner for you.")
@@ -210,12 +209,24 @@ func servePendingPicRequest(from string, shop *catalogue.Merchant, imageID strin
 		delete(picRequests, shop.ID)
 		return false
 	}
+	// The listing's photo cap binds this road too (the
+	// sixth audit): a product already holding the most
+	// photos a listing shows takes no more, however the
+	// photo arrives. The request is spent — the buyer is
+	// told the plain truth — and the merchant hears the
+	// same honest refusal the listing flow gives.
+	if len(p.Photos) >= maxProductPhotos {
+		delete(picRequests, shop.ID)
+		whatsapp.SendText(from, "I could not add that one: "+p.Name+" already holds the most photos a listing shows. The buyer has been told it is already fully pictured.")
+		whatsapp.SendText(req.Buyer, shop.Name+" has already shared the full set of pictures for the "+p.Name+" here — those above are all of them.")
+		return true
+	}
 	data, mime, ok := downloadMediaBytesFn(imageID)
 	if !ok || len(data) == 0 {
 		whatsapp.SendText(from, "I could not fetch that photo. Please send it once more.")
 		return true
 	}
-	_ = os.MkdirAll(datadir.Path("photos"), 0o755)
+	_ = os.MkdirAll(datadir.Path(filepath.Join("photos", shop.ID)), 0o755)
 	ext := ".jpg"
 	switch {
 	case strings.Contains(mime, "png"):
@@ -223,7 +234,7 @@ func servePendingPicRequest(from string, shop *catalogue.Merchant, imageID strin
 	case strings.Contains(mime, "webp"):
 		ext = ".webp"
 	}
-	rel := filepath.Join("photos", p.ID+"-"+strconv.Itoa(len(p.Photos)+1)+ext)
+	rel := scopedPhotoRel(shop.ID, p.ID, nextPhotoSlot(p), ext)
 	if err := os.WriteFile(datadir.Path(rel), data, 0o600); err != nil {
 		whatsapp.SendText(from, "I could not fetch that photo. Please send it once more.")
 		return true
@@ -232,7 +243,7 @@ func servePendingPicRequest(from string, shop *catalogue.Merchant, imageID strin
 	_ = catalogue.SetProductPhotos(shop.ID, p.ID, photos)
 	p.Photos = photos
 	delete(picRequests, shop.ID)
-	if !sendProductPhotos(req.Buyer, p) {
+	if !sendProductPhotos(req.Buyer, shop.ID, p) {
 		whatsapp.SendText(req.Buyer, "The shop owner has sent the picture of the "+p.Name+", but I could not pass it on just now. Ask me for the pic once more and I will send it.")
 	}
 	whatsapp.SendText(from, "Thank you. I have sent it to the buyer, and I have kept it on the "+p.Name+" for the next buyer who asks.")
@@ -273,12 +284,12 @@ func thinkSellerWalkIntent(from string, s *Session, walk, question, given, msg s
 	if w := recentSpeakerWords(s, 4); w != "" {
 		b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
 	}
-	b.WriteString(quoteFactLine())
+	b.WriteString(quoteFactLine(from))
 	b.WriteString("The open question she was just asked: \"" + question + "\"\n")
 	b.WriteString("Her message: \"" + msg + "\"")
 	sys := sellerWalkCharter
 	timeout := 8000
-	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, TimeoutMs: &timeout})
+	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, TimeoutMs: &timeout, Turn: turnTokenFor(from)})
 	if out == nil {
 		return stageReading{}
 	}
@@ -337,6 +348,7 @@ func serveSellerWalkTurn(from string, s *Session, merchant *catalogue.Merchant, 
 	switch reading.Intent {
 	case stageIntentCancel:
 		s.Onboarding = nil
+		s.clearYesNo("listing")
 		whatsapp.SendText(from, "Dropped it. Nothing was saved. Say \"add a product\" whenever you are ready.")
 		return true
 	case stageIntentAsk:

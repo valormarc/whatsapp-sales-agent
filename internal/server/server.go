@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -35,6 +36,61 @@ func verifyToken() string {
 	return os.Getenv("WHATSAPP_VERIFY_TOKEN")
 }
 
+// sandboxMode reports whether this process is a declared,
+// capability-less sandbox: the operator set WHATSAPP_DRY_RUN=1
+// AND the process holds nothing it could act with in the real
+// world — no WhatsApp send credentials, and either no Seev key
+// or a Seev base that points at loopback (a stub). The flag
+// alone never suffices: it is read together with the actual
+// credential state, so a credentialed process can never drift
+// into sandbox behaviour by carrying the flag.
+func sandboxMode() bool {
+	if os.Getenv("WHATSAPP_DRY_RUN") != "1" {
+		return false
+	}
+	// The sending credential is the phone number id: with
+	// none set, no message can be sent whatever else the
+	// environment holds. A WhatsApp token may be present on
+	// its own — the media proofs carry one so the sandbox
+	// agent can download the real photos they feed it — and
+	// it cannot send, settle or receive without the number.
+	if os.Getenv("WHATSAPP_PHONE_NUMBER_ID") != "" {
+		return false
+	}
+	if os.Getenv("SEEV_SECRET_KEY") != "" && !loopbackBase(os.Getenv("SEEV_API_BASE")) {
+		return false
+	}
+	// The model key can only spend, but spend is real: a
+	// sandbox silently holding the ambient real key lets
+	// anything that can reach the loopback bind burn it
+	// through forged turns, the per-turn caps no bound on
+	// volume (second audit). Sandbox therefore also
+	// requires the model key absent, its base loopback (a
+	// stub or relay), or the harness's explicit opt-in:
+	// the shipped proofs set STALL_SANDBOX_ALLOW_MODEL=1
+	// to declare, in the open, that spending the real key
+	// on synthetic turns is the point of the run.
+	if os.Getenv("META_MODEL_API_KEY") != "" && !loopbackBase(os.Getenv("META_MODEL_API_BASE")) && os.Getenv("STALL_SANDBOX_ALLOW_MODEL") != "1" {
+		return false
+	}
+	return true
+}
+
+// loopbackBase reports whether a base URL points at this
+// machine. An unset base means the provider's real default,
+// which is not loopback.
+func loopbackBase(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	host := u.Hostname()
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
 func signatureOK(rawBody []byte, header string) bool {
 	secret := os.Getenv("WHATSAPP_APP_SECRET")
 	if secret == "" {
@@ -42,15 +98,15 @@ func signatureOK(rawBody []byte, header string) bool {
 		// "no signature needed": the day an env is lost on a
 		// restart is the day anyone who finds this URL can
 		// post as any phone number, owners included. The one
-		// exception is a process the operator has explicitly
-		// declared a sandbox (WHATSAPP_DRY_RUN=1, the proof
-		// and simulator fleet): it holds no credentials to
-		// send with and settles nothing real, and its
-		// harnesses post unsigned by construction. A live
-		// process never carries that flag, so for it an
-		// unset secret rejects everything. Run says which
-		// case it is at startup.
-		return os.Getenv("WHATSAPP_DRY_RUN") == "1"
+		// exception is a process that is a sandbox in fact,
+		// not just in name (sandboxMode): no send credentials
+		// and nothing real to settle, so its harnesses may
+		// post unsigned by construction. Any process holding
+		// live credentials rejects everything while the
+		// secret is unset, whatever flags it carries. Run
+		// refuses to start a flagged credentialed process
+		// at all, and says which case it is at startup.
+		return sandboxMode()
 	}
 	if !strings.HasPrefix(header, "sha256=") {
 		return false
@@ -271,14 +327,37 @@ func Port() int {
 // Run starts the server and blocks.
 func Run() error {
 	port := Port()
-	agent.StartUnpaidWatch()
+	// A flagged process that nevertheless holds live
+	// credentials is a misconfiguration with a security
+	// consequence (unsigned webhooks would be honoured by
+	// nothing else, but the operator plainly believes the
+	// process is a sandbox while it is not). Refuse to
+	// start rather than run in a state nobody intended.
+	if os.Getenv("WHATSAPP_DRY_RUN") == "1" && !sandboxMode() {
+		return fmt.Errorf("WHATSAPP_DRY_RUN=1 is set together with live credentials; refusing to start (a sandbox must hold no WhatsApp token or phone number ID, and no real Seev key)")
+	}
+	// Boot order is state order (the sixth audit):
+	// restore first, then replay, then watch. The
+	// snapshot restore replaces the session map
+	// wholesale, so anything that produces session state
+	// before it — a replayed delivery's turn, the unpaid
+	// watch's first pass — was silently overwritten by
+	// the restore while its effects (a handled mark, a
+	// sent notice) were never rolled back. Restored
+	// state is the ground every later boot step builds
+	// on.
 	agent.StartSessionSnapshots()
-	if os.Getenv("WHATSAPP_APP_SECRET") == "" {
-		if os.Getenv("WHATSAPP_DRY_RUN") == "1" {
-			fmt.Fprintln(os.Stderr, "NOTE: dry run with no WHATSAPP_APP_SECRET; webhook signatures are not being checked (sandbox only)")
-		} else {
-			fmt.Fprintln(os.Stderr, "WARNING: WHATSAPP_APP_SECRET is not set; the WhatsApp webhook will reject every request until it is")
-		}
+	agent.StartInboxReplay()
+	agent.StartUnpaidWatch()
+	bind := ":" + strconv.Itoa(port)
+	if sandboxMode() {
+		// A sandbox listens on loopback only: even its
+		// unsigned-webhook exception can then be reached
+		// only from this machine.
+		bind = "127.0.0.1:" + strconv.Itoa(port)
+		fmt.Fprintln(os.Stderr, "NOTE: sandbox mode (WHATSAPP_DRY_RUN=1, no live credentials); listening on loopback, webhook signatures are not being checked")
+	} else if os.Getenv("WHATSAPP_APP_SECRET") == "" {
+		fmt.Fprintln(os.Stderr, "WARNING: WHATSAPP_APP_SECRET is not set; the WhatsApp webhook will reject every request until it is")
 	}
 	if os.Getenv("SEEV_WEBHOOK_SECRET") == "" {
 		fmt.Fprintln(os.Stderr, "WARNING: SEEV_WEBHOOK_SECRET is not set; the payment webhook will reject every event until it is")
@@ -291,7 +370,7 @@ func Run() error {
 	// and a long turn must not be severed mid-handling
 	// (Meta already holds its flushed 200 by then).
 	srv := &http.Server{
-		Addr:              ":" + strconv.Itoa(port),
+		Addr:              bind,
 		Handler:           Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,

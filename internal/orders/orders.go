@@ -13,7 +13,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/datadir"
 )
@@ -66,12 +65,34 @@ func (o *Order) Unpaid() bool {
 // OrderItem is one line of a multi-item order: what it is,
 // the price agreed for it, its measure when it was sold by
 // one, and its size when the buyer chose one.
+// StockLine is one line of an order's shelf consumption:
+// the product's name and the units the order took, in the
+// product's own measure.
+type StockLine struct {
+	Name  string  `json:"name"`
+	Units float64 `json:"units"`
+	// Unit and BaseQty record the measure the units were
+	// taken in (the sixth audit): a give-back restores in
+	// the take-time denomination, so a product whose
+	// measure was cleared or re-based after the take
+	// still receives its units whole instead of a
+	// fraction truncated against its current shape.
+	Unit    string  `json:"unit,omitempty"`
+	BaseQty float64 `json:"baseQty,omitempty"`
+}
+
 type OrderItem struct {
 	Name     string  `json:"name"`
 	Price    float64 `json:"price"`
 	Quantity float64 `json:"quantity,omitempty"`
 	Unit     string  `json:"unit,omitempty"`
 	Size     string  `json:"size,omitempty"`
+	// ListPrice is the list figure this line was booked
+	// into the day book at (the sixth audit): a
+	// cancellation reverses the booking line by line at
+	// the figures it was booked with, never recomputed
+	// from a shelf that has moved since.
+	ListPrice float64 `json:"listPrice,omitempty"`
 }
 
 type Order struct {
@@ -119,6 +140,45 @@ type Order struct {
 	// reads exactly as it always did.
 	Items []OrderItem `json:"items,omitempty"`
 
+	// StockLines records what this order took from the
+	// shelf when it was minted, line by line, in each
+	// product's own units (pieces, or base units for a
+	// by-measure product). An order that dies unpaid gives
+	// exactly these units back. Restocked marks that the
+	// giving-back has happened, so it can never happen twice.
+	StockLines []StockLine `json:"stockLines,omitempty"`
+	Restocked  bool        `json:"restocked,omitempty"`
+
+	// SaleID is the identity of the session sale that
+	// minted this order: a completion replayed from a stale
+	// session restore finds its order by this id and resumes
+	// it instead of minting a twin.
+	SaleID string `json:"saleId,omitempty"`
+
+	// SettleAlerted marks that the merchant has been told a
+	// verified payment arrived for this order after it had
+	// already ended (cancelled or failed): the money is real
+	// but the order does not resurrect, and she is told once.
+	SettleAlerted bool `json:"settleAlerted,omitempty"`
+
+	// HeldAlerted marks that the merchant has been told a
+	// paid event arrived for this order with no payment
+	// session on record to verify it against, so the order
+	// was held rather than settled on the event alone.
+	// She is told once, however often the event repeats.
+	HeldAlerted bool `json:"heldAlerted,omitempty"`
+
+	// DryRun marks an order whose payment link was minted
+	// by the disabled-checkout factory: a synthetic link,
+	// no provider session, no real money. The webhook's
+	// sessionless hold exempts exactly these orders, and
+	// no others: an order minted against a configured
+	// provider always carries its session, so a
+	// sessionless one that is not marked dry-run is an
+	// anomaly to hold, never a sale to settle on an
+	// event's word.
+	DryRun bool `json:"dryRun,omitempty"`
+
 	// Quantity and Unit record a sale by measure: how much of the
 	// product's measure the buyer took (3 of "yard"), against a
 	// Price that is the settled price for that quantity, scaled
@@ -146,6 +206,10 @@ type Order struct {
 	SettledVia    string `json:"settledVia,omitempty"`
 	ScreenshotRef string `json:"screenshotRef,omitempty"`
 
+	// BookedList is the list figure the order's main line
+	// was booked into the day book at (the sixth audit),
+	// the single-order counterpart of OrderItem.ListPrice.
+	BookedList float64 `json:"bookedList,omitempty"`
 	// CreatedAt is when the order was placed, RFC3339. Orders
 	// placed before this field existed carry none; the unpaid
 	// watch stamps those on first sight rather than treating
@@ -220,6 +284,12 @@ func marshalJSON(v any) ([]byte, error) {
 type Book struct {
 	file string
 	mu   sync.Mutex
+	// poisoned is set when a load met bytes that did not
+	// parse in the book or its last-known-good copy: while
+	// it stands, saves refuse, because a save from that
+	// load would cement the loss of every order the shop
+	// ever took (the fourth audit's one medium).
+	poisoned bool
 }
 
 // New returns an order book backed by the given file.
@@ -232,35 +302,102 @@ var Default = New(datadir.Path("orders.json"))
 
 // loadAll reads the book. The caller holds the lock. A file
 // that exists but does not parse is preserved byte for byte
-// under a .corrupt- name and shouted about, never silently
-// read as an empty book: read as empty, the next save would
-// wipe every order the shop ever took.
+// under a single .corrupt name and shouted about, never
+// silently read as an empty book: read as empty, the next
+// save would wipe every order the shop ever took. The
+// fourth audit found that preservation alone was not
+// recovery — the aside holds the very bytes that failed,
+// nothing ever read it back, and every load re-read the
+// same corrupt file as empty until the first new order's
+// save cemented the loss. So the book keeps the agent
+// books' discipline: every good save leaves a last-known-
+// good copy beside the book, a failed load restores from
+// that copy, and only when both fail does the book read
+// empty — poisoned, with saves refused until a load parses
+// again or an operator repairs the file. The fifth audit
+// added the finishing step: a successful restore REPAIRS
+// the main file with the good bytes, so later loads are
+// clean instead of re-entering the restore path forever,
+// and the aside is one fixed file, overwritten by each new
+// corruption rather than a fresh timestamped copy per load
+// accumulating without bound.
 func (b *Book) loadAll() map[string]Order {
+	// restore tries the last known good copy: on success
+	// the main file is repaired from it and the restored
+	// book returned. Both failure roads below — bytes
+	// that do not parse, and a file that exists but
+	// cannot be read at all — go through it (the sixth
+	// audit: the discipline keyed only on parse errors,
+	// so a read error on an existing book read as a
+	// fresh empty one and the next routine save cemented
+	// the loss over the main file and its backup).
+	restore := func() (map[string]Order, bool) {
+		bak, berr := os.ReadFile(b.file + ".bak")
+		if berr != nil {
+			return nil, false
+		}
+		restored := map[string]Order{}
+		if uerr := json.Unmarshal(bak, &restored); uerr != nil {
+			return nil, false
+		}
+		tmp := b.file + ".tmp"
+		if werr := os.WriteFile(tmp, bak, 0o600); werr == nil {
+			_ = os.Rename(tmp, b.file)
+		}
+		b.poisoned = false
+		return restored, true
+	}
 	data, err := os.ReadFile(b.file)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]Order{}
+		}
+		if restored, ok := restore(); ok {
+			fmt.Fprintf(os.Stderr, "orders: %s could not be read (%v); restored from the last known good copy\n", b.file, err)
+			return restored
+		}
+		fmt.Fprintf(os.Stderr, "orders: %s could not be read (%v) and no good copy could be restored; read as empty; saves are refused until the book loads again\n", b.file, err)
+		b.poisoned = true
 		return map[string]Order{}
 	}
 	all := map[string]Order{}
 	if err := json.Unmarshal(data, &all); err != nil {
-		bad := b.file + ".corrupt-" + time.Now().Format("20060102-150405")
+		bad := b.file + ".corrupt"
 		_ = os.WriteFile(bad, data, 0o600)
-		fmt.Fprintf(os.Stderr, "orders: %s does not parse (%v); preserved as %s and read as empty\n", b.file, err, bad)
+		if restored, ok := restore(); ok {
+			fmt.Fprintf(os.Stderr, "orders: %s does not parse (%v); preserved as %s and restored from the last known good copy\n", b.file, err, bad)
+			return restored
+		}
+		fmt.Fprintf(os.Stderr, "orders: %s does not parse (%v); preserved as %s and read as empty; saves are refused until the book parses again\n", b.file, err, bad)
+		b.poisoned = true
 		return map[string]Order{}
 	}
+	b.poisoned = false
 	return all
 }
 
 // saveAll writes the book atomically: a temporary file in
 // the same directory, renamed over the book, so a crash
 // mid-write leaves either the old book or the new one,
-// never a torn half. The caller holds the lock. The mode is
-// owner-only: the book holds phone numbers and addresses.
+// never a torn half. The same bytes then refresh the
+// last-known-good copy the loader falls back to. The
+// caller holds the lock. The mode is owner-only: the book
+// holds phone numbers and addresses.
 func (b *Book) saveAll(all map[string]Order) {
+	if b.poisoned {
+		fmt.Fprintf(os.Stderr, "orders: refusing to save over %s: the last load did not parse and no good copy could be restored\n", b.file)
+		return
+	}
 	_ = os.MkdirAll(datadir.Dir(), 0o700)
 	if data, err := marshalJSON(all); err == nil {
 		tmp := b.file + ".tmp"
 		if err := os.WriteFile(tmp, data, 0o600); err == nil {
-			_ = os.Rename(tmp, b.file)
+			if err := os.Rename(tmp, b.file); err == nil {
+				bakTmp := b.file + ".bak.tmp"
+				if err := os.WriteFile(bakTmp, data, 0o600); err == nil {
+					_ = os.Rename(bakTmp, b.file+".bak")
+				}
+			}
 		}
 	}
 }
@@ -375,6 +512,75 @@ func refStamp(reference string) int64 {
 // new order's serial is this count plus one (bumped past any key
 // already taken), so a shop's references run 0001, 0002, ... in
 // the order her sales complete.
+// AnonymiseBuyer tombstones every personal detail of one
+// buyer across the book, for a "delete my data" request:
+// her number, her delivery details and her words are struck
+// from each of her orders, while the order itself survives
+// as the shop's anonymised sales record (goods, amounts and
+// status only — the shop's own books are not hers to erase,
+// and nothing on the tombstone can identify or reach her).
+// Returns how many orders were tombstoned.
+func (b *Book) AnonymiseBuyer(from string) int {
+	n := 0
+	for _, o := range b.All() {
+		if o.From != from {
+			continue
+		}
+		b.Update(o.Reference, func(oo *Order) {
+			oo.From = "deleted"
+			oo.Location = ""
+			oo.Collector = ""
+			oo.PackageName = ""
+			oo.Note = ""
+			oo.DeliveryPhone = ""
+			oo.Landmark = ""
+			// The payment session key and the sale
+			// identity are struck with the rest — except
+			// on an order whose money may still be in
+			// flight. They name a transaction, not her,
+			// and on a pending order they are the only
+			// road that money has home: the unpaid
+			// sweep's read-back, the resume road and
+			// the journal all key on them, and the
+			// fourth audit found an already-paid order
+			// stranded pending forever by their
+			// striking, its money sitting at the shop's
+			// subaccount with no road back to the book.
+			if oo.Status != "pending" && oo.Status != "link_failed" {
+				oo.ProviderRef = nil
+				oo.SaleID = ""
+			}
+			oo.DisputeBy = ""
+		})
+		n++
+	}
+	return n
+}
+
+// ClaimRestock atomically claims the right to give one
+// order's shelf units back, reporting the lines to give.
+// The claim — the Restocked mark — is decided and set
+// inside the book's own lock, from the stored record:
+// the second audit found every ending road deciding from
+// a snapshot copy taken before its update, so two roads
+// ending the same order at once (a merchant's cancel
+// against the sweep's failed leg, say) each saw the mark
+// unset and each gave the units back. Whoever claims
+// first gives; every later road gets nothing.
+func (b *Book) ClaimRestock(reference string) ([]StockLine, bool) {
+	var lines []StockLine
+	claimed := false
+	b.Update(reference, func(o *Order) {
+		if o.Restocked || len(o.StockLines) == 0 {
+			return
+		}
+		o.Restocked = true
+		lines = o.StockLines
+		claimed = true
+	})
+	return lines, claimed
+}
+
 func (b *Book) CountFor(merchantID string) int {
 	b.mu.Lock()
 	defer b.mu.Unlock()

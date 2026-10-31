@@ -315,11 +315,12 @@ func TestThrowInSamePhotoTwiceIsNotReadBackTwice(t *testing.T) {
 	if replies := c.replies(t, merchant); len(replies) != 0 {
 		t.Fatalf("a resend inside the burst should be silent, got %q", replies)
 	}
-	for _, candidate := range sessions {
+	sessions.rangeAll(func(_ string, candidate *Session) bool {
 		if candidate.Onboarding != nil {
 			candidate.Onboarding.RepeatAckAt = candidate.Onboarding.RepeatAckAt.Add(-2 * photoAckWindow)
 		}
-	}
+		return true
+	})
 	c.photo(t, merchant, "300")
 	replies := c.replies(t, merchant)
 	joined := strings.Join(replies, "\n")
@@ -353,7 +354,7 @@ func TestPhotoStatusCaptionSuppliesNameAndPrice(t *testing.T) {
 
 	HandleInbound(Inbound{From: owner, ImageID: "clothes-rack-status", Caption: caption})
 	got := strings.Join(c.replies(t, owner), "\n")
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil {
 		t.Fatalf("the forwarded product should open onboarding, got %q", got)
 	}
@@ -378,14 +379,14 @@ func TestPhotoBarePriceArrivingBeforeNameIsNotSavedAsName(t *testing.T) {
 
 	c.photo(t, owner, "Black metal double clothes rack with lower shelf GH₵270")
 	_ = c.replies(t, owner)
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil || s.Onboarding.Name != "" || s.Onboarding.ListPrice != 270 {
 		t.Fatalf("expected a photo listing with price but no extracted name, flow = %+v", s)
 	}
 
 	c.say(t, owner, "250")
 	got := strings.Join(c.replies(t, owner), "\n")
-	s = sessions[sessionKey(MerchantID, owner)]
+	s = sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil || s.Onboarding.Name != "" {
 		t.Fatalf("the price must not be accepted as a product name, session = %+v", s)
 	}
@@ -402,7 +403,7 @@ func TestPhotoBarePriceArrivingBeforeNameIsNotSavedAsName(t *testing.T) {
 	// is attached to it, judged against its list price.
 	c.say(t, owner, "Double Clothes Rack")
 	got = strings.Join(c.replies(t, owner), "\n")
-	s = sessions[sessionKey(MerchantID, owner)]
+	s = sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil || s.Onboarding.Name != "Double Clothes Rack" {
 		t.Fatalf("the listing should carry her name, session = %+v", s)
 	}
@@ -420,7 +421,7 @@ func TestDifferentUncaptionedPhotoIsNotMerged(t *testing.T) {
 
 	c.photo(t, owner, "Corner Rack")
 	_ = c.replies(t, owner)
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil || !s.Onboarding.Photo || s.Onboarding.Name != "Corner Rack" {
 		t.Fatalf("first photo should have an open listing, session = %+v", s)
 	}
@@ -430,7 +431,7 @@ func TestDifferentUncaptionedPhotoIsNotMerged(t *testing.T) {
 
 	c.photo(t, owner, "")
 	got := strings.Join(c.replies(t, owner), "\n")
-	s = sessions[sessionKey(MerchantID, owner)]
+	s = sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil || len(s.Onboarding.PhotoRefs) != 1 {
 		t.Fatalf("a different uncaptioned photo must not join the open listing, session = %+v", s)
 	}

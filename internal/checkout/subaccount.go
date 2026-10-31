@@ -145,6 +145,18 @@ func CreateSubaccount(businessName, phone, holderName string) (string, bool) {
 	if !ok {
 		return "", false
 	}
+	// The binding is verified against the provider's own
+	// echo when it gives one: a code minted for a different
+	// account number than the one requested is not the
+	// shop's account, whatever the envelope claims, and is
+	// refused rather than recorded (second audit,
+	// needs-validation: whether Seev can return another
+	// merchant's account is its behaviour; checking what
+	// it returns is ours).
+	if echoed := dataField(envelope, "account_number"); echoed != "" && echoed != LocalNumber(phone) {
+		log.Printf("seev subaccounts: created for %s, requested %s; refusing the code", echoed, LocalNumber(phone))
+		return "", false
+	}
 	code := dataField(envelope, "subaccount_code")
 	if code == "" {
 		code = dataField(envelope, "code")

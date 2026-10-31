@@ -205,13 +205,34 @@ func CreatePaymentLink(r LinkRequest) Link {
 	if err := json.Unmarshal(raw, &parsed); err != nil || parsed.Data == nil || parsed.Data.CheckoutURL == "" {
 		return Link{URL: nil, DryRun: false, ProviderRef: nil}
 	}
-	url := parsed.Data.CheckoutURL
-	var ref *string
-	if parsed.Data.Reference != "" {
-		rr := parsed.Data.Reference
-		ref = &rr
+	if parsed.Data.Reference == "" {
+		// A checkout URL without its session reference is
+		// not a usable link: the whole settlement design
+		// reads the session back before believing money
+		// moved, and an order recorded with no reference
+		// falls into the event's-word-alone road meant for
+		// dry runs. Refuse it here, where the partial
+		// answer arrives, and let the caller retry or tell
+		// the buyer plainly (the 2026-10-30 audit's chain:
+		// a partially identified session settling real
+		// money on an event alone).
+		log.Printf("seev checkout for %s: success response carried no session reference; refusing the link", r.Reference)
+		return Link{URL: nil, DryRun: false, ProviderRef: nil}
 	}
-	return Link{URL: &url, DryRun: false, ProviderRef: ref}
+	url := parsed.Data.CheckoutURL
+	rr := parsed.Data.Reference
+	return Link{URL: &url, DryRun: false, ProviderRef: &rr}
+}
+
+// PaidAmountMatches reports whether a read-back both says
+// paid AND states the charged amount exactly. A read-back
+// that states no amount proves nothing about the amount:
+// a reused reference can point at a session from a former
+// era at a different figure, so status alone never settles
+// (the rule every settlement road now shares).
+func PaidAmountMatches(check *Verification, charged float64) bool {
+	return check != nil && IsPaidStatus(check.Status) && check.AmountMajor != nil &&
+		money.Round(*check.AmountMajor*100) == money.Round(charged*100)
 }
 
 // Verification is a checkout session read back from Seev. Status is

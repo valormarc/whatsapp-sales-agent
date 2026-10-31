@@ -231,10 +231,10 @@ func trimToRunes(s string, n int) string {
 // she has one: the sheet is composed from it (her ticks,
 // her Done row) and her place on it is remembered there.
 func shelfSession(from string, shop *catalogue.Merchant) *Session {
-	if bindings[from] != shop.ID {
+	if bindings.get(from) != shop.ID {
 		return nil
 	}
-	return sessions[sessionKey(shop.ID, from)]
+	return sessions.get(sessionKey(shop.ID, from))
 }
 
 // sendShelfSheet puts one page of the shop's shelf in
@@ -263,7 +263,7 @@ func sendShelfSheetBody(from string, shop *catalogue.Merchant, page int, body st
 			page = pages
 		}
 		s.ShelfPage = page
-		sessions[sessionKey(shop.ID, from)] = s
+		sessions.put(sessionKey(shop.ID, from), s)
 	}
 	whatsapp.SendList(from, body, "See the shelf", shelfSections(shop, page, s))
 }
@@ -284,8 +284,8 @@ func presentShelf(from string, shop *catalogue.Merchant) {
 // way naming it would: its photos when it has them, its
 // description and price, and the invitation to make an
 // offer.
-func presentShelfPick(from string, p *catalogue.Product) {
-	sendProductPhotos(from, p)
+func presentShelfPick(from, shopID string, p *catalogue.Product) {
+	sendProductPhotos(from, shopID, p)
 	sendProductView(from, p, " Want to make an offer?")
 }
 
@@ -344,7 +344,7 @@ func serveShelfDone(from string, shop *catalogue.Merchant) {
 	}
 	count, _ := picksFigure(s, shop.ID)
 	next := takeNextShelfPick(s, shop.ID)
-	sessions[sessionKey(shop.ID, from)] = s
+	sessions.put(sessionKey(shop.ID, from), s)
 	if next == nil {
 		sendShelfSheet(from, shop, 1)
 		return
@@ -352,7 +352,7 @@ func serveShelfDone(from string, shop *catalogue.Merchant) {
 	if count > 1 {
 		whatsapp.SendText(from, "Good. Let us settle them one by one, starting with this one.")
 	}
-	presentShelfPick(from, next)
+	presentShelfPick(from, shop.ID, next)
 }
 
 // routeShelfTap reads a tap on a shelf sheet in the shop
@@ -365,7 +365,7 @@ func serveShelfDone(from string, shop *catalogue.Merchant) {
 // she tapped from, her picks ticked, with the state of
 // her hand in the words over it.
 func routeShelfTap(from, listID string) {
-	shopID := bindings[from]
+	shopID := bindings.get(from)
 	if shopID == "" {
 		return
 	}
@@ -376,8 +376,8 @@ func routeShelfTap(from, listID string) {
 	// Her session stands from the first tap of any kind, so
 	// the sheet can remember the page she is looking at and
 	// her picks have somewhere to live.
-	if _, ok := sessions[sessionKey(shopID, from)]; !ok {
-		sessions[sessionKey(shopID, from)] = &Session{Stage: "browsing", MerchantID: shopID}
+	if _, ok := sessions.lookup(sessionKey(shopID, from)); !ok {
+		sessions.put(sessionKey(shopID, from), &Session{Stage: "browsing", MerchantID: shopID})
 	}
 	if listID == shelfDoneID {
 		serveShelfDone(from, shop)
@@ -407,7 +407,21 @@ func routeShelfTap(from, listID string) {
 		sendShelfSheet(from, shop, 1)
 		return
 	}
-	s := sessions[sessionKey(shopID, from)]
+	s := sessions.get(sessionKey(shopID, from))
+	page := s.ShelfPage
+	if page < 1 {
+		page = 1
+	}
+	if picked.AvailableUnits() <= 0 {
+		// The availability check stands before the branch
+		// split (the seventh audit): the settling branch
+		// presented a sold-out tap as available because
+		// its stock test sat below the branch's return.
+		// Every branch now answers a sold-out tap the
+		// same way, with the current sheet.
+		sendShelfSheet(from, shop, page)
+		return
+	}
 	s.LastViewed = picked
 	if s.ShelfSettling {
 		// Mid-settling a tap is a look at the goods, the
@@ -416,22 +430,14 @@ func routeShelfTap(from, listID string) {
 		if s.Stage == "agreed" {
 			s.Stage = "browsing"
 		}
-		sessions[sessionKey(shopID, from)] = s
-		presentShelfPick(from, picked)
-		return
-	}
-	page := s.ShelfPage
-	if page < 1 {
-		page = 1
-	}
-	if picked.Stock <= 0 {
-		sendShelfSheet(from, shop, page)
+		sessions.put(sessionKey(shopID, from), s)
+		presentShelfPick(from, shopID, picked)
 		return
 	}
 	for i, id := range s.ShelfPicks {
 		if id == pid {
 			s.ShelfPicks = append(s.ShelfPicks[:i], s.ShelfPicks[i+1:]...)
-			sessions[sessionKey(shopID, from)] = s
+			sessions.put(sessionKey(shopID, from), s)
 			count, total := picksFigure(s, shopID)
 			body := "Took the " + picked.Name + " off your picks."
 			if count > 0 {
@@ -448,7 +454,7 @@ func routeShelfTap(from, listID string) {
 		return
 	}
 	s.ShelfPicks = append(s.ShelfPicks, pid)
-	sessions[sessionKey(shopID, from)] = s
+	sessions.put(sessionKey(shopID, from), s)
 	count, total := picksFigure(s, shopID)
 	body := "Added the " + picked.Name + ". You have " + strconv.Itoa(count) + pluralItems(count) + " picked so far, " + money.GHS(total) + " in all. Tap more items to add them, or tap Done on the sheet and we will settle them one by one."
 	sendShelfSheetBody(from, shop, page, body)

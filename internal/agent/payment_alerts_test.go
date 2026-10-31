@@ -10,6 +10,10 @@ package agent
 // and neither is nagged twice.
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +22,46 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/seevwebhook"
 )
+
+// fakeSeevMintAndReadback stands Seev in whole for a
+// settlement test: link creation answers with a checkout
+// URL and its session reference, and the session read-back
+// reports that session completed at the very amount it was
+// minted for. The success-alert test used to settle on the
+// webhook event's word alone, against an order whose mint
+// had never produced a session — the exact road the
+// second audit closed — so the test now walks the real
+// road: mint, session, read-back, settle.
+func fakeSeevMintAndReadback(t *testing.T) {
+	t.Helper()
+	amounts := map[string]float64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/developer/payments" {
+			var body struct {
+				Amount float64 `json:"amount"`
+				Meta   struct {
+					OrderReference string `json:"order_reference"`
+				} `json:"meta"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			ref := "PAY-" + body.Meta.OrderReference
+			amounts[ref] = body.Amount
+			fmt.Fprintf(w, `{"data":{"checkout_url":"https://pay.seevplus.test/x","reference":%q}}`, ref)
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/developer/payments/") {
+			ref := strings.TrimPrefix(r.URL.Path, "/api/v1/developer/payments/")
+			if amt, ok := amounts[ref]; ok {
+				fmt.Fprintf(w, `{"data":{"status":"completed","amount":%v}}`, amt)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("SEEV_API_BASE", srv.URL)
+}
 
 // buyTilapiaOnAma drives one link-path purchase on Ama's shop
 // and returns the chat, the buyer and the placed order as read
@@ -44,12 +88,12 @@ func buyTilapiaOnAma(t *testing.T, buyer string) (*chat, string, map[string]any)
 func TestLinkSuccessAlertsTheMerchantInLines(t *testing.T) {
 	t.Setenv("SEEV_SECRET_KEY", "sk_test_alerts")
 	t.Setenv("SEEV_WEBHOOK_SECRET", "whsec_alerts")
+	fakeSeevMintAndReadback(t)
 	buyer := "233550008101"
 	c, _, placed := buyTilapiaOnAma(t, buyer)
 	ref := placed["reference"].(string)
 	agreed := int(placed["total"].(float64))
 
-	fakeSeevReadback(t, "completed", float64(agreed*100))
 	body := `{"data":{"reference":"SEEVSIM9","status":"completed","amount":` + strconv.Itoa(agreed) + `},"meta":{"order_reference":"` + ref + `"}}`
 	ts, sig := signSeevWebhook(t, body)
 	if status := seevwebhook.Handle(body, ts, sig); status != 200 {
@@ -76,7 +120,21 @@ func TestLinkSuccessAlertsTheMerchantInLines(t *testing.T) {
 	}
 }
 
-func TestLinkFailureAlertsBothSides(t *testing.T) {
+// Run-3 overturned the posture this test used to assert
+// (it was TestLinkFailureAlertsBothSides): the purchase's
+// mint never produced a session, so the order stands
+// link_failed with no ProviderRef, and the failed event
+// that arrives naming some session cannot be bound to
+// this order at all. The third audit confirmed that
+// flipping and alerting on such an event is the defect —
+// it restocked and closed orders on events that cannot
+// be shown to be about them (the same shape as an
+// anonymised order's struck session). A sessionless
+// order's failed event is now a no-op: acknowledged, the
+// order untouched, and neither side alerted — the buyer
+// and merchant were already told the truth at sale time,
+// when the link failed to come up.
+func TestFailedEventForASessionlessOrderAlertsNobody(t *testing.T) {
 	t.Setenv("SEEV_SECRET_KEY", "sk_test_alerts")
 	t.Setenv("SEEV_WEBHOOK_SECRET", "whsec_alerts")
 	buyer := "233550008102"
@@ -89,13 +147,17 @@ func TestLinkFailureAlertsBothSides(t *testing.T) {
 	if status := seevwebhook.Handle(body, ts, sig); status != 200 {
 		t.Fatalf("webhook status %d, want 200", status)
 	}
-	if got := c.last(t, buyer); !strings.Contains(got, "did not go through") {
-		t.Fatalf("buyer failure alert = %q", got)
+	if o := orders.Default.GetOrder(ref); o == nil || o.Status != "link_failed" {
+		t.Fatalf("the sessionless order must stand link_failed, untouched, got %+v", o)
+	}
+	for _, got := range c.replies(t, buyer) {
+		if strings.Contains(got, "did not go through") {
+			t.Fatalf("no buyer failure alert may ride an unbindable event, got %q", got)
+		}
 	}
 	notes := c.replies(t, ownerAma)
-	if len(notes) != 1 || !strings.Contains(notes[0], "Payment failed\n") ||
-		!strings.Contains(notes[0], "*Smoked Tilapia*") || !strings.Contains(notes[0], "Nothing was charged.") {
-		t.Fatalf("merchant failure alert = %v", notes)
+	if len(notes) != 0 {
+		t.Fatalf("no merchant alert may ride an unbindable event, got %v", notes)
 	}
 }
 

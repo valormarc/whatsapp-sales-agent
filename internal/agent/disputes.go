@@ -55,6 +55,26 @@ func openDispute(from string, merchant *catalogue.Merchant, order *orders.Order,
 		whatsapp.SendText(from, "Your dispute on order "+order.Reference+" is already open, and the order is frozen on Stall's side. If the goods reach you, tell me they have arrived and I will close it.")
 		return
 	}
+	// A terminal dispute state is final for that order's
+	// episode (the seventh audit): resolved_received,
+	// resolved_refund and struck close the record, and
+	// reopening one restamps the clock on an episode the
+	// platform itself holds as finished — on a received
+	// order it could never close clean again, so the
+	// same delivered order could yield a second strike.
+	// A genuinely new complaint about a delivered order
+	// belongs in a fresh conversation with the shop.
+	switch order.DisputeState {
+	case "resolved_received":
+		whatsapp.SendText(from, "The dispute on order "+order.Reference+" was closed when you confirmed the goods arrived, so it cannot be opened again on the same order. If something new is wrong, tell "+merchant.Name+" here and I will pass it on as a new matter.")
+		return
+	case "resolved_refund":
+		whatsapp.SendText(from, "The dispute on order "+order.Reference+" was closed when you confirmed the refund reached you, so it cannot be opened again on the same order. If something new is wrong, tell "+merchant.Name+" here and I will pass it on as a new matter.")
+		return
+	case "struck":
+		whatsapp.SendText(from, "The dispute on order "+order.Reference+" already ran its course and stands as a strike on the shop's record, so it cannot be opened again on the same order. If something new is wrong, tell "+merchant.Name+" here and I will pass it on as a new matter.")
+		return
+	}
 	orders.Default.Update(order.Reference, func(o *orders.Order) {
 		o.DisputeState = "open"
 		o.DisputeBy = from
@@ -103,7 +123,14 @@ func handleDisputeConfirm(from string, s *Session, merchant *catalogue.Merchant,
 	order := orders.Default.GetOrder(ref)
 	if order == nil || order.DisputeState != "refund_claimed" {
 		s.DisputeConfirmRef = ""
-		sessions[sessionKey(s.MerchantID, from)] = s
+		sessions.put(sessionKey(s.MerchantID, from), s)
+		return false
+	}
+	// A yes or no belongs to the question she was actually
+	// asked: while another question is armed in her chat (an
+	// add, a payment-link confirm), her answer is that
+	// question's, and this confirmation stays owed.
+	if !s.yesNoFor("dispute") && (isClearYes(lower) || isClearNo(lower)) {
 		return false
 	}
 	sellerPhone := ""
@@ -113,7 +140,8 @@ func handleDisputeConfirm(from string, s *Session, merchant *catalogue.Merchant,
 	switch {
 	case isClearYes(lower):
 		s.DisputeConfirmRef = ""
-		sessions[sessionKey(s.MerchantID, from)] = s
+		s.clearYesNo("dispute")
+		sessions.put(sessionKey(s.MerchantID, from), s)
 		orders.Default.Update(ref, func(o *orders.Order) { o.DisputeState = "resolved_refund" })
 		whatsapp.SendText(from, "Thank you. I have closed the dispute on order "+ref+": the shop's refund reached you, and no strike stands.")
 		if sellerPhone != "" {
@@ -122,7 +150,8 @@ func handleDisputeConfirm(from string, s *Session, merchant *catalogue.Merchant,
 		return true
 	case isClearNo(lower):
 		s.DisputeConfirmRef = ""
-		sessions[sessionKey(s.MerchantID, from)] = s
+		s.clearYesNo("dispute")
+		sessions.put(sessionKey(s.MerchantID, from), s)
 		orders.Default.Update(ref, func(o *orders.Order) { o.DisputeState = "struck" })
 		owner := ""
 		if m := catalogue.GetMerchant(order.MerchantID); m != nil {
@@ -171,16 +200,39 @@ func handleMerchantRefundClaim(from string, merchant *catalogue.Merchant, msg, l
 	if order == nil || order.DisputeState != "open" {
 		return false
 	}
-	orders.Default.Update(order.Reference, func(o *orders.Order) { o.DisputeState = "refund_claimed" })
+	// The flip is decided from the stored record inside
+	// the lock (the seventh audit): between the snapshot
+	// test above and this write, the buyer's own turn
+	// can close the dispute clean by confirming receipt,
+	// and an unconditional assignment resurrected it as
+	// refund_claimed — arming a refund question on an
+	// order already delivered and closed, whose truthful
+	// "not yet" would strike the seller.
+	applied := false
+	orders.Default.Update(order.Reference, func(o *orders.Order) {
+		if o.DisputeState == "open" {
+			o.DisputeState = "refund_claimed"
+			applied = true
+		}
+	})
+	if !applied {
+		whatsapp.SendText(from, "The dispute on order "+order.Reference+" has already closed, so there is no refund to confirm on it.")
+		return true
+	}
 	buyer := order.From
 	key := sessionKey(merchant.ID, buyer)
-	sess := sessions[key]
-	if sess == nil {
-		sess = &Session{Stage: "browsing", MerchantID: merchant.ID}
-	}
-	sess.DisputeConfirmRef = order.Reference
-	sessions[key] = sess
-	sendYesNo(buyer, merchant.Name+" says she has refunded "+money.GHS(order.Charged())+" for order "+order.Reference+". Have you received the refund?", "Yes, received", "Not yet")
+	// The confirmation is armed on the buyer's session
+	// from the merchant's turn, so it is armed under the
+	// buyer's turn lock.
+	withCrossLock(from, buyer, func() {
+		sess := sessions.get(key)
+		if sess == nil {
+			sess = &Session{Stage: "browsing", MerchantID: merchant.ID}
+		}
+		sess.DisputeConfirmRef = order.Reference
+		sessions.put(key, sess)
+		askYesNo(buyer, sess, "dispute", order.Reference, merchant.Name+" says she has refunded "+money.GHS(order.Charged())+" for order "+order.Reference+". Have you received the refund?", "Yes, received", "Not yet")
+	})
 	whatsapp.SendText(from, "I have asked the buyer to confirm the refund for order "+order.Reference+". Her word closes the dispute.")
 	return true
 }
@@ -190,7 +242,11 @@ func handleMerchantRefundClaim(from string, merchant *catalogue.Merchant, msg, l
 // strike against the seller's number, and both sides hear
 // it happen.
 func CheckDisputes(now time.Time) {
+	actioned := 0
 	for _, o := range orders.Default.All() {
+		if actioned >= maxPrePassPerSweep || prePassSpent() {
+			break // bounded per sweep, by count and by the shared time budget; the rest carry to the next tick
+		}
 		if o.DisputeState != "open" || o.DisputeAt == "" {
 			continue
 		}
@@ -198,8 +254,33 @@ func CheckDisputes(now time.Time) {
 		if err != nil || now.Sub(at) < disputeLimit {
 			continue
 		}
+		actioned++
 		ref := o.Reference
-		orders.Default.Update(ref, func(x *orders.Order) { x.DisputeState = "struck" })
+		// The strike is decided from the stored record
+		// inside the lock (the sixth audit): the pass
+		// enumerates a snapshot, and a dispute resolved —
+		// or claimed for refund — between the enumeration
+		// and this write must not be struck or overwrite
+		// the resolution. Act only on an applied flip, and
+		// address the notices from the fresh record.
+		applied := false
+		orders.Default.Update(ref, func(x *orders.Order) {
+			if x.DisputeState != "open" {
+				return
+			}
+			at, err := time.Parse(time.RFC3339, x.DisputeAt)
+			if err != nil || now.Sub(at) < disputeLimit {
+				return
+			}
+			x.DisputeState = "struck"
+			applied = true
+		})
+		if !applied {
+			continue
+		}
+		if fresh := orders.Default.GetOrder(ref); fresh != nil {
+			o = *fresh
+		}
 		merchant := catalogue.GetMerchant(o.MerchantID)
 		strikes := 0
 		if merchant != nil && merchant.OwnerWhatsApp != "" {

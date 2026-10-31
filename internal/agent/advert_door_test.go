@@ -84,11 +84,12 @@ func TestARepeatedPhotoRemindsShortly(t *testing.T) {
 		t.Fatalf("a re-send inside the burst should be silent, got %q", got)
 	}
 	// A re-send after the window is answered, once.
-	for _, candidate := range sessions {
+	sessions.rangeAll(func(_ string, candidate *Session) bool {
 		if candidate.Onboarding != nil {
 			candidate.Onboarding.RepeatAckAt = candidate.Onboarding.RepeatAckAt.Add(-2 * photoAckWindow)
 		}
-	}
+		return true
+	})
 	HandleInbound(Inbound{From: owner, ImageID: "heels-2", Caption: "Sparkly heels"})
 	got := strings.Join(c.replies(t, owner), "\n")
 	if got != "I am still on that same photo." {
@@ -200,7 +201,7 @@ func TestADifferentProductBurstIsAcknowledgedOnce(t *testing.T) {
 	if count != 1 {
 		t.Fatalf("the kept products should earn one line between them, got %q", rest)
 	}
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || len(s.BurstBatch) != 2 {
 		t.Fatalf("both different products should be kept in the batch, got %+v", s)
 	}

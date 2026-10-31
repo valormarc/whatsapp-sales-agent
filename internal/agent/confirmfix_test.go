@@ -24,7 +24,7 @@ func walkToConfirm(t *testing.T, c *chat, buyer, name string) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "no")
 	c.replies(t, buyer)
-	s := sessions[sessionKey("demo", buyer)]
+	s := sessions.get(sessionKey("demo", buyer))
 	if s == nil || s.FulfilStep != "confirm" {
 		t.Fatalf("session = %+v, want the confirm step", s)
 	}
@@ -51,7 +51,7 @@ func TestQuotedNameAnswerCorrectsThePackageNameAtConfirm(t *testing.T) {
 	if !strings.Contains(got, "Kojo Tsey") {
 		t.Fatalf("after the quoted correction, replies = %q, want the recap read back with the new name", got)
 	}
-	s := sessions[sessionKey("demo", buyer)]
+	s := sessions.get(sessionKey("demo", buyer))
 	if s.PendingFulfil.PackageName != "Kojo Tsey" {
 		t.Fatalf("pending name = %q, want Kojo Tsey", s.PendingFulfil.PackageName)
 	}
@@ -75,7 +75,7 @@ func TestConfirmAppliesAStatedNameCorrectionFromTheReading(t *testing.T) {
 	buyer := "233550007202"
 
 	walkToConfirm(t, c, buyer, "Akosua Mensah")
-	s := sessions[sessionKey("demo", buyer)]
+	s := sessions.get(sessionKey("demo", buyer))
 	handlePackageDetails(buyer, s, "Make it Kojo Tsey", "make it kojo tsey",
 		stageReading{Intent: stageIntentChange, Field: "name", Value: "Kojo Tsey"})
 	if s.PendingFulfil.PackageName != "Kojo Tsey" {
@@ -106,7 +106,7 @@ func TestPackageNameRecoveredFromTheOrderBook(t *testing.T) {
 	orders.Default.Update(ref, func(o *orders.Order) { o.Status = "paid" })
 
 	// A restart: the running memory goes, the book stays.
-	packageNames = map[string]string{}
+	packageNames.replaceAll(map[string]string{})
 
 	// Her place is still on her session, so the second
 	// purchase goes straight to the details: the name
@@ -131,7 +131,7 @@ func TestDiscoveryTasteIsRecordedAsShown(t *testing.T) {
 	if !actOnDiscovery(buyer, "", &discoveryUnderstanding{Intent: "search", Item: "laptops"}) {
 		t.Fatal("the no-match search was not served")
 	}
-	pre := sessions[sessionKey("", buyer)]
+	pre := sessions.get(sessionKey("", buyer))
 	if pre == nil || len(pre.DiscoveryShown) == 0 {
 		t.Fatalf("session = %+v, want the tasted goods recorded as shown", pre)
 	}
@@ -149,7 +149,7 @@ func TestDoorStaysShutMidDiscovery(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "Hello")
 	got := c.replies(t, buyer)
-	if doorShown[buyer] {
+	if doorShown.get(buyer) {
 		t.Fatal("the front door opened over a conversation already under way")
 	}
 	for _, r := range got {
@@ -175,7 +175,7 @@ func TestSameAnswerAdoptsTheRememberedName(t *testing.T) {
 	all := ordersOnDisk(t, dir)
 	ref := all[0]["reference"].(string)
 	orders.Default.Update(ref, func(o *orders.Order) { o.Status = "paid" })
-	packageNames = map[string]string{}
+	packageNames.replaceAll(map[string]string{})
 
 	c.say(t, buyer, "Handmade Beaded Bag")
 	c.replies(t, buyer)
@@ -188,7 +188,7 @@ func TestSameAnswerAdoptsTheRememberedName(t *testing.T) {
 	if !strings.Contains(got, "Kojo Tsey") || strings.Contains(got, "name Same message") {
 		t.Fatalf("recap = %q, want the remembered name on the package, not her words about it", got)
 	}
-	s := sessions[sessionKey("demo", buyer)]
+	s := sessions.get(sessionKey("demo", buyer))
 	if s.PendingFulfil.PackageName != "Kojo Tsey" {
 		t.Fatalf("pending name = %q, want Kojo Tsey", s.PendingFulfil.PackageName)
 	}

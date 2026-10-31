@@ -128,6 +128,17 @@ func TestExpiredLinkIsReissuedUnderAFreshKey(t *testing.T) {
 	if o := orders.Default.GetOrder("TEST-3003"); o == nil || o.LinkAttempts != 2 {
 		t.Fatalf("the order must record the second attempt, got %+v", o)
 	}
+	// Run-5 record: the re-issue is a DRY mint in this
+	// harness, and the write used to rebind the session
+	// only when the mint produced a real reference —
+	// leaving the seeded order bound to its old real
+	// session (PAY-UNDER-1) with the flag unset. The
+	// session attributes now follow the successful mint
+	// unconditionally: the dry mint clears the reference
+	// and sets the flag in the same write.
+	if o := orders.Default.GetOrder("TEST-3003"); o == nil || o.ProviderRef != nil || !o.DryRun {
+		t.Fatalf("a dry re-issue must clear the old real session and set the flag, got %+v", o)
+	}
 
 	// Two more reports walk to the cap; the third is answered
 	// honestly instead of with another link — and never with a
@@ -191,11 +202,11 @@ func TestMerchantUnderstandingAnswersAndRefuses(t *testing.T) {
 	c := &chat{dir: dir}
 	shop := catalogue.GetMerchant(MerchantID)
 
-	if !actOnMerchantUnderstanding(merchant, shop, MerchantID, "", &understood{Intent: intentAsk, Reply: "Your bag is listed at GH₵850."}) {
+	if !inTurn(merchant, func() bool { return actOnMerchantUnderstanding(merchant, shop, MerchantID, "", &understood{Intent: intentAsk, Reply: "Your bag is listed at GH₵850."}) }) {
 		t.Fatal("a clean answer to the owner must be sent")
 	}
 	c.replies(t, merchant)
-	if actOnMerchantUnderstanding(merchant, shop, MerchantID, "", &understood{Intent: intentAsk, Reply: "You have made GH₵5,000 today."}) {
+	if inTurn(merchant, func() bool { return actOnMerchantUnderstanding(merchant, shop, MerchantID, "", &understood{Intent: intentAsk, Reply: "You have made GH₵5,000 today."}) }) {
 		t.Fatal("an invented day figure must be refused for the owner too")
 	}
 	if got := c.replies(t, merchant); len(got) != 0 {
@@ -295,15 +306,15 @@ func TestBuyerIsRecoveredFromHerOpenOrder(t *testing.T) {
 
 	// The agent restarts: every session and binding is gone,
 	// but her order is still open in the book.
-	sessions = map[string]*Session{}
-	bindings = map[string]string{}
+	sessions.replaceAll(map[string]*Session{})
+	bindings.replaceAll(map[string]string{})
 
 	HandleInbound(Inbound{From: buyer, Text: "send me the payment link"})
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "pay.seevplus.com/PAY-UNDER-1") {
 		t.Fatalf("a recovered buyer must be served her link from the book, got %q", got)
 	}
-	if bindings[buyer] != MerchantID {
-		t.Fatalf("the buyer must be bound again to her shop, bindings = %v", bindings)
+	if bindings.get(buyer) != MerchantID {
+		t.Fatalf("the buyer must be bound again to her shop, bindings = %v", bindings.snapshot())
 	}
 }

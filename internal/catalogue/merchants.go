@@ -52,25 +52,52 @@ func MerchantByOwner(phone string) *Merchant {
 	return nil
 }
 
-// MerchantByShopName resolves a shop from the words a buyer typed:
-// the full shop name appearing in the text, or a short reply that is
-// itself part of a shop name ("Efua" for "Efua's Store"). It is the
-// fallback for a buyer who arrived with no shop code; the agent
-// never defaults her to a shop without one of the two.
-func MerchantByShopName(text string) *Merchant {
+// MerchantsByShopName lists every shop a buyer's words name:
+// the full shop name appearing in the text, or a short reply
+// that is itself part of a shop name ("Efua" for "Efua's
+// Store"), in catalogue order.
+func MerchantsByShopName(text string) []Merchant {
 	q := strings.ToLower(strings.TrimSpace(text))
 	if len(q) < 3 {
 		return nil
 	}
 	c := LoadCatalogue()
+	var out []Merchant
 	for _, id := range sortedIDs(c) {
 		m := c.Merchants[id]
 		name := strings.ToLower(m.Name)
 		if strings.Contains(q, name) || strings.Contains(name, q) {
-			return &m
+			out = append(out, m)
 		}
 	}
-	return nil
+	return out
+}
+
+// MerchantByShopName resolves a shop from the words a buyer
+// typed. It is the fallback for a buyer who arrived with no
+// shop code; the agent never defaults her to a shop without
+// one of the two. It resolves only when the words name
+// exactly ONE shop: two shops can carry the same name
+// (common trade names, or a squatter registering a known
+// shop's name), and the second audit found the name route
+// deterministically delivering codeless buyers to the
+// first registrant — browsing, ordering and paying the
+// wrong merchant while the second shop stood unreachable.
+// An ambiguous name resolves to nothing, and the door asks
+// for the shop's code instead (see AmbiguousShopName).
+func MerchantByShopName(text string) *Merchant {
+	matches := MerchantsByShopName(text)
+	if len(matches) != 1 {
+		return nil
+	}
+	return &matches[0]
+}
+
+// AmbiguousShopName reports whether a buyer's words name
+// more than one shop, so the door can say why a name alone
+// will not take her in and ask for the shop's code.
+func AmbiguousShopName(text string) bool {
+	return len(MerchantsByShopName(text)) > 1
 }
 
 // ErrEmptyShopName is returned when a shop is created with no name.
@@ -137,6 +164,11 @@ func CreateMerchant(name, ownerWhatsApp string) (Merchant, error) {
 	if name == "" {
 		return Merchant{}, ErrEmptyShopName
 	}
+	// The id is minted from the loaded catalogue and the
+	// result saved back: the same load-modify-save cycle
+	// updateMerchant guards, under the same lock.
+	cycleMu.Lock()
+	defer cycleMu.Unlock()
 	c := LoadCatalogue()
 	id := slugify(name)
 	if _, taken := c.Merchants[id]; taken {

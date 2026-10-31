@@ -14,8 +14,6 @@ package agent
 // the dispute roads write it (see disputes.go).
 
 import (
-	"encoding/json"
-	"os"
 	"sync"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
@@ -35,23 +33,36 @@ var trustMu sync.Mutex
 
 func loadTrust() map[string]*trustRecord {
 	out := map[string]*trustRecord{}
-	data, err := os.ReadFile(datadir.Path("trust.json"))
-	if err != nil {
-		return out
-	}
-	_ = json.Unmarshal(data, &out)
+	loadBookJSON(datadir.Path("trust.json"), &out)
 	return out
 }
 
 func saveTrust(all map[string]*trustRecord) {
-	data, err := json.MarshalIndent(all, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(datadir.Path("trust.json"), data, 0o600)
+	saveBookJSON(datadir.Path("trust.json"), all)
 }
 
 // strikesOf is the number's standing strike count.
+//
+// forgetTrust removes one number's whole trust record. It
+// is an operator tool, and the "delete my data" lane
+// deliberately does NOT call it: a trust record is Stall's
+// own judged record of a seller's conduct, not personal
+// information the seller handed over, and the second
+// audit showed the lane erasing a flagged seller's
+// strikes and flag with it — one message, and every
+// future buyer lost the warning the flag exists to give.
+// Strikes stand the way the shops' anonymised books
+// stand. The lock matches every other trust writer.
+func forgetTrust(number string) {
+	trustMu.Lock()
+	defer trustMu.Unlock()
+	all := loadTrust()
+	if _, ok := all[number]; ok {
+		delete(all, number)
+		saveTrust(all)
+	}
+}
+
 func strikesOf(number string) int {
 	trustMu.Lock()
 	defer trustMu.Unlock()
@@ -104,12 +115,18 @@ func shopsOfOwner(owner string) map[string]bool {
 
 // sellerDelivered counts, from the order book, the paid
 // orders across all of the owner's shops that the buyer
-// confirmed received: the seller's proven deliveries.
+// confirmed received: the seller's proven deliveries. A
+// delivery is proven only when the order was actually
+// sent first and no dispute stands against it unresolved
+// or struck: the second audit found received-alone
+// crediting deliveries that never left the shop and
+// surviving the very disputes that disproved them.
 func sellerDelivered(owner string) int {
 	shops := shopsOfOwner(owner)
 	n := 0
 	for _, o := range orders.Default.All() {
-		if shops[o.MerchantID] && o.Status == "paid" && o.DeliveryState == "received" {
+		if shops[o.MerchantID] && o.Status == "paid" && o.DeliveryState == "received" &&
+			o.SentAt != "" && o.DisputeState != "open" && o.DisputeState != "refund_claimed" && o.DisputeState != "struck" {
 			n++
 		}
 	}

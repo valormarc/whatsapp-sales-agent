@@ -23,9 +23,24 @@
 // unchanged, so a green run here is a parity proof against the Node
 // original.
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
+
+// Sandbox hygiene: a dry-run child must never inherit live
+// send or settle credentials from the operator's shell. The
+// agent's sandbox exception is bound to a send-incapable
+// process, so the live WhatsApp and Seev credentials are
+// blanked here, before any child env is built from this one.
+delete process.env.WHATSAPP_TOKEN;
+delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+delete process.env.WHATSAPP_APP_SECRET;
+delete process.env.WHATSAPP_VERIFY_TOKEN;
+delete process.env.SEEV_SECRET_KEY;
+delete process.env.SEEV_API_KEY;
+delete process.env.SEEV_WEBHOOK_SECRET;
 
 const BIN = fileURLToPath(new URL('../agent', import.meta.url));
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
@@ -33,7 +48,7 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 // Inline equivalents of the Node catalogue/daybook helpers, used only
 // to compute the operative stop the assertions check against.
 function getMerchant(id) {
-  return JSON.parse(readFileSync(new URL('../data/catalogue.json', import.meta.url), 'utf8'))
+  return JSON.parse(readFileSync(join(DATA, 'catalogue.json'), 'utf8'))
     .merchants[id];
 }
 
@@ -52,8 +67,13 @@ function haggleContext(product, state) {
 const PORT = 4200;
 const MODEL_PORT = 4201;
 const BASE = `http://localhost:${PORT}`;
-const OUTBOX = new URL('../data/outbox.jsonl', import.meta.url);
-const DAYBOOK = new URL('../data/daybook.json', import.meta.url);
+// Each run gets a fresh scratch data dir, like the newer
+// simulators: sharing the repo's live data/ made runs
+// poison each other (depleted seed stock, a stale in-hand
+// wait), and the failures read as agent regressions.
+const DATA = mkdtempSync(join(tmpdir(), 'model-sim-'));
+const OUTBOX = join(DATA, 'outbox.jsonl');
+const DAYBOOK = join(DATA, 'daybook.json');
 const MERCHANT = '233550000999';
 
 // Customers enter through Efua's shop link (prefilled SHOP-EFUA),
@@ -193,8 +213,9 @@ if (!existsSync(BIN)) {
 const child = spawn(BIN, [], {
   cwd: ROOT,
   env: {
-    WHATSAPP_DRY_RUN: '1', WHATSAPP_APP_SECRET: '',
+    WHATSAPP_DRY_RUN: '1', STALL_SANDBOX_ALLOW_MODEL: '1', WHATSAPP_APP_SECRET: '',
     ...process.env,
+    HACKATHON_AGENT_DATA_DIR: DATA,
     PORT: `${PORT}`,
     MERCHANT_WHATSAPP: MERCHANT,
     META_MODEL_API_KEY: 'stub-key',

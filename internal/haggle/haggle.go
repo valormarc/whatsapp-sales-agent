@@ -137,8 +137,20 @@ func CheckProposal(proposal *Proposal, b Bounds) *Result {
 	p := money.Round(price)
 	switch proposal.Action {
 	case "accept":
-		if b.Offer >= b.Floor && p == money.Round(b.Offer) {
-			r := Result{Type: "accept", Price: money.Round(b.Offer)}
+		// The settlement is the buyer's offer, bounded by
+		// the current ask exactly as Decide bounds it: an
+		// offer at or above the ask settles AT the ask,
+		// never above it. The third audit found this
+		// branch settling at a stale offer above the ask
+		// the conversation had already come down to. The
+		// proposal's own price must equal the settlement:
+		// the model cannot invent a settlement price.
+		settle := b.Offer
+		if settle >= b.Ask {
+			settle = b.Ask
+		}
+		if settle >= b.Floor && p == money.Round(settle) {
+			r := Result{Type: "accept", Price: money.Round(settle)}
 			return &r
 		}
 		return nil

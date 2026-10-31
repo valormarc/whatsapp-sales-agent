@@ -21,10 +21,15 @@
 package agent
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
-	"sync"
+	"time"
+
+	"github.com/valormarc/hackathon-agent/internal/checkout"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/daybook"
@@ -159,6 +164,19 @@ type Session struct {
 	// disputes.go).
 	DisputeConfirmRef string
 
+	// SaleID identifies the sale currently being made on
+	// this session: minted when its fulfilment begins and
+	// recorded on the order it mints, so a completion can
+	// never mint the same sale twice (see completeSale).
+	SaleID string
+
+	// YesNoQ is the one yes/no question currently armed on
+	// buttons in this chat: which question it is (Kind and
+	// Ref) and the exact buttons that were rendered for it.
+	// An answer — tapped or typed — is consumed only by the
+	// question it names (see askYesNo and routeYesNoTap).
+	YesNoQ *YesNoQuestion
+
 	// Basket holds the items already agreed in this same
 	// order while the buyer haggles over one more: each was
 	// settled on its own (its own haggle, its own draw on
@@ -243,6 +261,14 @@ type Session struct {
 	// listings where she confirms the price herself.
 	BurstHeld     []burstItem
 	PendingRemove string
+	// PendingRemoveID is the identity of the product the
+	// removal question was armed on. The name alone is
+	// not enough to act on: a product removed and
+	// replaced under the same name while the question
+	// stood open — or across a restart — is a different
+	// product, and her yes was never about it (the fifth
+	// audit).
+	PendingRemoveID string
 
 	// LastMerchantNote is the last substantive thing the agent
 	// told the merchant in her own chat (today, the allowance
@@ -273,6 +299,12 @@ type Session struct {
 	PendingFlow string
 	FlowKind    string
 
+	// TouchedAt is when a turn last spoke into this
+	// session; the snapshot pass evicts resting sessions
+	// idle past the limit, so state cannot grow without
+	// bound on a shared number.
+	TouchedAt time.Time
+
 	// Signup is a new merchant's open-a-shop flow, held on the
 	// pre-shop session until her shop exists; then she gets a normal
 	// owner session in her own shop.
@@ -280,24 +312,35 @@ type Session struct {
 }
 
 var (
-	sessionsMu sync.Mutex
 	// sessions is keyed shopID + "|" + sender phone (sessionKey).
 	// Keying by shop as well as sender is the isolation rule: the
-	// same person in two shops has two unrelated sessions.
-	sessions = map[string]*Session{}
+	// same person in two shops has two unrelated sessions. The
+	// maps live behind lockedMap (see store.go): turns lock per
+	// speaker, and the maps guard their own structure.
+	sessions = newLockedMap[string, *Session]()
 	// bindings records which shop each buyer is currently inside, so
 	// her later messages, which carry no shop code, stay in the shop
 	// her link brought her to until she enters another shop's code.
-	bindings = map[string]string{} // buyer phone -> shopID
+	bindings = newLockedMap[string, string]() // buyer phone -> shopID
 	// doorShown records which unknown numbers have already been
 	// offered the front door buttons, so the buttons greet a
 	// stranger once, on her first hello, and never nag her again.
-	doorShown = map[string]bool{}
+	doorShown = newLockedMap[string, bool]()
 	// packageNames remembers, per shop and buyer, the name she
 	// last put on a package, so the next order confirms it
 	// instead of asking from nothing.
-	packageNames = map[string]string{}
+	packageNames = newLockedMap[string, string]()
 )
+
+// turnTokens holds each live turn's model budget token,
+// keyed by the speaker, so the drafting and understanding
+// calls a turn makes deep in the handlers charge their own
+// turn and no other (see model.BeginTurn).
+var turnTokens = newLockedMap[string, string]()
+
+func turnTokenFor(from string) string {
+	return turnTokens.get(from)
+}
 
 func sessionKey(shopID, from string) string {
 	return shopID + "|" + from
@@ -328,20 +371,61 @@ func ownerShopFor(from string) *catalogue.Merchant {
 	if m := catalogue.MerchantByOwner(from); m != nil {
 		return m
 	}
+	// The env number is the demo shop's owner only while
+	// the shop itself records none: the moment a shop has a
+	// recorded owner, she alone holds merchant authority
+	// over it, and the legacy number is just another
+	// stranger (the same precondition merchantNotifyPhone
+	// already applies to notices). Without it, a stale env
+	// number silently keeps full authority — last prices,
+	// payout changes — over a shop that has moved to a new
+	// owner.
 	if IsMerchant(from) {
-		return catalogue.GetMerchant(MerchantID)
+		if demo := catalogue.GetMerchant(MerchantID); demo != nil && demo.OwnerWhatsApp == "" {
+			return demo
+		}
 	}
 	return nil
 }
 
 // merchantNotifyPhone is the number a shop's notices go to: the
-// owner the shop itself records, falling back to the env number only
-// when the shop has no owner set.
+// owner the shop itself records. The env number is the DEMO
+// shop's owner and nobody else's: the second audit found an
+// ownerless shop's payment notices — product, amount, reference,
+// buyer number — landing on the demo owner's phone, a different
+// merchant. The fallback is scoped to the demo shop exactly as
+// the authority path already scopes it (see ownerShopFor).
+// subaccountFor returns the Seev subaccount a shop's
+// payment links may route through: the recorded code,
+// only while the number it was minted for is still the
+// shop's payout number. The binding is recorded at mint
+// time (catalogue.SubaccountPhone); a record whose code
+// and payout number disagree — a payout change that
+// somehow landed without its new account — routes no
+// money through the stale account, and the mismatch is
+// logged where an operator will see it. A record with no
+// binding recorded (older shops) stands as it always did.
+func subaccountFor(merchant *catalogue.Merchant) string {
+	if merchant == nil || merchant.SubaccountCode == "" {
+		return ""
+	}
+	if merchant.SubaccountPhone != "" && merchant.PayoutPhone != "" &&
+		checkout.LocalNumber(merchant.SubaccountPhone) != checkout.LocalNumber(merchant.PayoutPhone) {
+		fmt.Fprintf(os.Stderr, "subaccount binding mismatch for shop %s: code minted for %s, payout is %s; links will not route through it\n",
+			merchant.ID, checkout.LocalNumber(merchant.SubaccountPhone), checkout.LocalNumber(merchant.PayoutPhone))
+		return ""
+	}
+	return merchant.SubaccountCode
+}
+
 func merchantNotifyPhone(merchant *catalogue.Merchant) string {
 	if merchant != nil && merchant.OwnerWhatsApp != "" {
 		return merchant.OwnerWhatsApp
 	}
-	return os.Getenv("MERCHANT_WHATSAPP")
+	if merchant != nil && merchant.ID == "demo" {
+		return os.Getenv("MERCHANT_WHATSAPP")
+	}
+	return ""
 }
 
 // sendPieces sends a reply the way a person types it on WhatsApp:
@@ -356,28 +440,217 @@ func sendPieces(from string, pieces ...string) {
 	}
 }
 
-// The universal yes/no buttons: whenever the agent's question
-// is a two-option choice, the question rides on buttons
-// instead of asking for typed words — a tap cannot be
-// misread the way a word can, and it is less work for the
-// person answering. Her typed yes and no keep working
-// exactly as before: a tap is translated back into the very
-// word she would have typed before any flow sees it (the
-// merchant branch and the tap switch in HandleInbound), so
-// the two can never diverge.
+// The yes/no buttons: whenever the agent's question is a
+// two-option choice, the question rides on buttons instead
+// of asking for typed words — a tap cannot be misread the
+// way a word can, and it is less work for the person
+// answering. Her typed yes and no keep working too.
+//
+// Every question is armed with its own identity (askYesNo):
+// the buttons carry a per-question id, the session records
+// which question is open, and an answer is consumed only by
+// the question it names. A tap on an earlier question's
+// buttons can never be executed against a question armed
+// later — it names the old question, and the old question is
+// gone. (The first version used two universal ids and let
+// whichever confirmation a dispatcher reached first consume
+// any tap; the 2026-10-30 audit showed a buyer's dispute tap
+// and a merchant's in-hand tap both executed against the
+// wrong question.)
 const (
-	ynYesID = "yn_yes"
-	ynNoID  = "yn_no"
+	ynYesID = "yn_yes" // legacy ids, honoured only for buttons
+	ynNoID  = "yn_no"  // already delivered before per-question ids
 )
 
-// sendYesNo asks one two-option question on buttons. The
-// titles say what each choice does, in the asker's own
-// terms; the body carries the question itself.
-func sendYesNo(from, body, yesTitle, noTitle string) {
-	whatsapp.SendButtons(from, body, []whatsapp.Button{
-		{ID: ynYesID, Title: yesTitle},
-		{ID: ynNoID, Title: noTitle},
+// YesNoQuestion is one armed yes/no question: the flow that
+// asked it (Kind), what it is about (Ref: an order reference,
+// a product name, a buyer number), and the rendered question
+// itself, kept so a stale tap can be answered with the
+// question that is actually waiting.
+type YesNoQuestion struct {
+	ID   string
+	Kind string
+	Ref  string
+	Body string
+	Yes  string
+	No   string
+}
+
+// askYesNo arms a yes/no question on the recipient's session
+// and sends it on buttons that carry the question's own id.
+// Arming replaces any earlier armed question: the buttons in
+// front of the person are the current question, and the
+// earlier question's state stays where its flow left it, to
+// be re-asked by that flow if it is still owed.
+func askYesNo(from string, s *Session, kind, ref, body, yesTitle, noTitle string) {
+	var raw [4]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		// A question that cannot be given an identity must
+		// not ride on buttons at all; ask it in plain words.
+		whatsapp.SendText(from, body+" Reply yes or no.")
+		return
+	}
+	q := &YesNoQuestion{
+		ID:   hex.EncodeToString(raw[:]),
+		Kind: kind,
+		Ref:  ref,
+		Body: body,
+		Yes:  yesTitle,
+		No:   noTitle,
+	}
+	s.YesNoQ = q
+	sessions.put(sessionKey(s.MerchantID, from), s)
+	sendArmedYesNo(from, q)
+}
+
+// sendArmedYesNo renders an armed question's buttons.
+func sendArmedYesNo(from string, q *YesNoQuestion) {
+	whatsapp.SendButtons(from, q.Body, []whatsapp.Button{
+		{ID: "ynq_" + q.ID + "_y", Title: q.Yes},
+		{ID: "ynq_" + q.ID + "_n", Title: q.No},
 	})
+}
+
+// parseYesNoTap reads a per-question button id back into the
+// question id it names and the answer it carries.
+func parseYesNoTap(id string) (qid string, yes bool, ok bool) {
+	if !strings.HasPrefix(id, "ynq_") {
+		return "", false, false
+	}
+	rest := id[len("ynq_"):]
+	if strings.HasSuffix(rest, "_y") {
+		return rest[:len(rest)-2], true, true
+	}
+	if strings.HasSuffix(rest, "_n") {
+		return rest[:len(rest)-2], false, true
+	}
+	return "", false, false
+}
+
+// yesNoFor reports whether a typed yes or no in this chat
+// may be consumed by the named kind: yes when that kind is
+// the armed question, or when no question is armed (the
+// word then belongs to whatever state the flows hold, as it
+// always did). A different armed question owns the answer.
+func (s *Session) yesNoFor(kind string) bool {
+	return s.YesNoQ == nil || s.YesNoQ.Kind == kind
+}
+
+// clearYesNo disarms the named kind's question once it has
+// been answered, leaving any other armed question alone.
+func (s *Session) clearYesNo(kind string) {
+	if s.YesNoQ != nil && s.YesNoQ.Kind == kind {
+		s.YesNoQ = nil
+	}
+}
+
+// serveCloseTap settles the payment-link question with a
+// tapped answer, exactly as the typed yes and no arms of the
+// close branch do (see buyer.go).
+func serveCloseTap(from string, s *Session, yes bool) {
+	name := ""
+	if s.Product != nil {
+		name = s.Product.Name
+	}
+	if yes {
+		price := s.ClosePrice
+		s.PendingClose = false
+		beginFulfilment(from, s, price)
+		return
+	}
+	clearPendingClose(s)
+	whatsapp.SendText(from, "No problem. The "+name+" is here whenever you are ready.")
+}
+
+// routeBuyerYesNoTap delivers a tap to the buyer question it
+// names — and only to that question. A tap whose question is
+// no longer the open one executes nothing: the question that
+// is actually waiting is shown again instead.
+func routeBuyerYesNoTap(from, buttonID string) {
+	qid, yes, _ := parseYesNoTap(buttonID)
+	shopID := bindings.get(from)
+	if shopID == "" {
+		return
+	}
+	s := sessions.get(sessionKey(shopID, from))
+	if s == nil {
+		return
+	}
+	q := s.YesNoQ
+	if q == nil || q.ID != qid {
+		if q != nil {
+			sendArmedYesNo(from, q)
+		}
+		return
+	}
+	s.YesNoQ = nil
+	merchant := catalogue.GetMerchant(shopID)
+	if merchant == nil {
+		return
+	}
+	word := "no"
+	if yes {
+		word = "yes"
+	}
+	switch q.Kind {
+	case "add":
+		if s.PendingAdd != nil && s.PendingAdd.Name == q.Ref {
+			servePendingAdd(from, s, merchant, word, word)
+		}
+	case "close":
+		if s.PendingClose && (s.Product == nil || s.Product.Name == q.Ref) {
+			serveCloseTap(from, s, yes)
+		}
+	case "dispute":
+		if s.DisputeConfirmRef == q.Ref {
+			handleDisputeConfirm(from, s, merchant, word, word)
+		}
+	}
+}
+
+// routeMerchantYesNoTap is the merchant side of the same
+// rule: her tap answers the question it was rendered on —
+// a removal, an in-hand confirmation, a listing summary —
+// and no other.
+func routeMerchantYesNoTap(from string, shop *catalogue.Merchant, buttonID string) {
+	qid, yes, _ := parseYesNoTap(buttonID)
+	s := sessions.get(sessionKey(shop.ID, from))
+	if s == nil {
+		return
+	}
+	q := s.YesNoQ
+	if q == nil || q.ID != qid {
+		if q != nil {
+			sendArmedYesNo(from, q)
+		}
+		return
+	}
+	s.YesNoQ = nil
+	merchant := catalogue.GetMerchant(shop.ID)
+	if merchant == nil {
+		return
+	}
+	word := "no"
+	if yes {
+		word = "yes"
+	}
+	switch q.Kind {
+	case "remove":
+		if q.Ref != "" && s.PendingRemove == q.Ref {
+			serveRemoveAnswer(from, s, shop.ID, word)
+		}
+	case "inhand":
+		if req := oldestOpenInHand(shop.ID); req != nil && req.Buyer == q.Ref {
+			handleMerchantInHand(from, merchant, word, word)
+		}
+	case "listing":
+		if s.Onboarding != nil && s.Onboarding.Step == "confirm" && s.Onboarding.Name == q.Ref {
+			if serveSellerWalkTurn(from, s, merchant, word, word) {
+				return
+			}
+			advanceOnboarding(from, s, word, word)
+		}
+	}
 }
 
 // sendPayButton presents a payment link the way a buyer
@@ -468,8 +741,25 @@ func answerMerchantDayQuestion(from, text, merchantID string) {
 	answered := false
 	if model.Enabled() {
 		sys := persona.BuildMerchantPrompt(*merchant, day)
-		reply := model.Chat([]model.Message{{Role: "user", Content: text}}, model.Options{System: &sys, Kind: model.KindDraft})
-		if reply != nil {
+		reply := model.Chat([]model.Message{{Role: "user", Content: text}}, model.Options{System: &sys, Kind: model.KindDraft, Turn: turnTokenFor(from)})
+		// This was the one drafting path with no figure
+		// gate (second audit): the model's answer went out
+		// verbatim, its grounding prompt-only. The answer
+		// may carry only the day book's own figures — the
+		// same set the verified fallback reports — and
+		// anything else falls back to that report.
+		left := day.Allowance - day.GivenAway
+		if left < 0 {
+			left = 0
+		}
+		// The day's figures verify in two pools (the
+		// fifth audit): currency-marked figures against
+		// the money alone, bare figures against money or
+		// counts. Pooled in one set, a count of sales
+		// licensed a GH₵ figure the day never saw.
+		if reply != nil && voiceClean(*reply) && recapFiguresClean(*reply,
+			[]float64{day.Revenue, day.GivenAway, day.Allowance, left},
+			[]float64{float64(day.Sales), float64(day.WalkAways)}) {
 			whatsapp.SendText(from, *reply)
 			answered = true
 		}
@@ -489,7 +779,7 @@ func answerMerchantDayQuestion(from, text, merchantID string) {
 	// allowance herself, zero included, because zero can be
 	// her choice and a choice is settled.
 	if !merchant.AllowanceSet && merchant.DailyGiveawayAllowance <= 0 {
-		s, hasSession := sessions[sessionKey(merchantID, from)]
+		s, hasSession := sessions.lookup(sessionKey(merchantID, from))
 		if !hasSession || s.AllowanceNagDate != daybook.TodayString() {
 			note := "One thing: you have not set a daily giveaway allowance, so it stands at GH₵0 and I have nothing to give away when buyers bargain. To set it, say: set allowance 300."
 			res := whatsapp.SendText(from, note)
@@ -503,8 +793,13 @@ func answerMerchantDayQuestion(from, text, merchantID string) {
 }
 
 func productListText(merchantID string) string {
+	// The priced list is a buying surface wherever it is
+	// sent (entry, fallbacks, clarifier, photo-match and
+	// reorder fallbacks), so it is built from the stocked
+	// shelf only (the seventh audit): a sold-out product
+	// is never priced here or invited an offer on.
 	parts := make([]string, 0)
-	for _, p := range catalogue.ListProducts(merchantID) {
+	for _, p := range stockedProducts(merchantID) {
 		parts = append(parts, "- "+p.Name+": "+money.GHS(p.ListPrice))
 	}
 	return "Here is what we have:\n" + strings.Join(parts, "\n") + "\nAsk me about any item, or make me an offer."
@@ -599,16 +894,17 @@ func lastN(msgs []model.Message, n int) []model.Message {
 //     shop name, and nothing is sold to her until one resolves.
 //   - A sender who asks to sell starts merchant signup, which opens
 //     her shop in chat and hands her into product onboarding.
-func HandleInbound(in Inbound) {
-	sessionsMu.Lock()
-	defer sessionsMu.Unlock()
-
-	// A redelivery of a message that was already handled is
-	// dropped whole, before it can record, answer or act
-	// again (see alreadyHandled in quotes.go).
-	if alreadyHandled(in.MessageID) {
-		return
-	}
+// handleInboundTurn runs one delivery's turn. Delivery
+// discipline — the redelivery drop, the durable inbox,
+// the handled mark — belongs to HandleInbound (inbox.go),
+// which is the only caller.
+func handleInboundTurn(in Inbound) {
+	// One lock per speaker, held for the turn: her own
+	// messages can never race her conversation, and nobody
+	// else's slow turn queues ahead of hers. Taken through
+	// claimTurn so the cross lock's registry knows a turn
+	// for this speaker stands (see store.go).
+	defer claimTurn(in.From)()
 
 	// Her message is read the moment the agent picks it up:
 	// she sees the blue ticks, and the typing indicator runs
@@ -619,9 +915,23 @@ func HandleInbound(in Inbound) {
 	// Every inbound message is one turn, and the turn's
 	// model budget opens with it: one call to understand,
 	// drafting on its own small budget (see model.BeginTurn).
-	model.BeginTurn()
+	turnToken := model.BeginTurn()
+	turnTokens.put(in.From, turnToken)
+	defer func() {
+		model.EndTurn(turnToken)
+		turnTokens.del(in.From)
+	}()
 
 	from := in.From
+
+	// The turn stamps the speaker's standing sessions, the
+	// clock the idle eviction reads.
+	sessions.rangeAll(func(key string, s *Session) bool {
+		if s != nil && strings.HasSuffix(key, "|"+from) {
+			s.TouchedAt = time.Now()
+		}
+		return true
+	})
 
 	// The message book: her message enters it under its own
 	// id, so it can be quoted and resolved later, and the
@@ -629,8 +939,12 @@ func HandleInbound(in Inbound) {
 	// board runs (see quotes.go). The resolved quote is a
 	// fact of this turn only.
 	recordInboundMsg(in)
-	turnQuote = resolveQuote(in)
-	defer func() { turnQuote = nil }()
+	if q := resolveQuote(in); q != nil {
+		turnQuotes.put(from, q)
+	} else {
+		turnQuotes.del(from)
+	}
+	defer turnQuotes.del(from)
 
 	// Photo intake, routed by shop context like everything else.
 	// A shop owner's photo is a throw-in: it opens onboarding from
@@ -643,7 +957,7 @@ func HandleInbound(in Inbound) {
 			startPhotoOnboarding(from, shop, in.ImageID, in.Caption)
 			return
 		}
-		if shopID := bindings[from]; shopID != "" {
+		if shopID := bindings.get(from); shopID != "" {
 			if shop := catalogue.GetMerchant(shopID); shop != nil {
 				// A buyer with an unpaid order in this shop who
 				// sends a picture is almost always showing a
@@ -699,11 +1013,26 @@ func HandleInbound(in Inbound) {
 		return
 	}
 
+	// The privacy promise is a lane of its own, ahead of the
+	// merchant dispatch and every other reading of her words:
+	// "delete my data" is never a note, a listing or a
+	// browsing fallback (see privacy.go).
+	if text := strings.TrimSpace(in.Text); text != "" && isDeleteMyDataAsk(text) {
+		handleDeleteMyData(from)
+		return
+	}
+
 	// The merchant herself gets merchant mode for her own shop.
 	// A tap on a yes/no button in her chat is translated into
 	// the word she would have typed, so a tap and a typed
 	// answer can never diverge (see sendYesNo).
 	if shop := ownerShopFor(from); shop != nil {
+		// A tap on a per-question yes/no button answers the
+		// question it names, and only that question.
+		if _, _, isYesNoTap := parseYesNoTap(in.ButtonID); isYesNoTap {
+			routeMerchantYesNoTap(from, shop, in.ButtonID)
+			return
+		}
 		text := strings.TrimSpace(in.Text)
 		switch in.ButtonID {
 		case ynYesID:
@@ -720,7 +1049,7 @@ func HandleInbound(in Inbound) {
 	// is read there; a tap with no shop behind it, or while
 	// her own signup owns her attention, is let go quietly.
 	if in.ListID != "" {
-		if pre, ok := sessions[sessionKey("", from)]; ok && pre.Signup != nil {
+		if pre, ok := sessions.lookup(sessionKey("", from)); ok && pre.Signup != nil {
 			return
 		}
 		routeShelfTap(from, in.ListID)
@@ -735,7 +1064,13 @@ func HandleInbound(in Inbound) {
 	// offered). A tap while her own signup is under way changes
 	// nothing: the signup owns her attention until it ends.
 	if in.ButtonID != "" {
-		if pre, ok := sessions[sessionKey("", from)]; ok && pre.Signup != nil {
+		if pre, ok := sessions.lookup(sessionKey("", from)); ok && pre.Signup != nil {
+			return
+		}
+		// A tap on a per-question yes/no button answers the
+		// question it names, and only that question.
+		if _, _, isYesNoTap := parseYesNoTap(in.ButtonID); isYesNoTap {
+			routeBuyerYesNoTap(from, in.ButtonID)
 			return
 		}
 		switch {
@@ -772,7 +1107,7 @@ func HandleInbound(in Inbound) {
 
 	// A signup already under way owns her words until it finishes or
 	// she cancels.
-	if pre, ok := sessions[sessionKey("", from)]; ok && pre.Signup != nil {
+	if pre, ok := sessions.lookup(sessionKey("", from)); ok && pre.Signup != nil {
 		advanceSignup(from, pre, msg, lower)
 		return
 	}
@@ -781,7 +1116,7 @@ func HandleInbound(in Inbound) {
 	// in is just part of the message; a token for another shop moves
 	// her, wiping the old shop's session completely so no haggle,
 	// product or price can follow her across.
-	boundID := bindings[from]
+	boundID := bindings.get(from)
 	// A quoted order reference is not travel: EFUA-0001 names an
 	// order at Efua's, and a buyer standing in another shop who
 	// quotes it is checking that order, not moving house. Entry
@@ -794,13 +1129,13 @@ func HandleInbound(in Inbound) {
 	if shop, rest := parseShopEntry(lower, boundID == ""); shop != nil && !quotingRef {
 		switch {
 		case boundID == "":
-			bindings[from] = shop.ID
+			bindings.put(from, shop.ID)
 			boundID = shop.ID
 			lower = rest
 		case boundID != shop.ID:
 			old := catalogue.GetMerchant(boundID)
-			delete(sessions, sessionKey(boundID, from))
-			bindings[from] = shop.ID
+			sessions.del(sessionKey(boundID, from))
+			bindings.put(from, shop.ID)
 			boundID = shop.ID
 			lower = rest
 			oldName := boundID
@@ -822,7 +1157,15 @@ func HandleInbound(in Inbound) {
 		// deal is closed on the entry turn.
 		if rest != "" {
 			if p := entrySelection(shop, rest); p != nil {
-				sessions[sessionKey(shop.ID, from)] = &Session{Stage: "browsing", MerchantID: shop.ID, Product: p, Ask: p.ListPrice, LastViewed: p}
+				// A view, not a sale in progress: the
+				// product rides in LastViewed only, the
+				// shape every other view road uses. A
+				// browsing session carrying a Product is
+				// never admitted as resting, so this
+				// class of one-off session stood exempt
+				// from idle eviction forever (the fifth
+				// audit).
+				sessions.put(sessionKey(shop.ID, from), &Session{Stage: "browsing", MerchantID: shop.ID, LastViewed: p})
 				if wasBound == "" {
 					whatsapp.SendText(from, welcomeFor(shop, from))
 				}
@@ -846,12 +1189,20 @@ func HandleInbound(in Inbound) {
 	// front door once, with its Buy and Sell buttons; every other
 	// message gets the plain ask, exactly as before.
 	if boundID == "" {
+		if catalogue.AmbiguousShopName(lower) {
+			// Her words name more than one shop: sending
+			// her to the first would sell her another
+			// merchant's goods. The shop's own code is
+			// the unambiguous door, so she hears that.
+			whatsapp.SendText(from, "More than one shop here matches that name, so a name alone cannot take you to the right one. Start with the shop's own code instead — it is in the link the shop shares — and I will take you straight there.")
+			return
+		}
 		if sellIntentRe.MatchString(lower) {
 			startSignup(from)
 			return
 		}
-		if bareGreetingRe.MatchString(lower) && !doorShown[from] && !midDiscovery(from) {
-			doorShown[from] = true
+		if bareGreetingRe.MatchString(lower) && !doorShown.get(from) && !midDiscovery(from) {
+			doorShown.put(from, true)
 			whatsapp.SendButtons(from, doorText(), []whatsapp.Button{
 				{ID: "door_buy", Title: "I came to buy"},
 				{ID: "door_sell", Title: "I want to sell"},

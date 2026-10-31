@@ -101,7 +101,13 @@ func harvestDoubt(caption string, price float64, span []int) bool {
 // "1k" is a thousand cedis, and a reader that stops at the "1"
 // has priced it at one. The k must end the figure (not "1kg",
 // which is a weight, and reads as its plain 1).
-const figurePattern = `\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?[kK]\b|\d+(?:\.\d{1,2})?`
+// The comma form may itself carry the k ("1,200k" is
+// 1,200,000, not 1,200 — the sixth audit found the comma
+// branch matching first and shadowing the multiplier),
+// and a k figure's decimals are not capped at two
+// ("12.345k" is 12,345, not the 12.34 the capped plain
+// branch stopped at).
+const figurePattern = `\d{1,3}(?:,\d{3})+(?:\.\d+)?[kK]\b|\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d+(?:\.\d+)?[kK]\b|\d+(?:\.\d{1,2})?`
 
 // parseFigure parses a figure matched by figurePattern: the
 // thousands commas are grouping, not decimals, so they come out
@@ -134,6 +140,24 @@ var (
 	// lone-figure rule, commas and all.
 	throwFigureRe = regexp.MustCompile(`(` + figurePattern + `)`)
 )
+
+// markedFigureValues returns every currency-marked figure
+// in a text — the @ figures and the cedi-word figures — in
+// the order the price patterns meet them. A text can carry
+// more than one (a delivery fee beside the price), and a
+// reader that takes the first without counting the rest
+// binds the wrong one silently.
+func markedFigureValues(text string) []float64 {
+	var out []float64
+	for _, re := range []*regexp.Regexp{atPriceRe, cediBeforeRe, cediAfterRe} {
+		for _, m := range re.FindAllStringSubmatch(text, -1) {
+			if f, err := parseFigure(m[1]); err == nil && f > 0 {
+				out = append(out, f)
+			}
+		}
+	}
+	return out
+}
 
 // throwPrice reads the seller's price out of her caption and
 // returns it with the span of the whole price expression, so the
@@ -270,6 +294,20 @@ func throwDraftFromCaption(caption string) throwDraft {
 	if price, span, ok := throwPrice(caption); ok {
 		d.ListPrice = price
 		d.PriceDoubted = harvestDoubt(caption, price, span)
+		// Two distinct marked figures in one caption
+		// doubt the binding (the sixth audit): the
+		// pasted-advert road has always doubted this
+		// shape, but the caption road kept binding the
+		// earliest marked figure undoubted, so "Price
+		// GH₵700, delivery GH₵50" priced a product at
+		// whichever figure the earliest-mark rule met.
+		distinct := map[float64]bool{}
+		for _, v := range markedFigureValues(caption) {
+			distinct[v] = true
+		}
+		if len(distinct) > 1 {
+			d.PriceDoubted = true
+		}
 		rest = strings.TrimSpace(caption[:span[0]] + " " + caption[span[1]:])
 	}
 	if q, ok := parseQuantity(caption); ok {
@@ -351,10 +389,10 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		return
 	}
 	key := sessionKey(shop.ID, from)
-	s, ok := sessions[key]
+	s, ok := sessions.lookup(key)
 	if !ok {
 		s = &Session{Stage: "merchant", MerchantID: shop.ID}
-		sessions[key] = s
+		sessions.put(key, s)
 	}
 	flow := s.Onboarding
 	if flow == nil {
@@ -423,7 +461,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		if s.Onboarding != nil && flow.PhotoOpened && flow.Name != "" {
 			openName, openDesc = flow.Name, flow.Description
 		}
-		if md := draftListingFn(dataURI, caption, openName, openDesc); md != nil {
+		if md := draftListingFn(dataURI, caption, openName, openDesc, turnTokenFor(from)); md != nil {
 			visionDesc = md.Description
 			photoColour = md.Colour
 			identityVerdict = md.SameAsOpen
@@ -486,7 +524,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	if s.Onboarding != nil && flow.Photo && flow.Name != "" && draft.Name != "" &&
 		draft.ListPrice > 0 &&
 		(identityVerdict == "different" || (identityVerdict == "" && !sameProductName(flow.Name, draft.Name))) {
-		addToBurst(s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
+		addToBurst(from, s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
 		if photoAckCovered(flow.HeldAckAt) {
 			return
 		}
@@ -524,7 +562,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			// either: it is parked as a held item of its own,
 			// to open as its own listing once this one
 			// finishes (see burst.go).
-			parkPendingPhoto(s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
+			parkPendingPhoto(from, s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
 			if photoAckCovered(flow.HeldAckAt) {
 				return
 			}
@@ -596,7 +634,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	if s.Onboarding != nil && flow.PhotoOpened {
 		switch {
 		case flow.Name == "" && draft.Name != "" && draft.ListPrice > 0:
-			addToBurst(s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
+			addToBurst(from, s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
 			if photoAckCovered(flow.HeldAckAt) {
 				return
 			}
@@ -604,7 +642,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			whatsapp.SendText(from, "Got it ✅ I have kept "+draft.Name+" to add with the others. "+photoStepReminder(flow))
 			return
 		case flow.Name == "" || !photoPositivelyMatches(flow, draft, identityVerdict):
-			parkPendingPhoto(s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
+			parkPendingPhoto(from, s, draft, imageID, caption, photoColour, photoDataURI, visionDesc)
 			if photoAckCovered(flow.HeldAckAt) {
 				return
 			}

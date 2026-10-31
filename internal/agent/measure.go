@@ -44,11 +44,31 @@ var unitSynonyms = map[string]string{
 	"tin": "tin", "tins": "tin",
 }
 
-// quantityRe finds a quantity phrase: a number (or the word
-// "half", for half a yard and its kin) directly before a unit
-// word. Longer spellings come first in the alternation so "litres"
-// is never read as the single letter "l".
-var quantityRe = regexp.MustCompile(`(?i)(\d+(?:\.\d+)?|half)\s*(litres?|liters?|yards?|metres?|meters?|kilos?|kg|grams?|g|olonkas?|tins?|l)\b`)
+// quantityRe finds a quantity phrase: a number (or a
+// spelled fraction — "half", "a quarter", "three
+// quarters") directly before a unit word, with an "of a"
+// bridge allowed between them ("three quarters of a
+// yard"). Longer spellings come first in the alternation so "litres"
+// is never read as the single letter "l". A fraction ("1/2
+// yards") is a quantity in its own right and comes first in
+// the alternation: the third audit found "1/2 yards" read
+// as 2 yards, the bare denominator, because the plain form
+// matched the 2 and nothing checked for the slash before it.
+// The fourth audit found the spelled fractions beyond
+// "half" unread: "a quarter yard" priced the whole unit
+// and "three quarters" read as a quantity of 3.
+// spelledNumerator is the number-word set a spelled
+// fraction's numerator may be. It is deliberately wider
+// than the first tables the fractions shipped with (the
+// sixth audit: "twelve quarters" and "three thirds" fell
+// outside the enumerated numerators, the pattern matched
+// the bare denominator word, and the fraction read as a
+// single quarter or third).
+const spelledNumerator = `(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)`
+
+var quantityRe = regexp.MustCompile(`(?i)(\d+\s*/\s*\d+|\d+\s+quarters?|\d+(?:\.\d+)?|` + spelledNumerator + `\s+quarters?|(?:a\s+|one\s+)?quarters?|(?:a\s+|` + spelledNumerator + `\s+)?thirds?|(?:a\s+)?half)\s*(?:(?:of\s+)?(?:a\s+|an\s+)?)?(litres?|liters?|yards?|metres?|meters?|kilos?|kg|grams?|g|olonkas?|tins?|l)\b`)
+
+var digitQuartersRe = regexp.MustCompile(`(?i)^(\d+)\s+quarters?$`)
 
 // quantity is one parsed quantity phrase: how much, of which
 // canonical measure, and the phrase as written (the pack check
@@ -59,6 +79,71 @@ type quantity struct {
 	Text string
 }
 
+// fractionWord reads a spelled fraction phrase. The
+// numerator is a number word and divides: "two quarters"
+// is two of four (the fifth audit found it read as one
+// quarter, the denominator alone), "three quarters" is
+// 0.75, a bare or singly-counted "quarter" is 0.25.
+// Thirds stand beside quarters: "a third" and "one
+// third" are 1/3, "two thirds" 2/3. "Half" (with or
+// without its "a") is 0.5.
+func fractionWord(s string) (float64, bool) {
+	s = strings.ToLower(strings.Join(strings.Fields(s), " "))
+	numerator := func() float64 {
+		for _, w := range strings.Fields(s) {
+			if v, ok := smallNumberWords[w]; ok {
+				return v
+			}
+		}
+		return 1
+	}
+	switch {
+	case strings.Contains(s, "third"):
+		return numerator() / 3, true
+	case strings.Contains(s, "quarter"):
+		return numerator() / 4, true
+	case strings.Contains(s, "half"):
+		return 0.5, true
+	}
+	return 0, false
+}
+
+// parseQuantityMatch reads one quantityRe match: a fraction
+// is divided out, a spelled fraction is its value, a plain
+// number is itself.
+func parseQuantityMatch(m []string) (quantity, bool) {
+	qty := 0.5
+	if dq := digitQuartersRe.FindStringSubmatch(strings.TrimSpace(m[1])); dq != nil {
+		n, err := strconv.ParseFloat(dq[1], 64)
+		if err != nil {
+			return quantity{}, false
+		}
+		qty = n / 4
+	} else if fv, isFractionWord := fractionWord(m[1]); isFractionWord {
+		qty = fv
+	} else {
+		if num, den, isFrac := strings.Cut(m[1], "/"); isFrac {
+			n, errN := strconv.ParseFloat(strings.TrimSpace(num), 64)
+			d, errD := strconv.ParseFloat(strings.TrimSpace(den), 64)
+			if errN != nil || errD != nil || d == 0 {
+				return quantity{}, false
+			}
+			qty = n / d
+		} else {
+			f, err := strconv.ParseFloat(m[1], 64)
+			if err != nil {
+				return quantity{}, false
+			}
+			qty = f
+		}
+	}
+	unit, ok := unitSynonyms[strings.ToLower(m[2])]
+	if !ok {
+		return quantity{}, false
+	}
+	return quantity{Qty: qty, Unit: unit, Text: strings.ToLower(m[0])}, true
+}
+
 // parseQuantity reads the first quantity phrase in a message, if
 // there is one. "half" before the unit is half a unit.
 func parseQuantity(text string) (quantity, bool) {
@@ -66,19 +151,20 @@ func parseQuantity(text string) (quantity, bool) {
 	if m == nil {
 		return quantity{}, false
 	}
-	qty := 0.5
-	if !strings.EqualFold(m[1], "half") {
-		f, err := strconv.ParseFloat(m[1], 64)
-		if err != nil {
-			return quantity{}, false
+	return parseQuantityMatch(m)
+}
+
+// quantitiesIn reads every quantity phrase in a text, in
+// order, duplicates kept: callers that must judge whether
+// a text speaks with one measure or several read it here.
+func quantitiesIn(text string) []quantity {
+	var out []quantity
+	for _, m := range quantityRe.FindAllStringSubmatch(text, -1) {
+		if q, ok := parseQuantityMatch(m); ok {
+			out = append(out, q)
 		}
-		qty = f
 	}
-	unit, ok := unitSynonyms[strings.ToLower(m[2])]
-	if !ok {
-		return quantity{}, false
-	}
-	return quantity{Qty: qty, Unit: unit, Text: strings.ToLower(m[0])}, true
+	return out
 }
 
 // quantityNumberSpans returns the spans of the numbers that form
@@ -299,7 +385,31 @@ func handleQuantity(from string, s *Session, merchant *catalogue.Merchant, msg, 
 		return false
 	}
 
+	// The availability gate stands before every quote,
+	// confirmation and haggle branch below (the seventh
+	// audit): a quantity ask about a product with no
+	// units left gets the plain truth, never a price.
+	// The total haggle's product is a synthetic built
+	// from the hand (no catalogue identity, no stock of
+	// its own), so the gate speaks only for real shelf
+	// products.
+	if p.ID != "" && len(s.TotalHand) == 0 && p.AvailableUnits() <= 0 {
+		if s.Stage == "browsing" {
+			s.LastViewed = p
+		}
+		whatsapp.SendText(from, "The "+p.Name+" has sold out just now, so I cannot quote it by measure.")
+		return true
+	}
+
 	q, hasQty := parseQuantity(lower)
+
+	// A by-measure ask for more than the shelf holds gets
+	// the only-so-much-left truth, not a scaled quote for
+	// goods that are not there.
+	if hasQty && p.ByMeasure() && q.Unit == p.Unit && q.Qty > p.AvailableUnits() {
+		whatsapp.SendText(from, "There is only "+formatQty(p.AvailableUnits())+" "+unitWord(p.Unit, p.AvailableUnits())+" of the "+p.Name+" left.")
+		return true
+	}
 
 	if !hasQty {
 		if p.ByMeasure() && asksPerUnit(lower, *p) {
@@ -355,7 +465,7 @@ func handleQuantity(from string, s *Session, merchant *catalogue.Merchant, msg, 
 		ns.Basket = s.Basket
 		ns.ShelfPicks = s.ShelfPicks
 		ns.ShelfSettling = s.ShelfSettling
-		sessions[sessionKey(shopID, from)] = ns
+		sessions.put(sessionKey(shopID, from), ns)
 		ack := "For " + formatQty(q.Qty) + " " + unitWord(p.Unit, q.Qty) + " then."
 		if offer != nil {
 			whatsapp.SendText(from, ack)
@@ -382,7 +492,7 @@ func handleQuantity(from string, s *Session, merchant *catalogue.Merchant, msg, 
 		ns.Basket = s.Basket
 		ns.ShelfPicks = s.ShelfPicks
 		ns.ShelfSettling = s.ShelfSettling
-		sessions[sessionKey(shopID, from)] = ns
+		sessions.put(sessionKey(shopID, from), ns)
 		processOffer(from, ns, merchant, *offer, msg)
 		return true
 	}

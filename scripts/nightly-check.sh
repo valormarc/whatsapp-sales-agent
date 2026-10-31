@@ -49,7 +49,12 @@ overall=0
   echo
 
   echo "## Live reasoning eval"
-  KEY="$(ssh -i /home/hatch/.ssh/id_ed25519 -o UserKnownHostsFile=/home/hatch/.ssh/known_hosts -o ConnectTimeout=15 root@84.247.138.190 "grep '^META_MODEL_API_KEY=' /home/valorm/workspace/apps/hackathon-agent/app.env | cut -d= -f2-" 2>/dev/null)"
+  # The key is read as the app's own user, never as root:
+  # the job needs one read-only value from the app's own
+  # env file, and a test-and-report job must not carry
+  # standing administrative control of the production host
+  # (the 2026-10-30 audit's proportion point).
+  KEY="$(ssh -i /home/hatch/.ssh/id_ed25519 -o UserKnownHostsFile=/home/hatch/.ssh/known_hosts -o ConnectTimeout=15 valorm@84.247.138.190 "grep '^META_MODEL_API_KEY=' /home/valorm/workspace/apps/hackathon-agent/app.env | cut -d= -f2-" 2>/dev/null)"
   if [ -z "$KEY" ]; then
     echo "UNREACHABLE: the key could not be fetched from the server, so the live layer did not run."
     overall=1

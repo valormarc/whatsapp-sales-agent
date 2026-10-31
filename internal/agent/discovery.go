@@ -73,12 +73,29 @@ type discoveryUnderstanding struct {
 	Recommend bool             `json:"recommend"`
 }
 
+// stockedProducts is a shop's shelf as discovery may
+// speak of it: only what can actually be bought (the
+// sixth audit). A sold-out product offered as available
+// bound the buyer to its shop and let the sale run until
+// stock-taking refused it; the availability rule lives
+// here, at the sources, so no presenter can resurrect
+// what the shelf does not have.
+func stockedProducts(shopID string) []catalogue.Product {
+	var out []catalogue.Product
+	for _, p := range catalogue.ListProducts(shopID) {
+		if p.AvailableUnits() > 0 {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // discoveryDirectory renders the public facts: every shop,
 // its code, and its goods at list price.
 func discoveryDirectory() string {
 	var b strings.Builder
 	for _, m := range catalogue.ListMerchants() {
-		products := catalogue.ListProducts(m.ID)
+		products := stockedProducts(m.ID)
 		if len(products) == 0 {
 			continue
 		}
@@ -92,17 +109,19 @@ func discoveryDirectory() string {
 	return b.String()
 }
 
-// currentDiscoveryFrom is the buyer whose discovery turn is
-// being understood, so the thinking can be told what she was
-// just shown. Turns are serialised by the session lock, so a
-// plain package var is safe here.
-var currentDiscoveryFrom string
+// The buyer whose discovery turn is being understood is
+// the function's own from parameter, and her shown
+// results are looked up under it directly. A package
+// variable carried this between turns once, on a claim
+// that turns are serialised; they are not — different
+// people's turns run in parallel by design — and one
+// buyer's shown results could enter another's context
+// (the fifth audit).
 
 func understandDiscovery(from, text string) *discoveryUnderstanding {
-	currentDiscoveryFrom = from
 	sys := discoveryCharter
 	facts := "The shops and their goods:\n" + discoveryDirectory()
-	if pre, ok := sessions[sessionKey("", currentDiscoveryFrom)]; ok && len(pre.DiscoveryShown) > 0 {
+	if pre, ok := sessions.lookup(sessionKey("", from)); ok && len(pre.DiscoveryShown) > 0 {
 		var shown []string
 		for _, sp := range pre.DiscoveryShown {
 			if p := catalogue.FindByID(sp.ShopID, sp.ProductID); p != nil {
@@ -115,7 +134,7 @@ func understandDiscovery(from, text string) *discoveryUnderstanding {
 			facts += "\nYou just showed her these results: " + strings.Join(shown, "; ") + ". If she now names one of them, or says the first or the second, that is a pick: intent shop. If only one result was shown and she points at it without naming it — \"this\", \"that one\", \"I will take it\" — that is a pick of that one result: intent shop, with it in matches. If she asks to see a picture, in any words, that is intent picture, with the shown result she means in matches. When she does both in one message — names or describes one of them AND asks for its picture, like \"the strappy ones, can I see a picture?\" — that is intent picture with that result in matches."
 		}
 	}
-	if pre, ok := sessions[sessionKey("", from)]; ok {
+	if pre, ok := sessions.lookup(sessionKey("", from)); ok {
 		if w := recentSpeakerWords(pre, 4); w != "" {
 			facts += "\nWhat she said earlier in this chat, oldest first: " + w + "."
 		}
@@ -123,7 +142,7 @@ func understandDiscovery(from, text string) *discoveryUnderstanding {
 			facts += "\nHer budget for this conversation: " + money.GHS(pre.Budget) + "."
 		}
 	}
-	if qf := quoteFactLine(); qf != "" {
+	if qf := quoteFactLine(from); qf != "" {
 		facts += "\n" + qf
 	}
 	// Her paid orders are facts too: a buyer whose session is
@@ -152,7 +171,7 @@ func understandDiscovery(from, text string) *discoveryUnderstanding {
 	}
 	reply := model.Chat([]model.Message{
 		{Role: "user", Content: facts + "\nHer message: \"" + text + "\""},
-	}, model.Options{System: &sys})
+	}, model.Options{System: &sys, Turn: turnTokenFor(from)})
 	if reply == nil {
 		return nil
 	}
@@ -180,13 +199,41 @@ func resolveDiscoveryShop(ref string) *catalogue.Merchant {
 	if shop := catalogue.MerchantByShopCode(strings.ToLower(ref)); shop != nil {
 		return shop
 	}
+	// A name resolves only when it names ONE shop. The
+	// merchant door learned this in the second audit; the
+	// third found discovery still returning the first of
+	// two same-named shops in catalogue order, binding the
+	// buyer to a shop she did not mean. An ambiguous name
+	// resolves to nothing here, and the caller that binds
+	// on it says so and asks for the shop's code.
+	var found *catalogue.Merchant
 	for _, m := range catalogue.ListMerchants() {
 		if strings.EqualFold(m.Name, ref) || strings.Contains(strings.ToLower(m.Name), strings.ToLower(ref)) {
+			if found != nil {
+				return nil
+			}
 			shop := m
-			return &shop
+			found = &shop
 		}
 	}
-	return nil
+	return found
+}
+
+// discoveryNameAmbiguous reports whether a shop reference
+// matches more than one shop by name — the case the
+// binding caller answers with a request for the code.
+func discoveryNameAmbiguous(ref string) bool {
+	ref = strings.TrimSpace(strings.TrimPrefix(strings.ToUpper(ref), "SHOP-"))
+	if ref == "" || catalogue.MerchantByShopCode(strings.ToLower(ref)) != nil {
+		return false
+	}
+	n := 0
+	for _, m := range catalogue.ListMerchants() {
+		if strings.EqualFold(m.Name, ref) || strings.Contains(strings.ToLower(m.Name), strings.ToLower(ref)) {
+			n++
+		}
+	}
+	return n > 1
 }
 
 // verifiedMatches keeps only the thinking's matches that
@@ -206,7 +253,7 @@ func verifiedMatches(u *discoveryUnderstanding) []struct {
 			continue
 		}
 		p := catalogue.FindByName(shop.ID, match.Product)
-		if p == nil || seen[shop.ID+"|"+p.ID] {
+		if p == nil || p.AvailableUnits() <= 0 || seen[shop.ID+"|"+p.ID] {
 			continue
 		}
 		seen[shop.ID+"|"+p.ID] = true
@@ -222,16 +269,16 @@ func verifiedMatches(u *discoveryUnderstanding) []struct {
 // picked, with the ordinary entry greeting, and focuses the
 // product she picked when there is exactly one in that shop.
 func bindDiscoveryShop(from string, shop *catalogue.Merchant, focus *catalogue.Product) {
-	bindings[from] = shop.ID
+	bindings.put(from, shop.ID)
 	sendPieces(from, welcomeFor(shop, from), productListText(shop.ID))
 	if focus != nil {
 		key := sessionKey(shop.ID, from)
-		s, ok := sessions[key]
+		s, ok := sessions.lookup(key)
 		if !ok {
 			s = &Session{Stage: "browsing", MerchantID: shop.ID}
-			sessions[key] = s
+			sessions.put(key, s)
 		}
-		if pre, ok := sessions[sessionKey("", from)]; ok && pre.Budget > 0 {
+		if pre, ok := sessions.lookup(sessionKey("", from)); ok && pre.Budget > 0 {
 			s.Budget = pre.Budget
 		}
 		s.Product = focus
@@ -253,12 +300,12 @@ func bindDiscoveryShop(from string, shop *catalogue.Merchant, focus *catalogue.P
 // discovery has always held.
 func presentSingleDiscoveryMatch(from string, shop *catalogue.Merchant, p *catalogue.Product) {
 	whatsapp.SendText(from, shop.ShopCode+" has it:")
-	sendProductPhotos(from, p)
+	sendProductPhotos(from, shop.ID, p)
 	sendProductView(from, p, " Want to make an offer?")
-	pre, ok := sessions[sessionKey("", from)]
+	pre, ok := sessions.lookup(sessionKey("", from))
 	if !ok {
 		pre = &Session{Stage: "unbound"}
-		sessions[sessionKey("", from)] = pre
+		sessions.put(sessionKey("", from), pre)
 	}
 	pre.DiscoveryShown = []ShownProduct{{ShopID: shop.ID, ProductID: p.ID}}
 }
@@ -280,13 +327,13 @@ func presentDiscoveryRecommendation(from, ask string, matches []struct {
 		p := matches[i].Product
 		candidates = append(candidates, salesCandidate{Shop: &shop, Product: &p})
 	}
-	pre, ok := sessions[sessionKey("", from)]
+	pre, ok := sessions.lookup(sessionKey("", from))
 	if !ok || pre == nil {
 		pre = &Session{Stage: "unbound"}
-		sessions[sessionKey("", from)] = pre
+		sessions.put(sessionKey("", from), pre)
 	}
 	budget := pre.Budget
-	pick, alt, reply, drafted := draftSalesPick(recommendSystem, ask, budget, candidates)
+	pick, alt, reply, drafted := draftSalesPick(from, recommendSystem, ask, budget, candidates)
 	if !drafted {
 		pick, alt = codeSalesPick(candidates, budget)
 		if pick == nil {
@@ -300,7 +347,7 @@ func presentDiscoveryRecommendation(from, ask string, matches []struct {
 			reply += " There is also the " + alt.Product.Name + " at " + money.GHS(alt.Product.ListPrice) + ", at " + alt.Shop.Name + "."
 		}
 	}
-	sendProductPhotos(from, pick.Product)
+	sendProductPhotos(from, pick.Shop.ID, pick.Product)
 	whatsapp.SendText(from, reply)
 	pre.DiscoveryShown = pre.DiscoveryShown[:0]
 	for _, v := range matches {
@@ -313,7 +360,7 @@ func presentDiscoveryRecommendation(from, ask string, matches []struct {
 // factual line otherwise.
 func discoveryReplyOr(u *discoveryUnderstanding, fallback string) string {
 	if u != nil {
-		if draft := strings.TrimSpace(u.Reply); draft != "" && voiceClean(draft) && !strings.Contains(draft, "₵") {
+		if draft := strings.TrimSpace(u.Reply); draft != "" && voiceClean(draft) && figuresClean(draft) {
 			return draft
 		}
 	}
@@ -325,10 +372,10 @@ func discoveryReplyOr(u *discoveryUnderstanding, fallback string) string {
 // the door belong to her first contact, and everything after
 // is understood and answered.
 func handleUnboundBuyer(from, text string) {
-	pre, ok := sessions[sessionKey("", from)]
+	pre, ok := sessions.lookup(sessionKey("", from))
 	if !ok || pre == nil {
 		pre = &Session{Stage: "unbound"}
-		sessions[sessionKey("", from)] = pre
+		sessions.put(sessionKey("", from), pre)
 	}
 	noteSpeakerWords(pre, text)
 	if b := netBudget(strings.ToLower(text)); b > 0 {
@@ -364,7 +411,11 @@ func handleUnboundBuyer(from, text string) {
 		leadPrice := -1.0
 		for i, sp := range pre.DiscoveryShown {
 			p := catalogue.FindByID(sp.ShopID, sp.ProductID)
-			if p == nil {
+			if p == nil || (i > 0 && p.AvailableUnits() <= 0) {
+				// A sold-out shown product is never the
+				// cheaper alternative (the seventh audit);
+				// the lead (i == 0) still anchors the
+				// price comparison.
 				continue
 			}
 			if i == 0 {
@@ -379,7 +430,7 @@ func handleUnboundBuyer(from, text string) {
 			}
 		}
 		if cheapest != nil && cheapestShop != nil {
-			sendProductPhotos(from, cheapest)
+			sendProductPhotos(from, cheapestShop.ID, cheapest)
 			whatsapp.SendText(from, "A cheaper one: the "+cheapest.Name+" at "+money.GHS(cheapest.ListPrice)+", at "+cheapestShop.Name+".")
 			return
 		}
@@ -395,7 +446,7 @@ func handleUnboundBuyer(from, text string) {
 // takes her. A quote she merely mentions, in a question or
 // a sentence of her own, is not a pick and falls through.
 func quotedPick(from, text string) bool {
-	q := turnQuote
+	q := turnQuoteOf(from)
 	if q == nil || !q.Known || q.Product == nil || q.ProductShop == nil {
 		return false
 	}
@@ -403,13 +454,20 @@ func quotedPick(from, text string) bool {
 	if p == nil {
 		return false
 	}
+	if p.AvailableUnits() <= 0 {
+		// The quoted bubble is a stale reference too (the
+		// seventh audit): it is not bound, priced or
+		// pictured once the shelf no longer holds it.
+		whatsapp.SendText(from, "The "+p.Name+" has sold out since that message. Tell me what else you are looking for and I will search again.")
+		return true
+	}
 	lower := strings.ToLower(text)
 	shop := q.ProductShop
 	switch {
 	case picRe.MatchString(lower):
-		bindings[from] = shop.ID
-		delete(sessions, sessionKey("", from))
-		sessions[sessionKey(shop.ID, from)] = &Session{Stage: "browsing", MerchantID: shop.ID, LastViewed: p}
+		bindings.put(from, shop.ID)
+		sessions.del(sessionKey("", from))
+		sessions.put(sessionKey(shop.ID, from), &Session{Stage: "browsing", MerchantID: shop.ID, LastViewed: p})
 		answerPictureAsk(from, shop, p)
 		return true
 	case isBareAck(lower) || parseOffer(lower) != nil || buyIntentRe.MatchString(lower):
@@ -419,16 +477,65 @@ func quotedPick(from, text string) bool {
 	return false
 }
 
+// deliveryReportTargetAnywhere resolves the order a
+// discovery-lane delivery report means, from the buyer's
+// own words, across every shop — before any shop is
+// pinned (the fifth audit: the pin came first, from the
+// model's hint or the book's order, and her words were
+// never consulted, so a cross-shop report acted on the
+// wrong shop's order). A stated reference binds first:
+// hers and paid, it binds its shop; stated and not hers,
+// the report is refused plainly rather than re-aimed at
+// a guess. A named product binds the same way the
+// in-shop road binds it — one match binds, several are
+// asked by reference. Only a report naming nothing
+// falls through to the hint order below.
+func deliveryReportTargetAnywhere(from, msg string) (target *orders.Order, handled bool) {
+	if m := orderRefRe.FindStringSubmatch(msg); m != nil {
+		ref := strings.ToUpper(m[1])
+		if o := orders.Default.GetOrder(ref); o != nil && o.From == from && o.Status == "paid" {
+			return o, true
+		}
+		whatsapp.SendText(from, "I could not find order "+ref+" among your paid orders, so I have not changed anything. Check the reference and tell me again.")
+		return nil, true
+	}
+	lower := strings.ToLower(msg)
+	var named []*orders.Order
+	for _, o := range orders.Default.All() {
+		oo := o
+		if oo.From != from || oo.Status != "paid" {
+			continue
+		}
+		if name := strings.ToLower(strings.TrimSpace(oo.ProductName)); name != "" && strings.Contains(lower, name) {
+			named = append(named, &oo)
+		}
+	}
+	if len(named) == 1 {
+		return named[0], true
+	}
+	if len(named) > 1 {
+		refs := make([]string, 0, len(named))
+		for _, o := range named {
+			refs = append(refs, o.Reference)
+		}
+		whatsapp.SendText(from, "You have more than one "+named[0].ProductName+" on its way ("+strings.Join(refs, ", ")+"). Tell me the reference of the one you mean, and I will mark that one.")
+		return nil, true
+	}
+	return nil, false
+}
+
 // newestPaidOrderAnywhere finds the buyer's paid order
-// across every shop that her words mean: the shop the
-// thinking named first, then the order in transit (the one
-// that can arrive, or fail to), then her newest paid order.
+// across every shop when her words name none of them:
+// the hinted shop's order when it is in transit (the one
+// that can arrive, or fail to), then any order in
+// transit, then the hinted shop's newest, then her
+// newest paid order anywhere.
 func newestPaidOrderAnywhere(from, shopHint string) *orders.Order {
 	var hintShop *catalogue.Merchant
 	if shopHint != "" {
 		hintShop = resolveDiscoveryShop(shopHint)
 	}
-	var hinted, inTransit, any *orders.Order
+	var hinted, hintedSent, inTransit, any *orders.Order
 	for _, o := range orders.Default.All() {
 		oo := o
 		if oo.From != from || oo.Status != "paid" {
@@ -441,15 +548,18 @@ func newestPaidOrderAnywhere(from, shopHint string) *orders.Order {
 		if hintShop != nil && oo.MerchantID == hintShop.ID {
 			hinted = &oo
 			if oo.DeliveryState == "sent" {
-				return &oo
+				hintedSent = &oo
 			}
 		}
 	}
-	if hinted != nil {
-		return hinted
+	if hintedSent != nil {
+		return hintedSent
 	}
 	if inTransit != nil {
 		return inTransit
+	}
+	if hinted != nil {
+		return hinted
 	}
 	return any
 }
@@ -488,7 +598,7 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 		// reading can mistake the merely-mentioned
 		// alternative for the thing being pressed on her.
 		matches := verifiedMatches(u)
-		if pre, ok := sessions[sessionKey("", from)]; ok && len(pre.DiscoveryShown) > 0 {
+		if pre, ok := sessions.lookup(sessionKey("", from)); ok && len(pre.DiscoveryShown) > 0 {
 			if lead := catalogue.FindByID(pre.DiscoveryShown[0].ShopID, pre.DiscoveryShown[0].ProductID); lead != nil {
 				var under []struct {
 					Shop    catalogue.Merchant
@@ -511,9 +621,9 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 				cheapest = v
 			}
 		}
-		sendProductPhotos(from, &cheapest.Product)
+		sendProductPhotos(from, cheapest.Shop.ID, &cheapest.Product)
 		whatsapp.SendText(from, "A cheaper one: the "+cheapest.Product.Name+" at "+money.GHS(cheapest.Product.ListPrice)+", at "+cheapest.Shop.Name+".")
-		if pre, ok := sessions[sessionKey("", from)]; ok {
+		if pre, ok := sessions.lookup(sessionKey("", from)); ok {
 			pre.DiscoveryShown = pre.DiscoveryShown[:0]
 			for _, v := range matches {
 				pre.DiscoveryShown = append(pre.DiscoveryShown, ShownProduct{ShopID: v.Shop.ID, ProductID: v.Product.ID})
@@ -522,9 +632,20 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 		return true
 	case "order_received", "order_missing":
 		// A delivery report from a buyer with no live shop
-		// session: her order pins the shop, she is bound to
-		// it, and the loop's own acts serve her word.
-		o := newestPaidOrderAnywhere(from, u.Shop)
+		// session: the order HER WORDS name pins the shop —
+		// resolved across every shop first (the fifth
+		// audit) — and only a report naming nothing falls
+		// back to the hint order. The resolved reference
+		// is what the act is handed, so the order acted on
+		// is the order that pinned the shop, never a
+		// re-resolution inside it.
+		o, handled := deliveryReportTargetAnywhere(from, lower)
+		if handled && o == nil {
+			return true
+		}
+		if o == nil {
+			o = newestPaidOrderAnywhere(from, u.Shop)
+		}
 		if o == nil {
 			return false
 		}
@@ -532,11 +653,11 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 		if shop == nil {
 			return false
 		}
-		bindings[from] = shop.ID
+		bindings.put(from, shop.ID)
 		if u.Intent == "order_received" {
-			return buyerConfirmReceived(from, shop, shop.ID)
+			return buyerConfirmReceived(from, shop, shop.ID, o.Reference)
 		}
-		return buyerReportMissing(from, shop, shop.ID)
+		return buyerReportMissing(from, shop, shop.ID, o.Reference)
 	case "picture":
 		// The picture comes first: she is put inside the
 		// matched product's shop and served the picture
@@ -550,13 +671,13 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 			// the picture she means is the one she was just
 			// shown, and the conversation itself settles
 			// which that is.
-			if pre, ok := sessions[sessionKey("", from)]; ok && len(pre.DiscoveryShown) > 0 {
+			if pre, ok := sessions.lookup(sessionKey("", from)); ok && len(pre.DiscoveryShown) > 0 {
 				sp := pre.DiscoveryShown[0]
 				if shop := catalogue.GetMerchant(sp.ShopID); shop != nil {
-					if p := catalogue.FindByID(sp.ShopID, sp.ProductID); p != nil {
-						bindings[from] = shop.ID
-						delete(sessions, sessionKey("", from))
-						sessions[sessionKey(shop.ID, from)] = &Session{Stage: "browsing", MerchantID: shop.ID, LastViewed: p}
+					if p := catalogue.FindByID(sp.ShopID, sp.ProductID); p != nil && p.AvailableUnits() > 0 {
+						bindings.put(from, shop.ID)
+						sessions.del(sessionKey("", from))
+						sessions.put(sessionKey(shop.ID, from), &Session{Stage: "browsing", MerchantID: shop.ID, LastViewed: p})
 						answerPictureAsk(from, shop, p)
 						return true
 					}
@@ -567,14 +688,18 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 		v := matches[0]
 		shop := v.Shop
 		p := v.Product
-		bindings[from] = shop.ID
-		delete(sessions, sessionKey("", from))
-		sessions[sessionKey(shop.ID, from)] = &Session{Stage: "browsing", MerchantID: shop.ID, LastViewed: &p}
+		bindings.put(from, shop.ID)
+		sessions.del(sessionKey("", from))
+		sessions.put(sessionKey(shop.ID, from), &Session{Stage: "browsing", MerchantID: shop.ID, LastViewed: &p})
 		answerPictureAsk(from, &shop, &p)
 		return true
 	case "shop":
 		shop := resolveDiscoveryShop(u.Shop)
 		if shop == nil {
+			if discoveryNameAmbiguous(u.Shop) {
+				whatsapp.SendText(from, "More than one shop here matches that name, and I do not want to take you to the wrong one. Start with the shop's own code instead — it is on the link or message the shop shared with you.")
+				return true
+			}
 			return false
 		}
 		var focus *catalogue.Product
@@ -599,7 +724,7 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 		// budget in force is the same signal in the
 		// platform's own facts, and either one is enough.
 		budgetHeld := false
-		if pre, ok := sessions[sessionKey("", from)]; ok && pre.Budget > 0 {
+		if pre, ok := sessions.lookup(sessionKey("", from)); ok && pre.Budget > 0 {
 			budgetHeld = true
 		}
 		if len(matches) > 0 && (u.Recommend || budgetHeld) {
@@ -618,10 +743,10 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 				// her, so they are recorded as shown: her
 				// next words may point at one, and a greeting
 				// after them has something to hold up.
-				if pre, ok := sessions[sessionKey("", from)]; ok {
+				if pre, ok := sessions.lookup(sessionKey("", from)); ok {
 					pre.DiscoveryShown = shown
 				} else {
-					sessions[sessionKey("", from)] = &Session{Stage: "unbound", DiscoveryShown: shown}
+					sessions.put(sessionKey("", from), &Session{Stage: "unbound", DiscoveryShown: shown})
 				}
 			}
 			return true
@@ -644,7 +769,7 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 		}
 		lines = append(lines, "Which one do you want to look at?")
 		sendPieces(from, lines...)
-		if pre, ok := sessions[sessionKey("", from)]; ok {
+		if pre, ok := sessions.lookup(sessionKey("", from)); ok {
 			pre.DiscoveryShown = pre.DiscoveryShown[:0]
 			for _, v := range matches {
 				pre.DiscoveryShown = append(pre.DiscoveryShown, ShownProduct{ShopID: v.Shop.ID, ProductID: v.Product.ID})
@@ -654,13 +779,18 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 			for _, v := range matches {
 				shown.DiscoveryShown = append(shown.DiscoveryShown, ShownProduct{ShopID: v.Shop.ID, ProductID: v.Product.ID})
 			}
-			sessions[sessionKey("", from)] = shown
+			sessions.put(sessionKey("", from), shown)
 		}
 		return true
 	case "browse":
 		var lines []string
 		for _, m := range catalogue.ListMerchants() {
-			products := catalogue.ListProducts(m.ID)
+			// The browse presenter names only what can be
+			// bought (the seventh audit): the stocked
+			// source every sibling discovery presenter
+			// already uses, so a shop with nothing stocked
+			// is omitted whole.
+			products := stockedProducts(m.ID)
 			if len(products) == 0 {
 				continue
 			}
@@ -704,7 +834,7 @@ func discoveryTaste() (string, []ShownProduct) {
 	var bits []string
 	var shown []ShownProduct
 	for _, m := range catalogue.ListMerchants() {
-		products := catalogue.ListProducts(m.ID)
+		products := stockedProducts(m.ID)
 		if len(products) == 0 {
 			continue
 		}
@@ -732,7 +862,7 @@ func discoveryNet(from, text string) {
 	}
 	var hits []hit
 	for _, m := range catalogue.ListMerchants() {
-		for _, p := range catalogue.ListProducts(m.ID) {
+		for _, p := range stockedProducts(m.ID) {
 			score := 0
 			nameHay := strings.ToLower(p.Name)
 			descHay := strings.ToLower(p.Description)
@@ -778,10 +908,10 @@ func discoveryNet(from, text string) {
 	// instead of a list of both.
 	if picRe.MatchString(lower) && len(hits) > 0 {
 		h := hits[0]
-		bindings[from] = h.shop.ID
-		delete(sessions, sessionKey("", from))
+		bindings.put(from, h.shop.ID)
+		sessions.del(sessionKey("", from))
 		p := h.product
-		sessions[sessionKey(h.shop.ID, from)] = &Session{Stage: "browsing", MerchantID: h.shop.ID, LastViewed: &p}
+		sessions.put(sessionKey(h.shop.ID, from), &Session{Stage: "browsing", MerchantID: h.shop.ID, LastViewed: &p})
 		answerPictureAsk(from, &h.shop, &p)
 		return
 	}
@@ -790,7 +920,7 @@ func discoveryNet(from, text string) {
 	// bare list that ignores it is a worse answer than the
 	// platform's own floor pick under her budget.
 	if len(hits) > 0 {
-		if pre, ok := sessions[sessionKey("", from)]; ok && pre.Budget > 0 {
+		if pre, ok := sessions.lookup(sessionKey("", from)); ok && pre.Budget > 0 {
 			var matches []struct {
 				Shop    catalogue.Merchant
 				Product catalogue.Product
@@ -816,10 +946,10 @@ func discoveryNet(from, text string) {
 	}
 	if len(hits) > 0 {
 		var lines []string
-		pre, ok := sessions[sessionKey("", from)]
+		pre, ok := sessions.lookup(sessionKey("", from))
 		if !ok {
 			pre = &Session{Stage: "unbound"}
-			sessions[sessionKey("", from)] = pre
+			sessions.put(sessionKey("", from), pre)
 		}
 		pre.DiscoveryShown = pre.DiscoveryShown[:0]
 		for i, h := range hits {
@@ -834,10 +964,10 @@ func discoveryNet(from, text string) {
 		return
 	}
 	key := sessionKey("", from)
-	pre, ok := sessions[key]
+	pre, ok := sessions.lookup(key)
 	if !ok {
 		pre = &Session{Stage: "unbound"}
-		sessions[key] = pre
+		sessions.put(key, pre)
 	}
 	if !pre.DiscoveryAsked {
 		pre.DiscoveryAsked = true
@@ -854,7 +984,7 @@ func discoveryNet(from, text string) {
 // presented list is mechanics, verified against the shown
 // set alone; anything else falls through to the thinking.
 func pickFromShown(from, text string) bool {
-	pre, ok := sessions[sessionKey("", from)]
+	pre, ok := sessions.lookup(sessionKey("", from))
 	if !ok || len(pre.DiscoveryShown) == 0 {
 		return false
 	}
@@ -877,7 +1007,7 @@ func pickFromShown(from, text string) bool {
 		sp := pre.DiscoveryShown[i]
 		p := catalogue.FindByID(sp.ShopID, sp.ProductID)
 		shop := catalogue.GetMerchant(sp.ShopID)
-		if p == nil || shop == nil {
+		if p == nil || shop == nil || p.AvailableUnits() <= 0 {
 			continue
 		}
 		score := 0
@@ -917,6 +1047,15 @@ func bindShownPick(from string, sp ShownProduct) bool {
 		return false
 	}
 	focus := catalogue.FindByID(sp.ShopID, sp.ProductID)
+	if focus != nil && focus.AvailableUnits() <= 0 {
+		// A shown product is a stale reference by the time
+		// she picks it (the seventh audit): re-check
+		// availability at resolution, the way
+		// verifiedMatches does at search time. Sold out
+		// is answered honestly and binds nothing.
+		whatsapp.SendText(from, "The "+focus.Name+" has sold out since I showed it to you. Tell me what else you are looking for and I will search again.")
+		return true
+	}
 	bindDiscoveryShop(from, shop, focus)
 	return true
 }

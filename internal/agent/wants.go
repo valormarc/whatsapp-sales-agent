@@ -52,7 +52,12 @@ func recommendForNeed(shopID, lower string) *catalogue.Product {
 	}
 	var best *catalogue.Product
 	bestScore := 0
-	for _, p := range catalogue.ListProducts(shopID) {
+	// The candidate set is the stocked shelf only (the
+	// seventh audit): a sold-out best match must yield
+	// nil, so the caller's want-recording fall-through
+	// carries the buyer instead of a recommendation she
+	// cannot buy.
+	for _, p := range stockedProducts(shopID) {
 		words := needWords(p.Name + " " + p.Description)
 		score := 0
 		for w := range need {
@@ -150,11 +155,18 @@ func unstockedAsk(lower string) (string, bool) {
 // as typed and then singular: close enough to answer the item
 // itself rather than write a want for goods already in the shop.
 func stockedByLooseName(shopID, item string) *catalogue.Product {
-	if p := catalogue.FindByName(shopID, item); p != nil {
+	// The name promises stocked: a product the shelf no
+	// longer holds does not resolve here (the seventh
+	// audit found the helper never checked), so the
+	// availability road treats it as unstocked and
+	// records the want.
+	if p := catalogue.FindByName(shopID, item); p != nil && p.AvailableUnits() > 0 {
 		return p
 	}
 	if strings.HasSuffix(item, "s") {
-		return catalogue.FindByName(shopID, strings.TrimSuffix(item, "s"))
+		if p := catalogue.FindByName(shopID, strings.TrimSuffix(item, "s")); p != nil && p.AvailableUnits() > 0 {
+			return p
+		}
 	}
 	return nil
 }

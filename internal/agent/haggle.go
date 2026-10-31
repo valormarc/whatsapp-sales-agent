@@ -101,6 +101,12 @@ func modelMessage(proposal *haggle.Proposal, checked haggle.Result, product cata
 		return nil
 	}
 	nums := numbersIn(msg)
+	// Spelled-out figures are figures: a proposed message
+	// that names the stop in words ("seven hundred") is
+	// refused on exactly the digit rule below.
+	for _, wf := range wordFigures(msg) {
+		nums = append(nums, wf.value)
+	}
 	contains := false
 	for _, n := range nums {
 		if n == checked.Price {
@@ -127,7 +133,7 @@ type stepResult struct {
 // One haggling step. The model proposes inside the persona; the engine
 // verifies. Any doubt at all (model off, no reply, unparseable reply,
 // a price outside the bounds) and Decide makes the call instead.
-func negotiateStep(s *Session, offer float64, merchant *catalogue.Merchant) stepResult {
+func negotiateStep(from string, s *Session, offer float64, merchant *catalogue.Merchant) stepResult {
 	p := s.Product
 	fallback := func() stepResult {
 		return stepResult{Result: haggle.Decide(haggle.DecideParams{
@@ -164,7 +170,7 @@ func negotiateStep(s *Session, offer float64, merchant *catalogue.Merchant) step
 		Day:       &day,
 		Catalogue: catalogue.ListProducts(merchant.ID),
 	}
-	raw := model.Chat(msgs, model.Options{Context: &ctx})
+	raw := model.Chat(msgs, model.Options{Context: &ctx, Turn: turnTokenFor(from)})
 	proposal := model.ParseProposal(raw)
 	var checked *haggle.Result
 	if proposal != nil {
@@ -215,7 +221,7 @@ func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer f
 			beginFulfilment(from, s, s.Ask)
 			return
 		}
-		sessions[key] = s
+		sessions.put(key, s)
 		whatsapp.SendText(from, "The "+s.itemLabel()+" is "+money.GHS(s.Ask)+", and that price is fixed. I cannot take "+money.GHS(offer)+" for it. If you want it at "+money.GHS(s.Ask)+", say the word and it is yours.")
 		return
 	}
@@ -228,7 +234,7 @@ func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer f
 		beginFulfilment(from, s, s.Ask)
 		return
 	}
-	result := negotiateStep(s, offer, merchant)
+	result := negotiateStep(from, s, offer, merchant)
 	if result.Type == "accept" {
 		beginFulfilment(from, s, result.Price)
 		return
@@ -237,7 +243,7 @@ func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer f
 	s.Round++
 	if result.LastPrice || s.Round >= MaxCounters {
 		s.Stage = "lastprice"
-		sessions[key] = s
+		sessions.put(key, s)
 		// The final stand carries its next step as its own short
 		// piece: the total with delivery, and the link ready now.
 		// A bare "that is my final price" is exactly where real
@@ -261,6 +267,6 @@ func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer f
 		text = persona.FrameCounter(p.ListPrice, result.Price, s.itemLabel()) + " What do you say?"
 	}
 	s.History = lastN(append(append([]model.Message{}, s.History...), model.Message{Role: "assistant", Content: text}), 12)
-	sessions[key] = s
+	sessions.put(key, s)
 	whatsapp.SendText(from, text)
 }

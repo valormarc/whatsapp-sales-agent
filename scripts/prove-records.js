@@ -10,6 +10,19 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
+// Sandbox hygiene: a dry-run child must never inherit live
+// send or settle credentials from the operator's shell. The
+// agent's sandbox exception is bound to a send-incapable
+// process, so the live WhatsApp and Seev credentials are
+// blanked here, before any child env is built from this one.
+delete process.env.WHATSAPP_TOKEN;
+delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+delete process.env.WHATSAPP_APP_SECRET;
+delete process.env.WHATSAPP_VERIFY_TOKEN;
+delete process.env.SEEV_SECRET_KEY;
+delete process.env.SEEV_API_KEY;
+delete process.env.SEEV_WEBHOOK_SECRET;
+
 const PORT = 3483;
 const BASE = `http://127.0.0.1:${PORT}`;
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "records-"));
@@ -60,7 +73,7 @@ const bodies = (rs) => rs.map((r) => r.body || "");
   let pass = 0, fail = 0;
   const check = (name, ok) => { console.log((ok ? "PASS " : "FAIL ") + name); ok ? pass++ : fail++; };
   try {
-    const env = { ...process.env, PORT: String(PORT), HACKATHON_AGENT_DATA_DIR: path.join(dir, "data"), WHATSAPP_DRY_RUN: "1" };
+    const env = { ...process.env, PORT: String(PORT), HACKATHON_AGENT_DATA_DIR: path.join(dir, "data"), WHATSAPP_DRY_RUN: "1", STALL_SANDBOX_ALLOW_MODEL: "1" };
     delete env.SEEV_SECRET_KEY; delete env.SEEV_API_KEY;
     agent = spawn(path.join(__dirname, "..", "agent"), [], { env, stdio: "ignore" });
     for (let i = 0; i < 40; i++) { try { const r = await fetch(`${BASE}/healthz`); if (r.ok) break; } catch {} await sleep(400); }

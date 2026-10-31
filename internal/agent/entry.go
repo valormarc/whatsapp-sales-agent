@@ -95,6 +95,13 @@ func entrySelection(shop *catalogue.Merchant, rest string) *catalogue.Product {
 	}
 	for _, p := range catalogue.ListProducts(shop.ID) {
 		pp := p
+		if pp.AvailableUnits() <= 0 {
+			// The stock-only rule at this source too (the
+			// seventh audit): a sold-out product is never
+			// the entry selection, so the turn falls
+			// through to the ordinary shelf handling.
+			continue
+		}
 		if pp.ListPrice != *amt {
 			continue
 		}
@@ -146,10 +153,10 @@ func recoverBuyerFromOrders(from string) string {
 		return ""
 	}
 	shopID := newest.MerchantID
-	bindings[from] = shopID
+	bindings.put(from, shopID)
 	key := sessionKey(shopID, from)
-	if _, ok := sessions[key]; !ok {
-		sessions[key] = &Session{Stage: "agreed", MerchantID: shopID, PaymentURL: orderPaymentURL(newest)}
+	if _, ok := sessions.lookup(key); !ok {
+		sessions.put(key, &Session{Stage: "agreed", MerchantID: shopID, PaymentURL: orderPaymentURL(newest)})
 	}
 	return shopID
 }

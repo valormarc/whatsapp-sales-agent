@@ -26,7 +26,7 @@ import (
 // (a figure that is not a list price on this shelf, or a
 // reply that is not one short line): the caller then sends
 // its template, so the buyer is never left unanswered.
-func clarifyLine(merchant *catalogue.Merchant, said string) string {
+func clarifyLine(from string, merchant *catalogue.Merchant, said string) string {
 	if merchant == nil || !model.Enabled() {
 		return ""
 	}
@@ -49,7 +49,7 @@ func clarifyLine(merchant *catalogue.Merchant, said string) string {
 		"You may name up to two of the shop's goods as examples, with their prices exactly as given. " +
 		"Use no other figures. Plain, correct English, no greeting, no exclamation marks.\n\n" +
 		"On the shelf: " + strings.Join(facts, "; ") + "."
-	reply := model.Chat([]model.Message{{Role: "user", Content: said}}, model.Options{System: &sys, Kind: model.KindDraft})
+	reply := model.Chat([]model.Message{{Role: "user", Content: said}}, model.Options{System: &sys, Kind: model.KindDraft, Turn: turnTokenFor(from)})
 	if reply == nil {
 		return ""
 	}
@@ -57,17 +57,8 @@ func clarifyLine(merchant *catalogue.Merchant, said string) string {
 	if line == "" || len(line) > 240 || strings.Contains(line, "\n") {
 		return ""
 	}
-	for _, n := range numbersIn(line) {
-		ok := false
-		for _, price := range prices {
-			if n == price {
-				ok = true
-				break
-			}
-		}
-		if !ok {
-			return ""
-		}
+	if !figuresClean(line, prices...) {
+		return ""
 	}
 	return line
 }

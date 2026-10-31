@@ -29,6 +29,8 @@ func orderStateWords(o orders.Order) string {
 			return "paid, sent"
 		case "received":
 			return "paid, received"
+		case "missing":
+			return "paid, reported missing"
 		default:
 			return "paid, not sent yet"
 		}
@@ -98,64 +100,144 @@ func cancelMerchantOrder(from string, merchant *catalogue.Merchant, ref string) 
 		whatsapp.SendText(from, "I cannot find order "+ref+" among your orders. Say \"my orders\" to see them with their references.")
 		return
 	}
-	if order.Status == "cancelled" {
-		whatsapp.SendText(from, "Order "+ref+" is already cancelled.")
+	// The cancellation is decided inside the book's lock,
+	// from the stored record (the fifth audit found every
+	// guard read from the caller's snapshot while the
+	// status write was unconditional: a protected
+	// transition landing after the snapshot — the buyer
+	// confirming receipt, a dispute opening — was
+	// overwritten, and both sides were told the
+	// snapshot's story). One Update re-checks the stored
+	// state and only then cancels, capturing the facts
+	// the rest of this road speaks from.
+	var applied bool
+	var refusal string
+	var wasPaid bool
+	var priorStatus string
+	var paidTotal float64
+	var buyerFrom, createdAt, productName string
+	var agreedPrice float64
+	var bookedList, orderQty float64
+	var items []orders.OrderItem
+	orders.Default.Update(ref, func(o *orders.Order) {
+		switch {
+		case o.Status == "cancelled":
+			refusal = "Order " + ref + " is already cancelled."
+			return
+		case o.DeliveryState == "received":
+			refusal = "Order " + ref + " has already been received by the buyer, so it cannot be cancelled. If something is wrong with it, that goes through a dispute."
+			return
+		case o.DisputeState == "open" || o.DisputeState == "refund_claimed":
+			refusal = "A dispute is open on order " + ref + " just now. That has to settle first; the buyer is waiting on it."
+			return
+		}
+		applied = true
+		priorStatus = o.Status
+		wasPaid = o.Status == "paid"
+		paidTotal = o.Total
+		if paidTotal == 0 {
+			paidTotal = o.Price
+		}
+		buyerFrom, createdAt, productName, items = o.From, o.CreatedAt, o.ProductName, o.Items
+		agreedPrice = o.Price
+		bookedList, orderQty = o.BookedList, o.Quantity
+		o.Status = "cancelled"
+	})
+	if !applied {
+		whatsapp.SendText(from, refusal)
 		return
 	}
-	if order.DeliveryState == "received" {
-		whatsapp.SendText(from, "Order "+ref+" has already been received by the buyer, so it cannot be cancelled. If something is wrong with it, that goes through a dispute.")
-		return
+	// An unpaid order that dies gives its shelf units back;
+	// a paid one's goods are the buyer's until a refund
+	// settles, so its stock stays taken. The giving is
+	// claimed inside the order book's lock: another road
+	// ending the same order at the same moment (the
+	// sweep, a webhook) claims first or not at all, and
+	// the units move once.
+	if !wasPaid {
+		if lines, ok := orders.Default.ClaimRestock(ref); ok {
+			giveStockLines(order.MerchantID, lines)
+		}
 	}
-	if order.DisputeState == "open" || order.DisputeState == "refund_claimed" {
-		whatsapp.SendText(from, "A dispute is open on order "+ref+" just now. That has to settle first; the buyer is waiting on it.")
-		return
-	}
-	wasPaid := order.Status == "paid"
-	paidTotal := order.Total
-	if paidTotal == 0 {
-		paidTotal = order.Price
-	}
-	orders.Default.Update(ref, func(o *orders.Order) { o.Status = "cancelled" })
 
 	// The day book gives the sale back on the order's own
-	// day: list figures are read from the shelf as it stands
-	// (the prices she sells at now), which is the best record
-	// of what the sale drew from the day.
-	listTotal := order.Price
-	if p := catalogue.FindByName(merchant.ID, order.ProductName); p != nil && len(order.Items) == 0 {
-		listTotal = p.ListPrice
-	} else if len(order.Items) > 0 {
-		sum := 0.0
-		ok := true
-		for _, it := range order.Items {
-			p := catalogue.FindByName(merchant.ID, it.Name)
-			if p == nil {
-				ok = false
-				break
+	// day, line by line at the figures each line was
+	// BOOKED with (the sixth audit): the booking recorded
+	// one sale per line, so the reversal records one
+	// cancellation per line — a single recomputed total
+	// read from the shelf as it stands now corrupted the
+	// sales count (one decrement for an N-line booking)
+	// and the giveaway pool (a by-measure line's booked
+	// list is its scaled list, not the bare shelf price,
+	// and a renamed or repriced product recomputed to a
+	// different figure entirely). Lines booked before the
+	// figures were recorded fall back to the shelf's
+	// scaled list for the recorded quantity, and to the
+	// agreed price when the product is gone.
+	bookedLineList := func(name string, recorded, agreed, qty float64) float64 {
+		if recorded > 0 {
+			return recorded
+		}
+		if p := catalogue.FindByName(merchant.ID, name); p != nil {
+			if qty > 0 {
+				return p.ScaledList(qty)
 			}
-			sum += p.ListPrice
+			return p.ListPrice
 		}
-		if ok {
-			listTotal = sum
-		}
+		return agreed
 	}
+	// The reversal answers a booking: an order whose link
+	// never came up was recorded WITHOUT one (the sale
+	// could not complete), and the third audit found its
+	// cancellation reversing figures that were never
+	// booked — a genuine sale's day erased by a phantom.
+	// A link_failed order has nothing in the book to give
+	// back.
 	bookFixed := false
-	if len(order.CreatedAt) >= 10 {
-		bookFixed = daybook.Default.RecordCancellation(merchant.ID, daybook.Sale{
-			ListPrice:   listTotal,
-			AgreedPrice: order.Price,
-			Date:        order.CreatedAt[:10],
-		})
+	if priorStatus != "link_failed" && len(createdAt) >= 10 {
+		date := createdAt[:10]
+		if len(items) > 0 {
+			for _, it := range items {
+				if daybook.Default.RecordCancellation(merchant.ID, daybook.Sale{
+					ListPrice:   bookedLineList(it.Name, it.ListPrice, it.Price, it.Quantity),
+					AgreedPrice: it.Price,
+					Date:        date,
+				}) {
+					bookFixed = true
+				}
+			}
+		} else {
+			bookFixed = daybook.Default.RecordCancellation(merchant.ID, daybook.Sale{
+				ListPrice:   bookedLineList(productName, bookedList, agreedPrice, orderQty),
+				AgreedPrice: agreedPrice,
+				Date:        date,
+			})
+		}
 	}
 
-	if wasPaid {
-		whatsapp.SendText(order.From, "Order "+ref+" at "+merchant.Name+" has been cancelled by the shop. You paid "+money.GHS(paidTotal)+" for it, and the shop owes you that money back. If the refund does not reach you, tell me here and I will open a dispute on it.")
-	} else {
-		whatsapp.SendText(order.From, "Order "+ref+" at "+merchant.Name+" has been cancelled by the shop. Nothing was paid for it, and nothing is owed.")
+	// An erased buyer is told nothing — there is no one
+	// at "deleted" to tell — and the merchant is not told
+	// she was told (the third audit found the notice
+	// addressed to the tombstone and reported as sent).
+	told := buyerFrom != "deleted"
+	if told {
+		if wasPaid {
+			whatsapp.SendText(buyerFrom, "Order "+ref+" at "+merchant.Name+" has been cancelled by the shop. You paid "+money.GHS(paidTotal)+" for it, and the shop owes you that money back. If the refund does not reach you, tell me here and I will open a dispute on it.")
+		} else {
+			whatsapp.SendText(buyerFrom, "Order "+ref+" at "+merchant.Name+" has been cancelled by the shop. Nothing was paid for it, and nothing is owed.")
+		}
 	}
-	reply := "Done. Order " + ref + " is cancelled, and the buyer has been told."
-	if wasPaid {
+	reply := "Done. Order " + ref + " is cancelled"
+	if told {
+		reply += ", and the buyer has been told."
+	} else {
+		reply += ". The buyer's details were deleted at her request, so she could not be told here."
+	}
+	if wasPaid && told {
 		reply += " She had already paid " + money.GHS(paidTotal) + ", so she has been told the refund is owed to her."
+	}
+	if wasPaid && !told {
+		reply += " She had already paid " + money.GHS(paidTotal) + ", and that refund is still owed to her."
 	}
 	if bookFixed {
 		reply += " Today's book has been corrected."

@@ -290,6 +290,37 @@ func handleMerchantMessage(from, text, merchantID string) {
 // is giving (the same protection the explain guard gives her
 // words, extended to the case where her words alone do not say
 // it: the quote says it).
+// serveRemoveAnswer settles an armed product removal with
+// the merchant's yes or no, typed or tapped (the tap router
+// calls it directly for the question the tap names).
+func serveRemoveAnswer(from string, s *Session, merchantID, lower string) {
+	name := s.PendingRemove
+	id := s.PendingRemoveID
+	s.PendingRemove, s.PendingRemoveID = "", ""
+	s.clearYesNo("remove")
+	if isClearYes(lower) {
+		// Her yes was about one product, by identity:
+		// when the name's current product is not the one
+		// the question was armed on, the removal does
+		// not land on the replacement (the fifth audit).
+		if id != "" {
+			live := catalogue.FindByName(merchantID, name)
+			if live == nil || live.ID != id {
+				whatsapp.SendText(from, "That has changed since I asked: the "+name+" in your catalogue now is not the one you asked me to remove, so I have left it as it is. Say \"my catalogue\" to see what is there.")
+				return
+			}
+		}
+		removed, err := catalogue.RemoveProduct(merchantID, name)
+		if err != nil {
+			whatsapp.SendText(from, "I could not remove it after all: "+err.Error()+". Nothing changed.")
+			return
+		}
+		whatsapp.SendText(from, removed.Name+" is out of your catalogue. Customers will no longer be offered it.")
+		return
+	}
+	whatsapp.SendText(from, "No problem. "+name+" stays in your catalogue.")
+}
+
 func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	merchant := catalogue.GetMerchant(merchantID)
 	if merchant == nil {
@@ -297,12 +328,57 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	}
 	lower := strings.ToLower(text)
 	key := sessionKey(merchantID, from)
-	s, ok := sessions[key]
+	s, ok := sessions.lookup(key)
 	if !ok {
 		s = &Session{Stage: "merchant", MerchantID: merchantID}
-		sessions[key] = s
+		sessions.put(key, s)
 	}
 	noteSpeakerWords(s, text)
+
+	// A bare typed yes or no belongs to the armed button
+	// question, the way a tap on its buttons does. Button
+	// taps are bound by question ID; typed words had no
+	// such binding, and whichever pending state the fixed
+	// dispatch order reached first took the word — the
+	// second audit traced a "yes" meant for an in-hand
+	// question (armed out of band, while she was mid-walk)
+	// saving a listing instead, and a "no" settling a fee
+	// quote as declined. So the armed question's own
+	// handler is offered the word first, before every
+	// flow and command below; when it declines, the word
+	// falls through to the ordinary dispatch untouched.
+	if (isClearYes(lower) || isClearNo(lower)) && s.YesNoQ != nil {
+		switch s.YesNoQ.Kind {
+		case "inhand":
+			if handleMerchantInHand(from, merchant, text, lower) {
+				return
+			}
+		case "remove":
+			if s.PendingRemove != "" {
+				serveRemoveAnswer(from, s, merchantID, lower)
+				return
+			}
+		}
+		// A remove question whose handler declined is
+		// orphaned — its underlying request is no longer
+		// open (the sixth audit: a session wipe cleared
+		// the pending remove but left the question armed,
+		// and her "yes" fell through into the onboarding
+		// walk, which saved a listing she meant to
+		// delete). Consume the word against the dead
+		// question: clear it and say plainly that nothing
+		// was done. Every other kind's flow answers its
+		// own question downstream — the listing walk's
+		// confirm steps read the armed "listing" question
+		// themselves — so nothing else is intercepted
+		// here.
+		if s.YesNoQ != nil && s.YesNoQ.Kind == "remove" && s.PendingRemove == "" {
+			s.YesNoQ = nil
+			sessions.put(sessionKey(merchantID, from), s)
+			whatsapp.SendText(from, "That question is no longer open, so I have left everything as it is.")
+			return
+		}
+	}
 
 	if s.Onboarding != nil {
 		if serveSellerWalkTurn(from, s, merchant, text, lower) {
@@ -322,20 +398,30 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 		return
 	}
 
-	if s.PendingRemove != "" {
-		name := s.PendingRemove
-		s.PendingRemove = ""
-		if isClearYes(lower) {
-			removed, err := catalogue.RemoveProduct(merchantID, name)
-			if err != nil {
-				whatsapp.SendText(from, "I could not remove it after all: "+err.Error()+". Nothing changed.")
-				return
-			}
-			whatsapp.SendText(from, removed.Name+" is out of your catalogue. Customers will no longer be offered it.")
-			return
-		}
-		whatsapp.SendText(from, "No problem. "+name+" stays in your catalogue.")
+	// A pending removal owns her answer only when the
+	// removal question is the one she was last asked (or no
+	// button question is open): a yes meant for another
+	// question — an in-hand confirmation, above all — must
+	// never delete a product (see askYesNo). A message that
+	// is not a clear yes or no leaves the removal waiting
+	// and is read on its own terms below.
+	if s.PendingRemove != "" && s.yesNoFor("remove") && (isClearYes(lower) || isClearNo(lower)) {
+		serveRemoveAnswer(from, s, merchantID, lower)
 		return
+	}
+
+	// Whether this turn quotes the allowance note is
+	// settled before any lane reads her words: a reply
+	// quoting the note is about the note. The fee-quote
+	// lane sits above the note's own door in this
+	// dispatcher, and without the guard a quoted
+	// "set it 300" was consumed as the oldest open
+	// quote's fee before the note ever saw it (the
+	// fifth audit) — the same guard the command lane
+	// below already rides on.
+	quotingNote := contextID != "" && s.LastNoteMsgID != "" && contextID == s.LastNoteMsgID
+	if q := turnQuoteOf(from); q != nil && q.Known && s.LastMerchantNote != "" && q.Body == s.LastMerchantNote {
+		quotingNote = true
 	}
 
 	// Her answer to an open per-order delivery fee request
@@ -343,7 +429,7 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	// flows, which own her words while they are open, and
 	// before her commands. With no open request in her shop
 	// it consumes nothing.
-	if handleMerchantFeeQuote(from, merchant, text, lower) {
+	if !quotingNote && handleMerchantFeeQuote(from, merchant, text, lower) {
 		return
 	}
 
@@ -384,14 +470,9 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	// to a number she never chose. Questions skip the commands
 	// and go to the thinking, which explains from the facts.
 	// The same holds when the quote itself does the pointing:
-	// a reply quoting the note is about the note.
-	quotingNote := contextID != "" && s.LastNoteMsgID != "" && contextID == s.LastNoteMsgID
-	if turnQuote != nil && turnQuote.Known && s.LastMerchantNote != "" && turnQuote.Body == s.LastMerchantNote {
-		// The same pointing, recognised through the message
-		// book: whatever id the quote carried, its words are
-		// the note's own words.
-		quotingNote = true
-	}
+	// a reply quoting the note is about the note — quotingNote
+	// was computed above, before the fee-quote lane, and
+	// every lane below rides on the same reading.
 
 	// An answer to the allowance note sets the allowance.
 	// The note itself invites the reply ("to set it, say:
@@ -683,12 +764,16 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		// price plainly. A correction in the "price is X" shape
 		// never reaches this case: the hook above the switch
 		// takes it first and settles the gate as it corrects.
+		// A typed yes or no is consumed here only when it
+		// can belong to this listing's own question (the
+		// sixth audit): a foreign armed question's word is
+		// not this gate's answer.
 		switch {
-		case isClearYes(lower):
+		case isClearYes(lower) && s.yesNoFor("listing"):
 			flow.PriceConfirmed = true
 			flow.PriceNeedsConfirm = false
 			gotoNextOnboardingStep(from, flow)
-		case isClearNo(lower):
+		case isClearNo(lower) && s.yesNoFor("listing"):
 			flow.ListPrice = 0
 			flow.PriceNeedsConfirm = false
 			flow.Step = "list"
@@ -886,8 +971,10 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		whatsapp.SendText(from, "How much of it is the "+money.GHS(flow.ListPrice)+" price for? Give it like 6 "+unitWord(flow.Unit, 2)+".")
 
 	case "confirm":
+		// The save is gated on the listing's own question
+		// the same way the price gate is (the sixth audit).
 		switch {
-		case isClearYes(lower):
+		case isClearYes(lower) && s.yesNoFor("listing"):
 			saveName, saveDesc := applyColourRule(flow, flow.Name, flow.Description)
 			product, err := catalogue.AddProduct(s.MerchantID, catalogue.Product{
 				Name:        saveName,
@@ -898,9 +985,10 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 				Stock:       1,
 				Unit:        flow.Unit,
 				BaseQty:     flow.BaseQty,
-				Sizes:       flowSizes(flow),
+				Sizes:       flowSizes(from, flow),
 			})
 			s.Onboarding = nil
+			s.clearYesNo("listing")
 			if err != nil {
 				whatsapp.SendText(from, "I could not save it: "+err.Error()+". Nothing went live.")
 				return
@@ -919,8 +1007,9 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			// a Status caption and a forwardable broadcast,
 			// ready the moment the listing is live.
 			announceListing(from, s.MerchantID, product)
-		case isClearNo(lower):
+		case isClearNo(lower) && s.yesNoFor("listing"):
 			s.Onboarding = nil
+			s.clearYesNo("listing")
 			whatsapp.SendText(from, "Dropped it. Nothing was saved. Say \"add a product\" whenever you are ready.")
 		default:
 			whatsapp.SendText(from, "Nothing is saved until you say yes. Shall I add "+flow.Name+" at "+money.GHS(flow.ListPrice)+"? Say yes to save it, or no to drop it.")
@@ -1008,7 +1097,7 @@ func gotoNextOnboardingStep(from string, flow *OnboardingFlow) {
 			// One composition call settles the unit and the
 			// sizes together (see model.JudgeShape); the
 			// sizes ride along so the save never judges twice.
-			unit, certain, sizes := model.JudgeShape(flow.Name, strings.TrimSpace(flow.Description+" "+flow.SizeNote))
+			unit, certain, sizes := model.JudgeShape(flow.Name, strings.TrimSpace(flow.Description+" "+flow.SizeNote), turnTokenFor(from))
 			if len(flow.Sizes) == 0 {
 				flow.Sizes = sizes
 			}
@@ -1081,6 +1170,22 @@ func askOnboardingStep(from string, flow *OnboardingFlow) {
 // when she sells by one, and the margin she is handing the agent
 // to haggle with. Nothing is saved until her clear yes at the
 // confirm step, exactly as before measures existed.
+
+// sessionOfFlow finds the session whose onboarding walk is
+// this flow, so a step deep in the walk can arm a question
+// on the session the answer will be read in.
+func sessionOfFlow(flow *OnboardingFlow) *Session {
+	var found *Session
+	sessions.rangeAll(func(_ string, s *Session) bool {
+		if s != nil && s.Onboarding == flow {
+			found = s
+			return false
+		}
+		return true
+	})
+	return found
+}
+
 func enterOnboardingConfirm(from string, flow *OnboardingFlow) {
 	flow.Step = "confirm"
 	summary := "Here is what will go live:\n" +
@@ -1098,7 +1203,11 @@ func enterOnboardingConfirm(from string, flow *OnboardingFlow) {
 		summary += "That leaves " + money.GHS(flow.ListPrice-flow.FloorPrice) + " I can give away when customers bargain, always inside your daily allowance.\n"
 	}
 	summary += "\nShall I add it?"
-	sendYesNo(from, summary, "Yes, save it", "No, drop it")
+	if s := sessionOfFlow(flow); s != nil {
+		askYesNo(from, s, "listing", flow.Name, summary, "Yes, save it", "No, drop it")
+	} else {
+		whatsapp.SendText(from, summary)
+	}
 }
 
 // handleMerchantCommand runs one catalogue command outside the
@@ -1142,7 +1251,7 @@ func retryPaymentSetup(from string, merchant *catalogue.Merchant, lower string) 
 		whatsapp.SendText(from, "Seev could not set up the payment account this time either. Your shop is unaffected. We can try again whenever you say \"set up my payment\".")
 		return true
 	}
-	_ = catalogue.SetSubaccount(merchant.ID, code, holder)
+	_ = catalogue.SetSubaccount(merchant.ID, code, holder, merchant.PayoutPhone)
 	whatsapp.SendText(from, "It is done. Your payment account is set up: money from your payment links settles to your MoMo in the name "+holder+", usually the next day. Of every sale you keep 99%; 1% stays with the platform.")
 	return true
 }
@@ -1464,7 +1573,8 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			return true
 		}
 		s.PendingRemove = product.Name
-		sendYesNo(from, "Remove "+product.Name+" from your catalogue? Customers will no longer be offered it.", "Yes, remove it", "No, keep it")
+		s.PendingRemoveID = product.ID
+		askYesNo(from, s, "remove", product.Name, "Remove "+product.Name+" from your catalogue? Customers will no longer be offered it.", "Yes, remove it", "No, keep it")
 		return true
 	}
 
@@ -1499,11 +1609,11 @@ var dayAskRe = regexp.MustCompile(`^(today[.!?]?|how is today|how'?s today|how i
 // throw-in's), or one text judgement over the seller's name
 // and description when none did. No sizes anywhere is a
 // plain outcome, not an error: most goods have none.
-func flowSizes(flow *OnboardingFlow) []string {
+func flowSizes(from string, flow *OnboardingFlow) []string {
 	if len(flow.Sizes) > 0 {
 		return flow.Sizes
 	}
-	_, _, sizes := model.JudgeShape(flow.Name, strings.TrimSpace(flow.Description+" "+flow.SizeNote))
+	_, _, sizes := model.JudgeShape(flow.Name, strings.TrimSpace(flow.Description+" "+flow.SizeNote), turnTokenFor(from))
 	return sizes
 }
 
@@ -1578,12 +1688,13 @@ func divisibleUnit(unit string) bool {
 // product are still told, as with any save.
 func savePhotoCompactListing(from string, flow *OnboardingFlow) {
 	var s *Session
-	for _, candidate := range sessions {
+	sessions.rangeAll(func(_ string, candidate *Session) bool {
 		if candidate.Onboarding == flow {
 			s = candidate
-			break
+			return false
 		}
-	}
+		return true
+	})
 	if s == nil {
 		return
 	}
@@ -1597,7 +1708,7 @@ func savePhotoCompactListing(from string, flow *OnboardingFlow) {
 		Stock:       1,
 		Unit:        flow.Unit,
 		BaseQty:     flow.BaseQty,
-		Sizes:       flowSizes(flow),
+		Sizes:       flowSizes(from, flow),
 	})
 	s.Onboarding = nil
 	if err != nil {

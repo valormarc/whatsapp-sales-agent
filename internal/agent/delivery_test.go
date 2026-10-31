@@ -36,7 +36,7 @@ func TestDeliveryLoopClosesTheSale(t *testing.T) {
 	seedPaidOrder(t, "EFUA-1001", buyer)
 
 	// The seller says it has gone; the buyer hears it.
-	if !actOnMerchantUnderstanding(owner, shop, MerchantID, "I have sent the bag order, it is with the rider", &understood{Intent: intentOrderSent}) {
+	if !inTurn(owner, func() bool { return actOnMerchantUnderstanding(owner, shop, MerchantID, "I have sent the bag order, it is with the rider", &understood{Intent: intentOrderSent}) }) {
 		t.Fatalf("the sent report should be served")
 	}
 	o := orders.Default.GetOrder("EFUA-1001")
@@ -73,16 +73,41 @@ func TestDeliveryMissingIsPassedToTheSeller(t *testing.T) {
 	buyer := "233550002003"
 	seedPaidOrder(t, "EFUA-1002", buyer)
 
+	// The seeded order was never dispatched. The report
+	// is still passed to the seller at once, with the
+	// buyer's number — but as a chase in the order's true
+	// position (the seventh audit): the "missing" state
+	// is dispatch-gated, so an undispatched order keeps
+	// its place on the waiting-to-send lists.
 	if !actOnBuyerUnderstanding(buyer, &Session{Stage: "browsing"}, shop, MerchantID, &understood{Intent: intentOrderMissing}) {
 		t.Fatalf("the missing report should be served")
 	}
 	o := orders.Default.GetOrder("EFUA-1002")
-	if o.DeliveryState != "missing" {
-		t.Fatalf("the order should stand missing, got %+v", o)
+	if o.DeliveryState != "" {
+		t.Fatalf("an undispatched order must not advance to missing, got %+v", o)
 	}
 	got := strings.Join(c.replies(t, owner), "\n")
+	if !strings.Contains(got, "chasing") || !strings.Contains(got, "not been marked as sent") || !strings.Contains(got, buyer) {
+		t.Fatalf("the seller should get the chase with the buyer's number, got %q", got)
+	}
+
+	// Once the order is dispatched, the same report does
+	// record missing, in the original words.
+	orders.Default.Update("EFUA-1002", func(x *orders.Order) {
+		x.DeliveryState = "sent"
+		x.SentAt = "2026-10-31T00:00:00Z"
+	})
+	_ = c.replies(t, owner)
+	if !actOnBuyerUnderstanding(buyer, &Session{Stage: "browsing"}, shop, MerchantID, &understood{Intent: intentOrderMissing}) {
+		t.Fatalf("the dispatched missing report should be served")
+	}
+	o = orders.Default.GetOrder("EFUA-1002")
+	if o.DeliveryState != "missing" {
+		t.Fatalf("a dispatched order's report should stand missing, got %+v", o)
+	}
+	got = strings.Join(c.replies(t, owner), "\n")
 	if !strings.Contains(got, "has not arrived") || !strings.Contains(got, buyer) {
-		t.Fatalf("the seller should get the report with the buyer's number, got %q", got)
+		t.Fatalf("the seller should get the missing report with the buyer's number, got %q", got)
 	}
 }
 
@@ -97,7 +122,7 @@ func TestDeliveryGuards(t *testing.T) {
 		From: buyer, Status: "pending", ProductName: "Handmade Beaded Bag",
 		Price: 850, Total: 850, MerchantID: MerchantID,
 	})
-	if !actOnMerchantUnderstanding(owner, shop, MerchantID, "I have sent EFUA-1003", &understood{Intent: intentOrderSent}) {
+	if !inTurn(owner, func() bool { return actOnMerchantUnderstanding(owner, shop, MerchantID, "I have sent EFUA-1003", &understood{Intent: intentOrderSent}) }) {
 		t.Fatalf("the named unpaid order should be answered")
 	}
 	if got := strings.Join(c.replies(t, owner), "\n"); !strings.Contains(got, "has not been paid yet") {

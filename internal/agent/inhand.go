@@ -24,8 +24,6 @@ package agent
 // wait, or walk away — the cancel law covers her.
 
 import (
-	"encoding/json"
-	"os"
 	"sync"
 	"time"
 
@@ -55,23 +53,13 @@ type inHandRequest struct {
 var inHandMu sync.Mutex
 
 func loadInHand() []inHandRequest {
-	data, err := os.ReadFile(datadir.Path("inhands.json"))
-	if err != nil {
-		return nil
-	}
 	var out []inHandRequest
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil
-	}
+	loadBookJSON(datadir.Path("inhands.json"), &out)
 	return out
 }
 
 func saveInHand(all []inHandRequest) {
-	data, err := json.MarshalIndent(all, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(datadir.Path("inhands.json"), data, 0o600)
+	saveBookJSON(datadir.Path("inhands.json"), all)
 }
 
 func openInHand(q inHandRequest) {
@@ -87,6 +75,26 @@ func openInHand(q inHandRequest) {
 	q.CreatedAt = time.Now().UTC().Format(time.RFC3339)
 	all = append(all, q)
 	saveInHand(all)
+}
+
+// forgetInHand drops every in-hand wait naming one buyer,
+// for a "delete my data" request.
+func forgetInHand(buyer string) {
+	inHandMu.Lock()
+	defer inHandMu.Unlock()
+	all := loadInHand()
+	kept := all[:0]
+	changed := false
+	for _, q := range all {
+		if q.Buyer == buyer {
+			changed = true
+			continue
+		}
+		kept = append(kept, q)
+	}
+	if changed {
+		saveInHand(kept)
+	}
 }
 
 func oldestOpenInHand(shopID string) *inHandRequest {
@@ -143,17 +151,38 @@ func inHandGrounds(merchant *catalogue.Merchant, s *Session, price float64) stri
 // beginInHandWait parks the sale at the threshold of
 // payment: the settled fulfilment goes back on the session,
 // the step becomes the wait, and both sides are told.
+
+// merchantSessionFor returns the merchant's own session for
+// her shop, creating it when she has none yet, so a question
+// asked of her (the in-hand confirmation) can be armed on the
+// same session her answer will be read in.
+func merchantSessionFor(merchantID, phone string) *Session {
+	key := sessionKey(merchantID, phone)
+	s, ok := sessions.lookup(key)
+	if !ok || s == nil {
+		s = &Session{Stage: "merchant", MerchantID: merchantID}
+		sessions.put(key, s)
+	}
+	return s
+}
+
 func beginInHandWait(from string, s *Session, merchant *catalogue.Merchant, f fulfilment, grounds string) {
 	shopID := s.MerchantID
 	openInHand(inHandRequest{ShopID: shopID, Buyer: from, Item: s.itemLabel(), Price: basketGoods(s) + s.AgreedPrice})
 	s.PendingFulfil = f
 	s.FulfilStep = "inhandwait"
-	sessions[sessionKey(shopID, from)] = s
+	sessions.put(sessionKey(shopID, from), s)
 	sendPieces(from,
 		grounds,
 		"I have asked "+merchant.Name+" to confirm. The moment she does, your payment button follows, and nothing is paid before it.")
 	if phone := merchantNotifyPhone(merchant); phone != "" {
-		sendYesNo(phone, "One moment before your buyer pays: she is buying the "+s.itemLabel()+" ("+money.GHS(basketGoods(s)+s.AgreedPrice)+").\nDo you have it in hand now?", "Yes, in hand", "Not in hand")
+		// The question is armed on the merchant's session
+		// from the buyer's turn, so it is armed under the
+		// merchant's turn lock, the reverse of the usual
+		// direction and the same discipline.
+		withCrossLock(from, phone, func() {
+			askYesNo(phone, merchantSessionFor(merchant.ID, phone), "inhand", from, "One moment before your buyer pays: she is buying the "+s.itemLabel()+" ("+money.GHS(basketGoods(s)+s.AgreedPrice)+").\nDo you have it in hand now?", "Yes, in hand", "Not in hand")
+		})
 	}
 }
 
@@ -164,10 +193,12 @@ func beginInHandWait(from string, s *Session, merchant *catalogue.Merchant, f fu
 func reopenInHand(from string, s *Session, merchant *catalogue.Merchant) {
 	openInHand(inHandRequest{ShopID: s.MerchantID, Buyer: from, Item: s.itemLabel(), Price: basketGoods(s) + s.AgreedPrice})
 	s.FulfilStep = "inhandwait"
-	sessions[sessionKey(s.MerchantID, from)] = s
+	sessions.put(sessionKey(s.MerchantID, from), s)
 	whatsapp.SendText(from, "I have asked "+merchant.Name+" again to confirm the "+s.itemLabel()+" is in hand.")
 	if phone := merchantNotifyPhone(merchant); phone != "" {
-		sendYesNo(phone, "Your buyer is still waiting: do you have the "+s.itemLabel()+" ("+money.GHS(basketGoods(s)+s.AgreedPrice)+") in hand now?", "Yes, in hand", "Not in hand")
+		withCrossLock(from, phone, func() {
+			askYesNo(phone, merchantSessionFor(merchant.ID, phone), "inhand", from, "Your buyer is still waiting: do you have the "+s.itemLabel()+" ("+money.GHS(basketGoods(s)+s.AgreedPrice)+") in hand now?", "Yes, in hand", "Not in hand")
+		})
 	}
 }
 
@@ -186,32 +217,50 @@ func handleMerchantInHand(from string, merchant *catalogue.Merchant, text, lower
 	if !yes && !no {
 		return false
 	}
+	// The answer is hers to give only for the in-hand
+	// question: when another question is the armed one on
+	// her session (a removal, a listing), this yes or no is
+	// that question's, and the in-hand wait stands.
+	if ms := sessions.get(sessionKey(merchant.ID, from)); ms != nil && !ms.yesNoFor("inhand") {
+		return false
+	}
+	if ms := sessions.get(sessionKey(merchant.ID, from)); ms != nil {
+		ms.clearYesNo("inhand")
+	}
 	buyer := q.Buyer
 	key := sessionKey(merchant.ID, buyer)
-	sess := sessions[key]
-	live := sess != nil && sess.Stage == "fulfilment" && (sess.FulfilStep == "inhandwait" || sess.FulfilStep == "inhandexpired")
-	if no {
-		settleInHand(merchant.ID, buyer, "refused")
-		if live {
-			whatsapp.SendText(buyer, merchant.Name+" says she does not have the "+q.Item+" in hand, so this sale cannot go ahead. Nothing has been charged.")
-			dropPendingSale(buyer, sess)
-		} else {
-			whatsapp.SendText(buyer, merchant.Name+" says she does not have the "+q.Item+" in hand, so that sale cannot go ahead. Nothing was charged.")
+	// Everything below writes the buyer's session from
+	// the merchant's turn — advancing it, putting the
+	// sale down, or completing it — so it runs under the
+	// buyer's turn lock. Without it, her own concurrent
+	// turn (a cancellation, say) could be silently undone
+	// by the session this answer replaces or advances.
+	withCrossLock(from, buyer, func() {
+		sess := sessions.get(key)
+		live := sess != nil && sess.Stage == "fulfilment" && (sess.FulfilStep == "inhandwait" || sess.FulfilStep == "inhandexpired")
+		if no {
+			settleInHand(merchant.ID, buyer, "refused")
+			if live {
+				whatsapp.SendText(buyer, merchant.Name+" says she does not have the "+q.Item+" in hand, so this sale cannot go ahead. Nothing has been charged.")
+				dropPendingSale(buyer, sess)
+			} else {
+				whatsapp.SendText(buyer, merchant.Name+" says she does not have the "+q.Item+" in hand, so that sale cannot go ahead. Nothing was charged.")
+			}
+			whatsapp.SendText(from, "Understood. I have told the buyer, and the sale is closed.")
+			return
 		}
-		whatsapp.SendText(from, "Understood. I have told the buyer, and the sale is closed.")
-		return true
-	}
-	settleInHand(merchant.ID, buyer, "confirmed")
-	if live {
-		sess.InHandOK = true
-		f := sess.PendingFulfil
-		sess.PendingFulfil = fulfilment{}
-		sessions[key] = sess
-		whatsapp.SendText(from, "Thank you. Her payment button is going out now.")
-		completeSale(buyer, sess, sess.AgreedPrice, f)
-	} else {
-		whatsapp.SendText(from, "Thank you. That buyer is not in a live chat just now; when she returns, the sale can complete.")
-	}
+		settleInHand(merchant.ID, buyer, "confirmed")
+		if live {
+			sess.InHandOK = true
+			f := sess.PendingFulfil
+			sess.PendingFulfil = fulfilment{}
+			sessions.put(key, sess)
+			whatsapp.SendText(from, "Thank you. Her payment button is going out now.")
+			completeSale(buyer, sess, sess.AgreedPrice, f)
+		} else {
+			whatsapp.SendText(from, "Thank you. That buyer is not in a live chat just now; when she returns, the sale can complete.")
+		}
+	})
 	return true
 }
 
@@ -226,6 +275,9 @@ func CheckInHand(now time.Time) {
 		if all[i].Status != "open" {
 			continue
 		}
+		if len(expired) >= maxPrePassPerSweep {
+			continue // bounded per sweep; the rest carry to the next tick
+		}
 		created, err := time.Parse(time.RFC3339, all[i].CreatedAt)
 		if err != nil || now.Sub(created) < inHandTimeout {
 			continue
@@ -237,17 +289,51 @@ func CheckInHand(now time.Time) {
 		saveInHand(all)
 	}
 	inHandMu.Unlock()
-	for _, q := range expired {
+	for i, q := range expired {
+		if prePassSpent() {
+			// The sweep's shared pre-pass budget is
+			// gone: the tail goes back to open, in
+			// step with the messages never sent, and
+			// carries to the next tick.
+			unexpireInHand(expired[i:])
+			break
+		}
 		merchant := catalogue.GetMerchant(q.ShopID)
 		name := "The shop"
 		if merchant != nil {
 			name = merchant.Name
 		}
 		key := sessionKey(q.ShopID, q.Buyer)
-		if sess := sessions[key]; sess != nil && sess.Stage == "fulfilment" && sess.FulfilStep == "inhandwait" {
+		// The pass writes the buyer's session, so it takes
+		// her turn lock, the same discipline as a turn of
+		// her own.
+		lock := turnLockFor(q.Buyer)
+		lock.Lock()
+		if sess := sessions.get(key); sess != nil && sess.Stage == "fulfilment" && sess.FulfilStep == "inhandwait" {
 			sess.FulfilStep = "inhandexpired"
-			sessions[key] = sess
+			sessions.put(key, sess)
 		}
+		lock.Unlock()
 		whatsapp.SendText(q.Buyer, name+" has not confirmed the "+q.Item+" is in hand yet. You can keep waiting, just say wait, or say cancel and nothing more will happen. Nothing is paid until she confirms and you see your total.")
 	}
+}
+
+// unexpireInHand returns requests a budget-cut pass
+// marked expired but never messaged back to open, so
+// the next tick actions them whole.
+func unexpireInHand(qs []inHandRequest) {
+	inHandMu.Lock()
+	defer inHandMu.Unlock()
+	all := loadInHand()
+	for i := range all {
+		if all[i].Status != "expired" {
+			continue
+		}
+		for _, q := range qs {
+			if all[i].ShopID == q.ShopID && all[i].Buyer == q.Buyer && all[i].Item == q.Item && all[i].CreatedAt == q.CreatedAt {
+				all[i].Status = "open"
+			}
+		}
+	}
+	saveInHand(all)
 }

@@ -23,6 +23,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Sandbox hygiene: the child below is configured entirely
+// by its own literal env (a loopback Seev stub and an empty
+// app secret); the live WhatsApp credentials must not leak
+// into it from the operator's shell through the spread.
+delete process.env.WHATSAPP_TOKEN;
+delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+delete process.env.WHATSAPP_APP_SECRET;
+delete process.env.WHATSAPP_VERIFY_TOKEN;
+delete process.env.SEEV_SECRET_KEY;
+delete process.env.SEEV_API_KEY;
+delete process.env.SEEV_WEBHOOK_SECRET;
+
 const BIN = fileURLToPath(new URL('../agent', import.meta.url));
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -211,7 +223,8 @@ const child = spawn(BIN, [], {
     MERCHANT_WHATSAPP: '233550009999',
     HACKATHON_AGENT_DATA_DIR: DATA,
     META_MODEL_API_KEY: '',
-    WHATSAPP_DRY_RUN: '1',
+    WHATSAPP_DRY_RUN: '1', STALL_SANDBOX_ALLOW_MODEL: '1',
+    WHATSAPP_VERIFY_TOKEN: 'sim-verify-token',
     WHATSAPP_APP_SECRET: '',
     SEEV_SECRET_KEY: 'sk_sim',
     SEEV_WEBHOOK_SECRET: SEEV_WEBHOOK_SECRET,
@@ -387,6 +400,13 @@ try {
   );
 } finally {
   child.kill();
+  // Wait for the child to die before clearing its data
+  // away: on the kill signal the agent writes a final
+  // session snapshot into that directory, and removing
+  // files under a process that is still writing them
+  // races (ENOTEMPTY). Three seconds is generous; the
+  // wait ends the moment the child exits.
+  await new Promise((resolve) => { child.once('exit', resolve); setTimeout(resolve, 3000); });
   if (failures === 0) rmSync(DATA, { recursive: true, force: true });
   else console.log(`scratch data kept for inspection: ${DATA}`);
 }

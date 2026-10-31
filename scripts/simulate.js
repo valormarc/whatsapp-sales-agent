@@ -12,16 +12,36 @@
 //   agent; when B will not meet the final stand, the agent lets B go.
 // Run: npm run simulate
 import { spawn } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// Sandbox hygiene: a dry-run child must never inherit live
+// send or settle credentials from the operator's shell. The
+// agent's sandbox exception is bound to a send-incapable
+// process, so the live WhatsApp and Seev credentials are
+// blanked here, before any child env is built from this one.
+delete process.env.WHATSAPP_TOKEN;
+delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+delete process.env.WHATSAPP_APP_SECRET;
+delete process.env.WHATSAPP_VERIFY_TOKEN;
+delete process.env.SEEV_SECRET_KEY;
+delete process.env.SEEV_API_KEY;
+delete process.env.SEEV_WEBHOOK_SECRET;
 
 const BIN = fileURLToPath(new URL('../agent', import.meta.url));
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 const PORT = 4100;
 const BASE = `http://localhost:${PORT}`;
-const OUTBOX = new URL('../data/outbox.jsonl', import.meta.url);
-const DAYBOOK = new URL('../data/daybook.json', import.meta.url);
+// Each run gets a fresh scratch data dir, like the newer
+// simulators: sharing the repo's live data/ made runs
+// poison each other (depleted seed stock, stale sessions),
+// and the failures read as agent regressions.
+const DATA = mkdtempSync(join(tmpdir(), 'plain-sim-'));
+const OUTBOX = join(DATA, 'outbox.jsonl');
+const DAYBOOK = join(DATA, 'daybook.json');
 const MERCHANT = '233550000999';
 
 // Both customers enter through Efua's shop link, whose prefilled
@@ -123,7 +143,7 @@ if (!existsSync(BIN)) {
 }
 const child = spawn(BIN, [], {
   cwd: ROOT,
-  env: { ...process.env, PORT: `${PORT}`, MERCHANT_WHATSAPP: MERCHANT, WHATSAPP_VERIFY_TOKEN: 'sim-verify-token', WHATSAPP_DRY_RUN: '1', WHATSAPP_APP_SECRET: '' },
+  env: { ...process.env, HACKATHON_AGENT_DATA_DIR: DATA, PORT: `${PORT}`, MERCHANT_WHATSAPP: MERCHANT, WHATSAPP_VERIFY_TOKEN: 'sim-verify-token', WHATSAPP_DRY_RUN: '1', STALL_SANDBOX_ALLOW_MODEL: '1', WHATSAPP_APP_SECRET: '', META_MODEL_API_KEY: '' },
   stdio: 'ignore',
 });
 

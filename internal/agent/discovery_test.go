@@ -130,8 +130,8 @@ func TestDiscoveryPickBindsHerToThatShop(t *testing.T) {
 	if !strings.Contains(got, "Welcome to LUXE.") || !strings.Contains(got, "Price: GH₵6,800") {
 		t.Fatalf("she should land in LUXE with the laptop in focus, got %q", got)
 	}
-	if bindings[buyer] != "luxe" {
-		t.Fatalf("the buyer should be bound to luxe, got %q", bindings[buyer])
+	if bindings.get(buyer) != "luxe" {
+		t.Fatalf("the buyer should be bound to luxe, got %q", bindings.get(buyer))
 	}
 }
 
@@ -181,7 +181,7 @@ func TestDiscoverySingleMatchPresentsDirectly(t *testing.T) {
 	if !strings.Contains(got, "LUXE has it:") || !strings.Contains(got, "Price: GH₵80") {
 		t.Fatalf("the one match should be put in front of her, got %q", got)
 	}
-	if bindings[buyer] == "luxe" {
+	if bindings.get(buyer) == "luxe" {
 		t.Fatalf("presenting the match must not bind her before her pick, got %q", got)
 	}
 	c.say(t, buyer, "The sandals")
@@ -210,16 +210,16 @@ func TestDiscoveryPickFromShownResultsBindsWithoutTheModel(t *testing.T) {
 	}
 	c.say(t, buyer, "The sandals")
 	got = strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Welcome to LUXE.") || bindings[buyer] != "luxe" {
-		t.Fatalf("the pick should bind her to LUXE, got %q (bound %q)", got, bindings[buyer])
+	if !strings.Contains(got, "Welcome to LUXE.") || bindings.get(buyer) != "luxe" {
+		t.Fatalf("the pick should bind her to LUXE, got %q (bound %q)", got, bindings.get(buyer))
 	}
 	// An ordinal pick works the same way for a fresh buyer.
 	buyer2 := "233550007007"
 	c.say(t, buyer2, "I am looking for beaded sandals")
 	c.replies(t, buyer2)
 	c.say(t, buyer2, "The first one")
-	if bindings[buyer2] != "luxe" {
-		t.Fatalf("the ordinal pick should bind her to LUXE, got %q", bindings[buyer2])
+	if bindings.get(buyer2) != "luxe" {
+		t.Fatalf("the ordinal pick should bind her to LUXE, got %q", bindings.get(buyer2))
 	}
 }
 
@@ -290,8 +290,8 @@ func TestDiscoveryNetCheapestPicShowsTheCheapest(t *testing.T) {
 
 	c.say(t, buyer, "send pic of the cheapest heel")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if bindings[buyer] != "zshop" {
-		t.Fatalf("she should land in the cheapest heel's shop, bound to %q, got %q", bindings[buyer], got)
+	if bindings.get(buyer) != "zshop" {
+		t.Fatalf("she should land in the cheapest heel's shop, bound to %q, got %q", bindings.get(buyer), got)
 	}
 	if !strings.Contains(got, "Block Heel") {
 		t.Fatalf("the cheapest heel should be the one shown, got %q", got)

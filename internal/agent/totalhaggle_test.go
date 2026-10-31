@@ -10,6 +10,8 @@ package agent
 // hand, offered 509.
 
 import (
+	"math"
+	"math/rand"
 	"regexp"
 	"strconv"
 	"strings"
@@ -54,7 +56,7 @@ func TestTypedDoneStartsTheSettling(t *testing.T) {
 	if !strings.Contains(got, "one by one") || !strings.Contains(got, "Double Clothes Rack") || !strings.Contains(got, "GH₵270") {
 		t.Fatalf("a typed Done should start the settling on the first pick, got %q", got)
 	}
-	s := sessions[sessionKey(MerchantID, buyer)]
+	s := sessions.get(sessionKey(MerchantID, buyer))
 	if s == nil || !s.ShelfSettling || s.Product == nil || s.Product.ID != "rack" || len(s.ShelfPicks) != 1 {
 		t.Fatalf("the session should be settling the rack with the dress queued, got %+v", s)
 	}
@@ -92,7 +94,7 @@ func TestTotalOfferSettlesTheWholeHand(t *testing.T) {
 	if err != nil || agreedTotal < 500 || agreedTotal > 550 {
 		t.Fatalf("the agreed total should sit between the summed floors and the total, got %v", agreedTotal)
 	}
-	s := sessions[sessionKey(MerchantID, buyer)]
+	s := sessions.get(sessionKey(MerchantID, buyer))
 	if s == nil || len(s.TotalHand) != 0 || len(s.ShelfPicks) != 0 || len(s.Basket) != 2 || s.Product == nil || s.Product.ID != "halter" {
 		t.Fatalf("the hand should be apportioned into the basket by agreement time, got %+v", s)
 	}
@@ -151,7 +153,7 @@ func TestAgreedPickStartsTheSettling(t *testing.T) {
 	if !strings.Contains(got, "Now the next one you picked:") || !strings.Contains(got, "Denim Mini Dress") {
 		t.Fatalf("agreeing a pick should park it and present the next pick, got %q", got)
 	}
-	s := sessions[sessionKey(MerchantID, buyer)]
+	s := sessions.get(sessionKey(MerchantID, buyer))
 	if s == nil || len(s.Basket) != 1 || s.Basket[0].Product.ID != "bag" || s.Product == nil || s.Product.ID != "dress" {
 		t.Fatalf("the bag should be parked with the dress in front of her, got %+v", s)
 	}
@@ -179,7 +181,7 @@ func TestDeclaredTotalOfferBelowDearestItem(t *testing.T) {
 	if !strings.Contains(got, "For all of them together") || !strings.Contains(got, "GH₵550") {
 		t.Fatalf("a declared total offer should open the haggle on the whole hand, got %q", got)
 	}
-	s := sessions[sessionKey(MerchantID, buyer)]
+	s := sessions.get(sessionKey(MerchantID, buyer))
 	if s == nil || len(s.TotalHand) != 3 {
 		t.Fatalf("the haggle should be over the three-item hand, got %+v", s)
 	}
@@ -199,7 +201,7 @@ func TestTotalHaggleSkipsAStockedOutPick(t *testing.T) {
 	if _, err := catalogue.SetStock(MerchantID, "Ribbed Off-Shoulder Bodycon Maxi Dress", 0); err != nil {
 		t.Fatal(err)
 	}
-	s := sessions[sessionKey(MerchantID, buyer)]
+	s := sessions.get(sessionKey(MerchantID, buyer))
 	if count, total := picksFigure(s, MerchantID); count != 2 || total != 420 {
 		t.Fatalf("the picks figure should count only suppliable goods, got %d / %v", count, total)
 	}
@@ -209,7 +211,7 @@ func TestTotalHaggleSkipsAStockedOutPick(t *testing.T) {
 	if !strings.Contains(got, "GH₵420") || strings.Contains(got, "Ribbed") {
 		t.Fatalf("the total should be struck over the two suppliable picks only, got %q", got)
 	}
-	s = sessions[sessionKey(MerchantID, buyer)]
+	s = sessions.get(sessionKey(MerchantID, buyer))
 	if s == nil || len(s.TotalHand) != 0 || len(s.Basket) != 1 || s.Product == nil || s.Product.ID != "halter" {
 		t.Fatalf("the two-item hand should be apportioned into the order, got %+v", s)
 	}
@@ -233,8 +235,51 @@ func TestNamedOfferIsNotReadOnTheHand(t *testing.T) {
 	if !strings.Contains(got, "How do you want to get it?") {
 		t.Fatalf("the named item should settle on its own road, got %q", got)
 	}
-	s := sessions[sessionKey(MerchantID, buyer)]
+	s := sessions.get(sessionKey(MerchantID, buyer))
 	if s == nil || len(s.ShelfPicks) != 2 || s.ShelfSettling {
 		t.Fatalf("her picks should be untouched by another item's sale, got %+v", s)
+	}
+}
+
+// Run-2 regression: pesewa-priced hands. The old float
+// shape rounded every share to whole cedis, so the traced
+// hand (10.50 over 10.20, twice, total 20.50) came back
+// 20.40, and a share could round above its own list
+// price. Pesewa arithmetic closes the sum exactly.
+func TestApportionTotalPesewaHandsCloseExactly(t *testing.T) {
+	hand := []catalogue.Product{
+		{ListPrice: 10.50, FloorPrice: 10.20},
+		{ListPrice: 10.50, FloorPrice: 10.20},
+	}
+	prices := apportionTotal(hand, 20.50)
+	if len(prices) != 2 || prices[0] != 10.25 || prices[1] != 10.25 {
+		t.Fatalf("the pesewa hand must apportion 10.25 + 10.25, got %v", prices)
+	}
+
+	rng := rand.New(rand.NewSource(11))
+	for trial := 0; trial < 3000; trial++ {
+		n := 2 + rng.Intn(4)
+		hand := make([]catalogue.Product, n)
+		var listSum, floorSum float64
+		for i := range hand {
+			list := float64(100+rng.Intn(90000)) / 100
+			floor := float64(int64(list*100)*int64(50+rng.Intn(45)) / 100) / 100
+			hand[i] = catalogue.Product{ListPrice: list, FloorPrice: floor}
+			listSum += list
+			floorSum += floor
+		}
+		total := floorSum + rng.Float64()*(listSum-floorSum)
+		total = float64(int64(total*100)) / 100
+		prices := apportionTotal(hand, total)
+		var sum float64
+		for i, p := range prices {
+			sum += p
+			if p < hand[i].FloorPrice-0.001 || p > hand[i].ListPrice+0.001 {
+				t.Fatalf("trial %d: share %v outside [%v, %v]", trial, p, hand[i].FloorPrice, hand[i].ListPrice)
+			}
+		}
+		if math.Round(sum*100) != math.Round(total*100) {
+			t.Fatalf("trial %d: shares sum to %v, agreed total %v (hand %v)", trial, sum, total, hand)
+		}
 	}
 }

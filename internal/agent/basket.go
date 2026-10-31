@@ -119,7 +119,7 @@ func namedBasketCandidate(s *Session, msg string) *catalogue.Product {
 	var best *catalogue.Product
 	for _, p := range catalogue.ListProducts(s.MerchantID) {
 		pp := p
-		if inBasket(s, &pp) {
+		if pp.AvailableUnits() <= 0 || inBasket(s, &pp) {
 			continue
 		}
 		name := strings.ToLower(pp.Name)
@@ -144,7 +144,7 @@ func addQuestionText(s *Session, p *catalogue.Product) string {
 
 // askAdd puts the add question on its buttons.
 func askAdd(from string, s *Session, p *catalogue.Product) {
-	sendYesNo(from, addQuestionText(s, p), "Yes, add it", "No, leave it")
+	askYesNo(from, s, "add", p.Name, addQuestionText(s, p), "Yes, add it", "No, leave it")
 }
 
 // offerAdd puts the confirming question for a verified
@@ -154,6 +154,14 @@ func offerAdd(from string, s *Session, merchant *catalogue.Merchant, candidate *
 	if candidate == nil {
 		return false
 	}
+	if candidate.AvailableUnits() <= 0 {
+		// The sink guard (the seventh audit): a candidate
+		// the thinking road resolved is checked here too,
+		// so no source can price a sold-out add.
+		whatsapp.SendText(from, "The "+candidate.Name+" has sold out, so I cannot add it to this order.")
+		reaskFulfilStep(from, s)
+		return true
+	}
 	key := sessionKey(s.MerchantID, from)
 	if inBasket(s, candidate) {
 		whatsapp.SendText(from, "The "+candidate.Name+" is already in this order.")
@@ -161,7 +169,7 @@ func offerAdd(from string, s *Session, merchant *catalogue.Merchant, candidate *
 		return true
 	}
 	s.PendingAdd = candidate
-	sessions[key] = s
+	sessions.put(key, s)
 	askAdd(from, s, candidate)
 	return true
 }
@@ -175,6 +183,11 @@ func offerAdd(from string, s *Session, merchant *catalogue.Merchant, candidate *
 func servePendingAdd(from string, s *Session, merchant *catalogue.Merchant, msg, lower string) bool {
 	key := sessionKey(s.MerchantID, from)
 	candidate := s.PendingAdd
+	// A bare yes or no while a different question is armed
+	// in her chat is that question's answer, not this one's.
+	if !s.yesNoFor("add") && (isClearYes(lower) || isClearNo(lower)) {
+		return false
+	}
 	if reading := thinkStageIntent(from, s, merchant, msg); reading.Intent == stageIntentPicture {
 		answerPictureAsk(from, merchant, candidate)
 		askAdd(from, s, candidate)
@@ -187,6 +200,7 @@ func servePendingAdd(from string, s *Session, merchant *catalogue.Merchant, msg,
 		// Park what is settled, exactly as it was agreed.
 		s.Basket = append(s.Basket, BasketItem{Product: s.Product, AgreedPrice: s.AgreedPrice, Qty: s.Qty, Unit: s.Unit})
 		s.PendingAdd = nil
+		s.clearYesNo("add")
 		s.Product = candidate
 		s.Ask = candidate.ListPrice
 		s.AgreedPrice = 0
@@ -197,14 +211,15 @@ func servePendingAdd(from string, s *Session, merchant *catalogue.Merchant, msg,
 		s.PendingFulfil = fulfilment{}
 		s.Stage = "browsing"
 		s.LastViewed = candidate
-		sessions[key] = s
+		sessions.put(key, s)
 		whatsapp.SendText(from, "Added. The "+s.Basket[len(s.Basket)-1].Product.Name+" stays in your order.")
 		sendProductView(from, candidate, " Make me an offer and let us see.")
 		return true
 	}
 	if isClearNo(lower) {
 		s.PendingAdd = nil
-		sessions[key] = s
+		s.clearYesNo("add")
+		sessions.put(key, s)
 		reaskFulfilStep(from, s)
 		return true
 	}

@@ -116,9 +116,16 @@ func TestDisputeFreezesAndGoodsCloseIt(t *testing.T) {
 		t.Fatalf("the order must stand disputed, got %+v", o)
 	}
 
-	// The goods arriving closes it clean.
+	// The goods arriving closes it clean — once they have
+	// actually been sent. (Run-2: arrival on a never-sent
+	// order closed disputes and minted delivery credit;
+	// the sent mark now comes first, as it must in life.)
+	orders.Default.Update("EFUA-0001", func(o *orders.Order) {
+		o.DeliveryState = "sent"
+		o.SentAt = nowStamp()
+	})
 	shop := catalogue.GetMerchant("efua")
-	sess := sessions[sessionKey("efua", buyer)]
+	sess := sessions.get(sessionKey("efua", buyer))
 	if !actOnBuyerUnderstanding(buyer, sess, shop, "efua", &understood{Intent: intentOrderReceived}) {
 		t.Fatal("the arrival confirmation should be served")
 	}
@@ -183,7 +190,12 @@ func TestSellerStandingCountsFromTheBook(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		ref := "EFUA-000" + string(rune('0'+i))
 		paidOrderFor("efua", ref, buyer, 100)
-		orders.Default.Update(ref, func(o *orders.Order) { o.DeliveryState = "received" })
+		// A proven delivery was sent before it was received
+		// (run-2: received alone no longer counts).
+		orders.Default.Update(ref, func(o *orders.Order) {
+			o.DeliveryState = "received"
+			o.SentAt = nowStamp()
+		})
 	}
 	if sellerIsNew(trustOwner) {
 		t.Fatal("three confirmed deliveries end newness")

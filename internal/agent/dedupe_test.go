@@ -23,7 +23,7 @@ func TestRedeliveredMessageIsHandledOnce(t *testing.T) {
 	if got := c.replies(t, owner); len(got) != 0 {
 		t.Fatalf("the redelivery should be silent, got %q", got)
 	}
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil || len(s.Onboarding.PhotoRefs) != 1 {
 		t.Fatalf("the redelivery must not touch the open listing: %+v", s)
 	}

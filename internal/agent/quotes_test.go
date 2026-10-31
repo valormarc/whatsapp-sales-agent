@@ -133,9 +133,9 @@ func TestUnknownQuoteKeepsItsAuthorAndAdmitsBlindness(t *testing.T) {
 
 	// And the fact the thinking is given says plainly that
 	// the words cannot be seen and must not be guessed.
-	turnQuote = &resolvedQuote{Author: "agent"}
-	defer func() { turnQuote = nil }()
-	line := quoteFactLine()
+	turnQuotes.put(buyer, &resolvedQuote{Author: "agent"})
+	defer turnQuotes.del(buyer)
+	line := quoteFactLine(buyer)
 	if !strings.Contains(line, "does not hold") || !strings.Contains(line, "Do not guess") {
 		t.Fatalf("unknown quote fact line = %q, want the blindness stated", line)
 	}
@@ -165,7 +165,7 @@ func TestQuotedOfferLandsOnTheQuotedProduct(t *testing.T) {
 	if !strings.Contains(got, "Ankle Strap Heels") || strings.Contains(got, "Beaded Bag") {
 		t.Fatalf("quoted offer replies = %q, want the haggle on the quoted heels", got)
 	}
-	s := sessions[sessionKey("demo", buyer)]
+	s := sessions.get(sessionKey("demo", buyer))
 	if s == nil || s.Stage != "haggling" || s.Product == nil || s.Product.Name != "Ankle Strap Heels" {
 		t.Fatalf("session after quoted offer = %+v, want a haggle on the heels", s)
 	}
@@ -190,7 +190,7 @@ func TestQuotedOfferRetargetsAnOpenHaggle(t *testing.T) {
 	// itself: the session's product is the heels now.
 	quoteSay(t, buyer, "110", heelsQuote, "233209450786")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	s := sessions[sessionKey("demo", buyer)]
+	s := sessions.get(sessionKey("demo", buyer))
 	if s == nil || s.Product == nil || s.Product.Name != "Ankle Strap Heels" {
 		t.Fatalf("session after quoted offer = %+v, want the haggle on the heels", s)
 	}
@@ -208,7 +208,7 @@ func TestQuotedOwnWordsCorrectThePlace(t *testing.T) {
 	c.replies(t, buyer)
 	HandleInbound(Inbound{From: buyer, Text: "I am in Accra", MessageID: "wamid.LOC1"})
 	c.replies(t, buyer)
-	s := sessions[sessionKey("demo", buyer)]
+	s := sessions.get(sessionKey("demo", buyer))
 	if s == nil || s.Location != "Accra" {
 		t.Fatalf("session after stating a place = %+v, want Accra kept", s)
 	}
@@ -233,8 +233,8 @@ func TestUnboundQuotedPickBindsTheQuotedShop(t *testing.T) {
 	c.say(t, buyer, "Do you have heels?")
 	c.replies(t, buyer)
 	heelsQuote := agentMsgID(t, dir, buyer, "Price: GH₵120")
-	if bindings[buyer] != "" {
-		t.Fatalf("a shown result bound her before any pick: %q", bindings[buyer])
+	if bindings.get(buyer) != "" {
+		t.Fatalf("a shown result bound her before any pick: %q", bindings.get(buyer))
 	}
 
 	// Her "Ok" names nothing and picks nothing the shown
@@ -242,10 +242,10 @@ func TestUnboundQuotedPickBindsTheQuotedShop(t *testing.T) {
 	// she means, and it takes her into the shop.
 	quoteSay(t, buyer, "Ok", heelsQuote, "233209450786")
 	c.replies(t, buyer)
-	if bindings[buyer] != "demo" {
-		t.Fatalf("bindings after quoted Ok = %q, want demo", bindings[buyer])
+	if bindings.get(buyer) != "demo" {
+		t.Fatalf("bindings after quoted Ok = %q, want demo", bindings.get(buyer))
 	}
-	s := sessions[sessionKey("demo", buyer)]
+	s := sessions.get(sessionKey("demo", buyer))
 	if s == nil || s.LastViewed == nil || s.LastViewed.Name != "Ankle Strap Heels" {
 		t.Fatalf("session after quoted pick = %+v, want the heels in view", s)
 	}

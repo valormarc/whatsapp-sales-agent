@@ -43,7 +43,7 @@ func paidEvent(ref, orderRef string, amount float64) string {
 func seedOrder(ref string, providerRef *string) {
 	orders.Default.RecordOrder(ref, orders.Order{
 		From: whBuyer, ProductName: "Test Bag", Price: 100,
-		MerchantID: "testshop", ProviderRef: providerRef,
+		MerchantID: "demo", ProviderRef: providerRef,
 	})
 }
 
@@ -132,18 +132,34 @@ func TestPaidEventIsHeldWhenTheReadBackCannotBeReached(t *testing.T) {
 	}
 }
 
-func TestPaidEventSettlesADryOrderOnItsVerifiedWord(t *testing.T) {
+// Run-2 overturned the posture this test used to assert:
+// a sessionless order (no provider session to read back)
+// settled on the signed event alone. A signed event proves
+// an event arrived; it does not prove the money belongs to
+// this order. The order is now held and the merchant told
+// once, however often the event is delivered.
+func TestPaidEventForASessionlessOrderIsHeld(t *testing.T) {
 	t.Setenv("SEEV_WEBHOOK_SECRET", whSecret)
 	t.Setenv("SEEV_SECRET_KEY", "test-seev-key")
 	t.Setenv("WHATSAPP_TOKEN", "")
 	t.Setenv("MERCHANT_WHATSAPP", whOwner)
-	seedOrder("TEST-A005", nil) // no provider session: the dry-run road
+	seedOrder("TEST-A005", nil) // no provider session on record
 	body := paidEvent("seev-a5", "TEST-A005", 100)
 	ts, sig := sign(body, whSecret)
 	if code := Handle(body, ts, sig); code != 200 {
 		t.Fatalf("a verified event is acknowledged, got %d", code)
 	}
-	if o := orders.Default.GetOrder("TEST-A005"); o == nil || o.Status != "paid" {
-		t.Fatalf("a dry order settles on the verified event, got %+v", o)
+	o := orders.Default.GetOrder("TEST-A005")
+	if o == nil || o.Status == "paid" {
+		t.Fatalf("a sessionless order must not settle on the event alone, got %+v", o)
+	}
+	if !o.HeldAlerted {
+		t.Fatal("the held order must record that the merchant was told")
+	}
+	if code := Handle(body, ts, sig); code != 200 {
+		t.Fatalf("a repeated event is acknowledged, got %d", code)
+	}
+	if notes := merchantNotes(t); strings.Count(notes, "TEST-A005") != 1 {
+		t.Fatalf("the merchant is told about the held event once, notes: %q", notes)
 	}
 }

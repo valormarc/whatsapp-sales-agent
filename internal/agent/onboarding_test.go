@@ -24,6 +24,18 @@ const shopWithBag = `{"merchants":{"demo":{"id":"demo","name":"Test Shop","shopC
 
 const emptyShop = `{"merchants":{"demo":{"id":"demo","name":"Test Shop","shopCode":"TEST","dailyGiveawayAllowance":200,"products":[]}}}`
 
+// inTurn runs fn holding the speaker's turn lock — the
+// state every production handler runs in, because
+// HandleInbound takes the lock for the whole turn. Tests
+// that call a handler directly must meet the same
+// contract: cross-speaker writes inside a handler step
+// out of a stripe the caller is expected to hold, and a
+// direct call without it has nothing to step out of.
+func inTurn[T any](speaker string, fn func() T) T {
+	defer claimTurn(speaker)()
+	return fn()
+}
+
 func setupChat(t *testing.T, merchantNumber, catalogueJSON string) string {
 	t.Helper()
 	// Conversational state is process-global (sessions and shop
@@ -31,12 +43,10 @@ func setupChat(t *testing.T, merchantNumber, catalogueJSON string) string {
 	// world, so it starts with no conversations in flight;
 	// without this, one test's buyers leak into the next and
 	// repeated runs (-count) replay against stale sessions.
-	sessionsMu.Lock()
-	sessions = map[string]*Session{}
-	bindings = map[string]string{}
-	doorShown = map[string]bool{}
-	packageNames = map[string]string{}
-	sessionsMu.Unlock()
+	sessions.replaceAll(map[string]*Session{})
+	bindings.replaceAll(map[string]string{})
+	doorShown.replaceAll(map[string]bool{})
+	packageNames.replaceAll(map[string]string{})
 	dir := t.TempDir()
 	t.Chdir(dir)
 	t.Setenv("HACKATHON_AGENT_DATA_DIR", "")

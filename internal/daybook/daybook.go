@@ -82,6 +82,10 @@ func marshalJSON(v any) ([]byte, error) {
 type Daybook struct {
 	file string
 	mu   sync.Mutex
+	// poisoned mirrors the order book's discipline (the
+	// fourth audit named this book as sharing the pattern):
+	// while a load stands unrecovered, saves refuse.
+	poisoned bool
 }
 
 // New returns a day book backed by the given file.
@@ -94,33 +98,85 @@ var Default = New(datadir.Path("daybook.json"))
 
 // loadAll reads the book; the caller holds the lock. A
 // file that exists but does not parse is preserved under a
-// .corrupt- name and shouted about, never silently read as
-// empty: the next save would wipe the day's trading.
+// single fixed .corrupt name and shouted about, never
+// silently read as empty: the next save would wipe the
+// day's trading. A failed load restores from the
+// last-known-good copy and repairs the main file with the
+// good bytes (the fifth audit: an unrestored repair meant
+// every load re-entered the restore path and preserved a
+// fresh aside each time); when both copies fail the book
+// reads empty and poisoned, saves refused.
 func (b *Daybook) loadAll() map[string]State {
+	// Both failure roads — unparseable bytes and an
+	// existing file that cannot be read at all — restore
+	// from the last known good copy or poison (the sixth
+	// audit); only a genuinely absent file is a fresh
+	// book.
+	restore := func() (map[string]State, bool) {
+		bak, berr := os.ReadFile(b.file + ".bak")
+		if berr != nil {
+			return nil, false
+		}
+		restored := map[string]State{}
+		if uerr := json.Unmarshal(bak, &restored); uerr != nil {
+			return nil, false
+		}
+		tmp := b.file + ".tmp"
+		if werr := os.WriteFile(tmp, bak, 0o600); werr == nil {
+			_ = os.Rename(tmp, b.file)
+		}
+		b.poisoned = false
+		return restored, true
+	}
 	data, err := os.ReadFile(b.file)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return map[string]State{}
+		}
+		if restored, ok := restore(); ok {
+			fmt.Fprintf(os.Stderr, "daybook: %s could not be read (%v); restored from the last known good copy\n", b.file, err)
+			return restored
+		}
+		fmt.Fprintf(os.Stderr, "daybook: %s could not be read (%v) and no good copy could be restored; read as empty; saves are refused until the book loads again\n", b.file, err)
+		b.poisoned = true
 		return map[string]State{}
 	}
 	all := map[string]State{}
 	if err := json.Unmarshal(data, &all); err != nil {
-		bad := b.file + ".corrupt-" + time.Now().Format("20060102-150405")
+		bad := b.file + ".corrupt"
 		_ = os.WriteFile(bad, data, 0o600)
-		fmt.Fprintf(os.Stderr, "daybook: %s does not parse (%v); preserved as %s and read as empty\n", b.file, err, bad)
+		if restored, ok := restore(); ok {
+			fmt.Fprintf(os.Stderr, "daybook: %s does not parse (%v); preserved as %s and restored from the last known good copy\n", b.file, err, bad)
+			return restored
+		}
+		fmt.Fprintf(os.Stderr, "daybook: %s does not parse (%v); preserved as %s and read as empty; saves are refused until the book parses again\n", b.file, err, bad)
+		b.poisoned = true
 		return map[string]State{}
 	}
+	b.poisoned = false
 	return all
 }
 
 // saveAll writes the book atomically (temporary file,
 // renamed over), owner-only: the day's money story is the
-// shop's own business. The caller holds the lock.
+// shop's own business. The same bytes refresh the
+// last-known-good copy. The caller holds the lock.
 func (b *Daybook) saveAll(all map[string]State) {
+	if b.poisoned {
+		fmt.Fprintf(os.Stderr, "daybook: refusing to save over %s: the last load did not parse and no good copy could be restored\n", b.file)
+		return
+	}
 	_ = os.MkdirAll(filepath.Dir(b.file), 0o700)
 	_ = os.MkdirAll(datadir.Dir(), 0o700)
 	if data, err := marshalJSON(all); err == nil {
 		tmp := b.file + ".tmp"
 		if err := os.WriteFile(tmp, data, 0o600); err == nil {
-			_ = os.Rename(tmp, b.file)
+			if err := os.Rename(tmp, b.file); err == nil {
+				bakTmp := b.file + ".bak.tmp"
+				if err := os.WriteFile(bakTmp, data, 0o600); err == nil {
+					_ = os.Rename(bakTmp, b.file+".bak")
+				}
+			}
 		}
 	}
 }

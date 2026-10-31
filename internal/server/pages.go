@@ -83,10 +83,13 @@ and the owner can see their sales. Information that is no longer
 needed is removed.</p>
 
 <h2 id="deletion">Deleting your information</h2>
-<p>Send the words "delete my data" to the assistant in WhatsApp, or
-email us at v74y@outlook.com, and we will delete the personal
-information we hold about you, including your messages and order
-details, within 30 days. A shop owner can also remove any product from
+<p>Send the words "delete my data" to the assistant in WhatsApp and
+it deletes the personal information it holds about you there and
+then, including your messages and the personal details on your
+orders; a shop keeps only an anonymised record of what was sold and
+for how much, with nothing on it that identifies you. You can also
+email us at v74y@outlook.com and we will do the same within 30 days.
+A shop owner can also remove any product from
 their catalogue at any time by telling the assistant.</p>
 
 <h2>Contact</h2>

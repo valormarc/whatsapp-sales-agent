@@ -64,7 +64,7 @@ func orderLineFor(shop *catalogue.Merchant) string {
 // facts, each verified (price and ordering line present,
 // last price absent, voice laws held), and any draft that
 // fails is replaced by a plain factual one built here.
-func listingDrafts(shop *catalogue.Merchant, p catalogue.Product) (status, broadcast string) {
+func listingDrafts(shop *catalogue.Merchant, p catalogue.Product, turn string) (status, broadcast string) {
 	orderLine := orderLineFor(shop)
 	price := money.GHS(p.ListPrice)
 	status = p.Name + " — " + price + "\n" + p.Description + "\n" + orderLine
@@ -87,7 +87,7 @@ func listingDrafts(shop *catalogue.Merchant, p catalogue.Product) (status, broad
 		b.WriteString("Delivery is arranged with the seller.\n")
 	}
 	b.WriteString("Ordering line (use exactly): " + orderLine + "\n")
-	out := draftWithBudget(listingDraftCharter, "The settled facts of the listing:\n"+b.String()+"\nWrite the two announcements now.")
+	out := draftWithBudget(turn, listingDraftCharter, "The settled facts of the listing:\n"+b.String()+"\nWrite the two announcements now.")
 	if out == "" {
 		return status, broadcast
 	}
@@ -111,12 +111,21 @@ func listingDrafts(shop *catalogue.Merchant, p catalogue.Product) (status, broad
 		if !strings.Contains(draft, price) || !strings.Contains(draft, orderLine) {
 			return false
 		}
-		// Her last price is private: if it appears, the draft
-		// is not hers to post.
-		if p.FloorPrice > 0 && p.FloorPrice != p.ListPrice && strings.Contains(draft, money.GHS(p.FloorPrice)) {
-			return false
+		// Every figure in the draft must be one of the
+		// listing's public figures: the list price, and the
+		// shop's delivery fee when the facts carry it. The
+		// second audit found this the one drafting path
+		// with no figure check at all — an invented anchor
+		// ("Was GH₵900") passed, and her private last price
+		// leaked in any format but the one exact string the
+		// old check excluded. Under figuresClean the last
+		// price fails in digits, in words, in any dress,
+		// because it is never in the allowed set.
+		allowed := []float64{p.ListPrice}
+		if shop.DeliveryFee > 0 {
+			allowed = append(allowed, shop.DeliveryFee)
 		}
-		return true
+		return figuresClean(draft, allowed...)
 	}
 	if clean(raw.Status) {
 		status = strings.TrimSpace(raw.Status)
@@ -142,7 +151,7 @@ func announceListing(from, shopID string, product catalogue.Product) {
 			fresh = p
 		}
 	}
-	status, broadcast := listingDrafts(merchant, fresh)
+	status, broadcast := listingDrafts(merchant, fresh, turnTokenFor(from))
 	photoSent := false
 	if len(fresh.Photos) > 0 {
 		if data, err := os.ReadFile(datadir.Path(fresh.Photos[0])); err == nil && len(data) > 0 {

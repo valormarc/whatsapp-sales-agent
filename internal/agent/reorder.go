@@ -93,6 +93,34 @@ type reorderLine struct {
 // the thinking board and from the word net alike; both are
 // only naming the act, and everything after the naming is
 // this code, from the books.
+// bareItemName strips a leading quantity label ("3 yards
+// of ") from a stored order line's display name, leaving
+// the product's own name. The recorded quantity and unit,
+// when the order carries them, must agree with the label
+// for the strip to count.
+func bareItemName(name string, qty float64, unit string) string {
+	i := strings.Index(name, " of ")
+	if i <= 0 {
+		return name
+	}
+	q, ok := parseQuantity(name[:i])
+	if !ok || q.Qty <= 0 {
+		return name
+	}
+	if qty > 0 && q.Qty != qty {
+		return name
+	}
+	if unit != "" {
+		fold := func(u string) string {
+			return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(u)), "s")
+		}
+		if fold(q.Unit) != fold(unit) {
+			return name
+		}
+	}
+	return strings.TrimSpace(name[i+len(" of "):])
+}
+
 func startReorder(from string, s *Session, merchant *catalogue.Merchant, shopID, msg string) bool {
 	if foreignRefOrder(from, msg) != nil {
 		whatsapp.SendText(from, "That order was placed from a different number, so I cannot pull it up from here. If it is yours, talk to me from the number you ordered with and I will find it at once.")
@@ -123,7 +151,7 @@ func startReorder(from string, s *Session, merchant *catalogue.Merchant, shopID,
 		// this number: she is that shop's customer for this
 		// order, and the repeat is built there, on a fresh
 		// session that cannot leak this shop's state into it.
-		bindings[from] = targetShop
+		bindings.put(from, targetShop)
 		s = &Session{Stage: "browsing", MerchantID: targetShop, Location: s.Location, History: s.History}
 		merchant = targetMerchant
 		shopID = targetShop
@@ -150,6 +178,27 @@ func startReorder(from string, s *Session, merchant *catalogue.Merchant, shopID,
 	for _, r := range raw {
 		p := catalogue.FindByName(shopID, r.name)
 		if p == nil {
+			// A by-measure line is stored under its
+			// quantity label ("3 yards of Ankara
+			// Fabric"), which is a display name, not a
+			// catalogue key (the sixth audit): strip the
+			// label and resolve the product behind it
+			// before the line is called missing.
+			if bare := bareItemName(r.name, r.qty, r.unit); bare != r.name {
+				p = catalogue.FindByName(shopID, bare)
+			}
+		}
+		if p == nil {
+			missing = append(missing, r.name)
+			continue
+		}
+		if p.AvailableUnits() <= 0 || (r.qty > 0 && p.ByMeasure() && p.AvailableUnits() < r.qty) {
+			// Resolved but unavailable is missing in every
+			// way that matters to her (the seventh audit):
+			// the line joins the missing list and is named
+			// as no longer available, exactly like a
+			// delisted line, instead of being rebuilt into
+			// a fulfilment run for goods that are gone.
 			missing = append(missing, r.name)
 			continue
 		}
@@ -174,6 +223,12 @@ func startReorder(from string, s *Session, merchant *catalogue.Merchant, shopID,
 	key := sessionKey(shopID, from)
 	first := lines[0]
 	s.Stage = "fulfilment"
+	// A reorder is a sale like any other and carries a
+	// sale identity from its first moment: the second
+	// audit found this lane minting none, so a restored
+	// reorder session could never be matched to the order
+	// it had already completed.
+	s.SaleID = newSaleID()
 	s.MerchantID = shopID
 	s.PendingAdd = nil
 	s.Basket = nil
@@ -224,7 +279,8 @@ func startReorder(from string, s *Session, merchant *catalogue.Merchant, shopID,
 		// goods and the name already settled around it.
 		s.PendingFulfil = f
 		s.FeePark = &f
-		sessions[key] = s
+		s.PendingFlow, s.FlowKind = "", "" // the chat adoption spends the form token (the sixth audit)
+		sessions.put(key, s)
 		beginFeeQuote(from, s, merchant, f.Location)
 		return true
 	}
@@ -234,9 +290,9 @@ func startReorder(from string, s *Session, merchant *catalogue.Merchant, shopID,
 	s.PendingFulfil = f
 	s.FulfilStep = "confirm"
 	if f.PackageName != "" {
-		packageNames[key] = f.PackageName
+		packageNames.put(key, f.PackageName)
 	}
-	sessions[key] = s
+	sessions.put(key, s)
 	sendOrderRecap(from, s, f)
 	return true
 }
@@ -299,7 +355,8 @@ func adoptSameDetails(from string, s *Session, merchant *catalogue.Merchant) boo
 	s.PendingFulfil = f
 	if len(still) > 0 {
 		s.FulfilStep = "size"
-		sessions[key] = s
+		s.PendingFlow, s.FlowKind = "", "" // the chat adoption spends the form token (the sixth audit)
+		sessions.put(key, s)
 		whatsapp.SendText(from, "Using your details from last time. One thing the book does not hold: "+sizeQuestionText(s))
 		return true
 	}
@@ -308,12 +365,13 @@ func adoptSameDetails(from string, s *Session, merchant *catalogue.Merchant) boo
 		// the details ride parked across the fresh quote,
 		// and the recap follows the fee.
 		s.FeePark = &f
-		sessions[key] = s
+		sessions.put(key, s)
 		beginFeeQuote(from, s, merchant, f.Location)
 		return true
 	}
 	s.FulfilStep = "confirm"
-	sessions[key] = s
+	s.PendingFlow, s.FlowKind = "", "" // the chat adoption spends the form token (the sixth audit)
+	sessions.put(key, s)
 	sendOrderRecap(from, s, f)
 	return true
 }

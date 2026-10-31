@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 )
@@ -29,17 +28,37 @@ func TestBookPreservesACorruptFile(t *testing.T) {
 	}
 	preserved := false
 	for _, e := range entries {
-		if strings.HasPrefix(e.Name(), "orders.json.corrupt-") {
+		// One fixed aside name since the fifth audit:
+		// a timestamped copy per load accumulated
+		// without bound.
+		if e.Name() == "orders.json.corrupt" {
 			preserved = true
 		}
 	}
 	if !preserved {
 		t.Fatalf("the corrupt file must be preserved, dir holds %v", entries)
 	}
-	// And the book still works afterwards.
+	// This test used to assert the book then "keeps
+	// working" — recording a new order into the empty
+	// read and saving it over the corrupt file. The
+	// fourth audit named that exact save as the step
+	// that cements the loss of every order the shop
+	// ever took, so the posture is now the opposite:
+	// while the corrupt file stands unrecovered (no
+	// last-known-good copy exists here), saves refuse
+	// and the corrupt bytes survive untouched; once
+	// the file is repaired to a book that parses, the
+	// book works again.
+	b.RecordOrder("EFUA-0001", Order{From: "233550000001", ProductName: "Bag", Price: 10, MerchantID: "efua"})
+	if got := b.GetOrder("EFUA-0001"); got != nil {
+		t.Fatalf("an unrecovered corrupt book must refuse saves, got %+v", got)
+	}
+	if err := os.WriteFile(file, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	b.RecordOrder("EFUA-0001", Order{From: "233550000001", ProductName: "Bag", Price: 10, MerchantID: "efua"})
 	if got := b.GetOrder("EFUA-0001"); got == nil || got.ProductName != "Bag" {
-		t.Fatalf("the book must keep working after a corrupt read, got %+v", got)
+		t.Fatalf("the book must keep working once its file parses again, got %+v", got)
 	}
 }
 

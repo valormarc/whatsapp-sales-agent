@@ -10,6 +10,7 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -104,6 +105,23 @@ func deliveryOptionLine(merchant *catalogue.Merchant, knownLocation string) stri
 // are what actually close a sale, so they are settled here, in the
 // same conversation, before the link.
 func beginFulfilment(from string, s *Session, price float64) {
+	// A new agreement begins here, and every new agreement
+	// gets a fresh sale identity: the order it eventually
+	// mints carries the id, and a completion replayed from
+	// a stale session restore is recognised by it. But an
+	// identity the completion journal rebound onto a
+	// restored session is authoritative, not a placeholder:
+	// the third audit found this unconditional remint
+	// discarding it, so the restored sale completed under
+	// a fresh id the journal could not recognise and a
+	// twin order was minted. Mint only where none stands —
+	// the same guard completeSale keeps. A completed sale
+	// sheds its identity with its session, which the
+	// completion replaces wholesale, so a genuinely new
+	// agreement still arrives here with none.
+	if s.SaleID == "" {
+		s.SaleID = newSaleID()
+	}
 	shopID := s.MerchantID
 	key := sessionKey(shopID, from)
 	merchant := catalogue.GetMerchant(shopID)
@@ -129,13 +147,13 @@ func beginFulfilment(from string, s *Session, price float64) {
 		price = prices[len(prices)-1]
 		s.ShelfPicks = nil
 		s.ShelfSettling = false
-		sessions[key] = s
+		sessions.put(key, s)
 	}
 
 	s.Stage = "fulfilment"
 	s.AgreedPrice = price
 	s.Ask = price
-	sessions[key] = s
+	sessions.put(key, s)
 
 	// An agreement on one of her picks, reached by any
 	// road — a spoken offer, a buy at the price — starts
@@ -165,16 +183,16 @@ func beginFulfilment(from string, s *Session, price float64) {
 		agreedLabel := s.itemLabel()
 		if next := takeNextShelfPick(s, shopID); next != nil {
 			s.Basket = append(s.Basket, BasketItem{Product: agreedProduct, AgreedPrice: price, Qty: agreedQty, Unit: agreedUnit})
-			sessions[key] = s
+			sessions.put(key, s)
 			deal := "Deal. " + agreedLabel + " is yours for " + money.GHS(price) + ". That makes your order " + money.GHS(basketGoods(s)) + " in all so far."
 			sendPieces(from, deal, "Now the next one you picked:")
-			presentShelfPick(from, next)
+			presentShelfPick(from, s.MerchantID, next)
 			return
 		}
 		// Nothing she picked can still be settled: the
 		// item in front of her is the last one standing,
 		// and it goes through the ordinary fulfilment.
-		sessions[key] = s
+		sessions.put(key, s)
 	}
 
 	deal := "Deal. " + s.itemLabel() + " is yours for " + money.GHS(price) + "."
@@ -196,7 +214,7 @@ func beginFulfilment(from string, s *Session, price float64) {
 		if remembered, ok := rememberedFulfilment(shopID, from, merchant); ok && (remembered.Location != "" || remembered.Mode == "pickup") && !(deliveryStyleOf(merchant) == "quote" && remembered.Mode == "delivery") {
 			s.RememberedFulfil = remembered
 			s.FulfilStep = "usual"
-			sessions[key] = s
+			sessions.put(key, s)
 			sendPieces(from, deal, usualQuestionText(remembered))
 			return
 		}
@@ -212,7 +230,7 @@ func beginFulfilment(from string, s *Session, price float64) {
 			return
 		}
 		s.FulfilStep = "based"
-		sessions[key] = s
+		sessions.put(key, s)
 		sendPieces(from, deal, "Where are you based?")
 		return
 	}
@@ -233,7 +251,7 @@ func beginFulfilment(from string, s *Session, price float64) {
 // before.
 func sendChoiceQuestion(from string, s *Session, merchant *catalogue.Merchant) {
 	s.FulfilStep = "choice"
-	sessions[sessionKey(s.MerchantID, from)] = s
+	sessions.put(sessionKey(s.MerchantID, from), s)
 	ask := "How do you want to get it? " + deliveryOptionLine(merchant, s.Location) + " Or you can come and pick it up yourself, no delivery fee."
 	if s.Location != "" {
 		ask += " Which one?"
@@ -254,11 +272,11 @@ func sendChoiceQuestion(from string, s *Session, merchant *catalogue.Merchant) {
 // the buyer would have typed, and the ordinary fulfilment flow
 // reads them, so a tap and a typed answer can never diverge.
 func routeFulfilmentTap(from, buttonID string) (text string, handled bool) {
-	shopID := bindings[from]
+	shopID := bindings.get(from)
 	if shopID == "" {
 		return "", true
 	}
-	s, ok := sessions[sessionKey(shopID, from)]
+	s, ok := sessions.lookup(sessionKey(shopID, from))
 	if !ok || s.Stage != "fulfilment" {
 		return "", true
 	}
@@ -278,19 +296,38 @@ func routeFulfilmentTap(from, buttonID string) (text string, handled bool) {
 			return "", true
 		}
 		s.FulfilStep = "pickupkind"
-		sessions[sessionKey(shopID, from)] = s
+		sessions.put(sessionKey(shopID, from), s)
 		whatsapp.SendButtons(from, "Who will come for it?", []whatsapp.Button{
 			{ID: "ff_self", Title: "I will come myself"},
 			{ID: "ff_other", Title: "Somebody will come"},
 		})
 		return "", true
 	case "ff_delivery":
+		// The choice buttons are issued at the choice
+		// step, and the pickup-kind buttons at the
+		// pickupkind step: a stale tap is an answer to a
+		// question no longer open, and the third audit
+		// found these four translated for whatever step
+		// happened to be current. A tap outside its own
+		// step is swallowed, like ff_yes outside confirm.
+		if s.FulfilStep != "choice" {
+			return "", true
+		}
 		return "deliver it", false
 	case "ff_meet":
+		if s.FulfilStep != "choice" {
+			return "", true
+		}
 		return "meet", false
 	case "ff_self":
+		if s.FulfilStep != "pickupkind" {
+			return "", true
+		}
 		return "i will come myself", false
 	case "ff_other":
+		if s.FulfilStep != "pickupkind" {
+			return "", true
+		}
 		return "somebody will come", false
 	}
 	return "", true
@@ -416,7 +453,7 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		if s.FulfilStep == "confirm" {
 			f := s.PendingFulfil
 			s.PendingFulfil = fulfilment{}
-			sessions[key] = s
+			sessions.put(key, s)
 			completeSale(from, s, s.AgreedPrice, f)
 			return
 		}
@@ -451,17 +488,17 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		switch {
 		case isClearYes(lower) || strings.Contains(lower, "same"):
 			s.RememberedFulfil = fulfilment{}
-			sessions[key] = s
+			sessions.put(key, s)
 			beginPackageDetails(from, s, remembered)
 			return
 		case isClearNo(lower) || strings.Contains(lower, "different"):
 			s.RememberedFulfil = fulfilment{}
-			sessions[key] = s
+			sessions.put(key, s)
 			if shopHasDeliveryTerms(merchant) {
 				sendChoiceQuestion(from, s, merchant)
 			} else {
 				s.FulfilStep = "based"
-				sessions[key] = s
+				sessions.put(key, s)
 				whatsapp.SendText(from, "Where are you based?")
 			}
 			return
@@ -472,7 +509,7 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 			} else {
 				s.FulfilStep = "based"
 			}
-			sessions[key] = s
+			sessions.put(key, s)
 		}
 	}
 
@@ -548,7 +585,7 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 			complete(fulfilment{Mode: "meet", Location: place})
 		} else {
 			s.FulfilStep = "meetwhere"
-			sessions[key] = s
+			sessions.put(key, s)
 			whatsapp.SendText(from, "Where should we meet you?")
 		}
 		return
@@ -558,7 +595,7 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 			complete(fulfilment{Mode: "pickup", Collector: who})
 		} else {
 			s.FulfilStep = "who"
-			sessions[key] = s
+			sessions.put(key, s)
 			whatsapp.SendText(from, "Who is coming for it?")
 		}
 		return
@@ -582,6 +619,16 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		loc := extractDeliveryPlace(msg)
 		if loc == "" {
 			loc = cleanPlace(msg)
+		}
+		if loc == "" {
+			// A delivery with no place is not a delivery:
+			// the third audit found "to my house" settled
+			// here as a fee-bearing delivery to an empty
+			// place. The meet step beside this one re-asks
+			// on an unreadable place; this step does the
+			// same, and the sale waits, unsettled.
+			whatsapp.SendText(from, "Where should it go?")
+			return
 		}
 		deliver(loc)
 	case "meetwhere":
@@ -673,7 +720,7 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 				deliver(loc)
 			} else {
 				s.FulfilStep = "where"
-				sessions[key] = s
+				sessions.put(key, s)
 				whatsapp.SendText(from, "Where should it go?")
 			}
 			return
@@ -712,7 +759,7 @@ func dropPendingSale(from string, s *Session) {
 	}
 	cancelFeeQuote(shopID, from)
 	cancelInHand(shopID, from)
-	sessions[sessionKey(shopID, from)] = &Session{Stage: "browsing", MerchantID: shopID, LastViewed: view, Location: s.Location, History: s.History}
+	sessions.put(sessionKey(shopID, from), &Session{Stage: "browsing", MerchantID: shopID, LastViewed: view, Location: s.Location, History: s.History})
 	whatsapp.SendText(from, "Okay, cancelled. Tell me what else you need.")
 }
 
@@ -776,7 +823,7 @@ func beginPackageDetails(from string, s *Session, f fulfilment) {
 	}
 	if len(s.SizeQueue) > 0 {
 		s.FulfilStep = "size"
-		sessions[key] = s
+		sessions.put(key, s)
 		whatsapp.SendText(from, sizeQuestionText(s))
 		return
 	}
@@ -817,7 +864,7 @@ func sizeQuestionText(s *Session) string {
 // recovered from the book warms the memory for next time.
 func rememberedPackageName(shopID, from string) string {
 	key := sessionKey(shopID, from)
-	if n := packageNames[key]; n != "" {
+	if n := packageNames.get(key); n != "" {
 		return n
 	}
 	bestAt, name := "", ""
@@ -828,7 +875,7 @@ func rememberedPackageName(shopID, from string) string {
 		bestAt, name = o.CreatedAt, o.PackageName
 	}
 	if name != "" {
-		packageNames[key] = name
+		packageNames.put(key, name)
 	}
 	return name
 }
@@ -848,7 +895,7 @@ func beginPackageName(from string, s *Session, f fulfilment) {
 		return
 	}
 	s.FulfilStep = "pkgname"
-	sessions[key] = s
+	sessions.put(key, s)
 	if remembered := rememberedPackageName(s.MerchantID, from); remembered != "" {
 		whatsapp.SendText(from, "What name should go on the package? Last time it was "+remembered+". Say same, or give me the name.")
 		offerDeliveryDetailsFlow(from, s)
@@ -861,7 +908,7 @@ func beginPackageName(from string, s *Session, f fulfilment) {
 // askPackageMessage moves the details onto their second question.
 func askPackageMessage(from string, s *Session) {
 	s.FulfilStep = "pkgmessage"
-	sessions[sessionKey(s.MerchantID, from)] = s
+	sessions.put(sessionKey(s.MerchantID, from), s)
 	whatsapp.SendText(from, "Any message for the seller about this order? Say it now, or say no.")
 }
 
@@ -920,7 +967,7 @@ func applyStatedCorrection(from string, s *Session, f fulfilment, msg string, re
 	key := sessionKey(s.MerchantID, from)
 	apply := func() bool {
 		s.PendingFulfil = f
-		sessions[key] = s
+		sessions.put(key, s)
 		sendOrderRecap(from, s, f)
 		return true
 	}
@@ -928,8 +975,8 @@ func applyStatedCorrection(from string, s *Session, f fulfilment, msg string, re
 	// words are the new name for the package. A stage
 	// reading that puts her turn on a different part of
 	// the order outranks the anchor.
-	quotedNameAnswer := turnQuote != nil && turnQuote.Known &&
-		strings.HasPrefix(turnQuote.Body, "What name should go on the package?")
+	quotedNameAnswer := turnQuoteOf(from) != nil && turnQuoteOf(from).Known &&
+		strings.HasPrefix(turnQuoteOf(from).Body, "What name should go on the package?")
 	if quotedNameAnswer && !(reading.Intent == stageIntentChange && reading.Field != "" && reading.Field != "name") {
 		if name := cleanPackageName(msg); name != "" {
 			f.PackageName = name
@@ -957,6 +1004,32 @@ func applyStatedCorrection(from string, s *Session, f fulfilment, msg string, re
 	case "place":
 		if f.Mode == "delivery" || f.Mode == "arranged" {
 			if loc := cleanPlace(reading.Value); loc != "" {
+				if f.Mode == "delivery" {
+					// Place and fee bind together (the
+					// fifth audit: the correction moved
+					// the place and kept the old place's
+					// fee, so the recap priced delivery
+					// for somewhere the goods are no
+					// longer going). A set-style shop
+					// rebinds from its own terms; a
+					// quote-style shop is asked afresh,
+					// the settled fulfilment parked the
+					// way reorder parks it, and the sale
+					// pauses at feewait rather than
+					// recapping at the stale fee.
+					if merchant := catalogue.GetMerchant(s.MerchantID); merchant != nil {
+						if deliveryStyleOf(merchant) == "quote" {
+							f.Location = loc
+							s.Location = loc
+							s.PendingFulfil = f
+							s.FeePark = &f
+							sessions.put(key, s)
+							beginFeeQuote(from, s, merchant, loc)
+							return true
+						}
+						f.Fee = deliveryFeeFor(merchant, loc)
+					}
+				}
 				f.Location = loc
 				return apply()
 			}
@@ -1015,7 +1088,7 @@ func handlePackageDetails(from string, s *Session, msg, lower string, reading st
 			s.PendingFulfil = f
 		}
 		s.SizeQueue = s.SizeQueue[1:]
-		sessions[key] = s
+		sessions.put(key, s)
 		if len(s.SizeQueue) > 0 {
 			whatsapp.SendText(from, sizeQuestionText(s))
 			return
@@ -1034,8 +1107,16 @@ func handlePackageDetails(from string, s *Session, msg, lower string, reading st
 			}
 			f.PackageName = name
 		}
+		// The typed name answers the very question the
+		// details form was offered beside, so it spends
+		// the form's token, as the offer's contract
+		// promises: whichever she answers first, the
+		// other stands down (the fifth audit — the token
+		// otherwise outlived its moment, and a late
+		// completion landed on whatever state came next).
+		s.PendingFlow, s.FlowKind = "", ""
 		s.PendingFulfil = f
-		sessions[key] = s
+		sessions.put(key, s)
 		askPackageMessage(from, s)
 	case "pkgmessage":
 		if !isNoMessage(lower) {
@@ -1043,10 +1124,10 @@ func handlePackageDetails(from string, s *Session, msg, lower string, reading st
 				f.Note = note
 			}
 		}
-		packageNames[key] = f.PackageName
+		packageNames.put(key, f.PackageName)
 		s.PendingFulfil = f
 		s.FulfilStep = "confirm"
-		sessions[key] = s
+		sessions.put(key, s)
 		sendOrderRecap(from, s, f)
 	case "confirm":
 		// The last word before money moves is hers. A yes
@@ -1055,7 +1136,7 @@ func handlePackageDetails(from string, s *Session, msg, lower string, reading st
 		// everything else she settled still held.
 		if isClearYes(lower) {
 			s.PendingFulfil = fulfilment{}
-			sessions[key] = s
+			sessions.put(key, s)
 			completeSale(from, s, s.AgreedPrice, f)
 			return
 		}
@@ -1086,13 +1167,13 @@ func handlePackageDetails(from string, s *Session, msg, lower string, reading st
 				switch {
 				case matched >= 0:
 					s.Basket[matched].Size = matchedSize
-					sessions[key] = s
+					sessions.put(key, s)
 					sendOrderRecap(from, s, f)
 					return
 				case matchedSize != f.Size:
 					f.Size = matchedSize
 					s.PendingFulfil = f
-					sessions[key] = s
+					sessions.put(key, s)
 					sendOrderRecap(from, s, f)
 					return
 				}
@@ -1101,7 +1182,7 @@ func handlePackageDetails(from string, s *Session, msg, lower string, reading st
 				s.SizeQueue = []int{-1}
 				s.FulfilStep = "size"
 				s.PendingFulfil = f
-				sessions[key] = s
+				sessions.put(key, s)
 				whatsapp.SendText(from, "What size do you take? They come in "+sizesLine(s.Product)+".")
 				return
 			}
@@ -1135,13 +1216,13 @@ func sendOrderRecap(from string, s *Session, f fulfilment) {
 	// correction, and typing either word works exactly as
 	// before, because a tap is translated into the word and
 	// the one road reads both.
-	whatsapp.SendButtons(from, composeOrderRecap(s, f), []whatsapp.Button{
+	whatsapp.SendButtons(from, composeOrderRecap(s, f, turnTokenFor(from)), []whatsapp.Button{
 		{ID: "ff_yes", Title: "Yes"},
 		{ID: "ff_change", Title: "Change"},
 	})
 }
 
-func composeOrderRecap(s *Session, f fulfilment) string {
+func composeOrderRecap(s *Session, f fulfilment, turn string) string {
 	price := money.GHS(s.AgreedPrice)
 	multi := len(s.Basket) > 0
 	if model.Enabled() {
@@ -1192,8 +1273,35 @@ func composeOrderRecap(s *Session, f fulfilment) string {
 			// whole, not one line of it.
 			needFigure = money.GHS(basketGoods(s) + s.AgreedPrice)
 		}
-		if draft := draftWithBudget(recapCharter, "The settled facts of the order:\n"+b.String()+"\nWrite the read-back now, following the format, in your own words."); draft != "" &&
-			strings.Contains(draft, s.Product.Name) && strings.Contains(draft, needFigure) && voiceClean(draft) {
+		// Presence is not verification: the second audit
+		// showed a recap carrying the agreed figure AND an
+		// invented delivery figure passing on the Contains
+		// checks alone, at the very step where the buyer
+		// confirms before money moves. Every figure in the
+		// draft — digits and words — must be one of this
+		// order's own figures.
+		// Money and non-money values are verified in
+		// separate pools (see recapFiguresClean): the
+		// third audit showed the pooled form licensing
+		// an invented fee at a size's value.
+		moneyAllowed := []float64{s.AgreedPrice, basketGoods(s) + s.AgreedPrice}
+		for _, it := range s.Basket {
+			moneyAllowed = append(moneyAllowed, it.AgreedPrice)
+		}
+		var bareAllowed []float64
+		for _, it := range s.Basket {
+			if it.Qty > 0 {
+				bareAllowed = append(bareAllowed, it.Qty)
+			}
+		}
+		if s.Qty > 0 {
+			bareAllowed = append(bareAllowed, s.Qty)
+		}
+		if v, err := strconv.ParseFloat(strings.TrimSpace(f.Size), 64); err == nil {
+			bareAllowed = append(bareAllowed, v)
+		}
+		if draft := draftWithBudget(turn, recapCharter, "The settled facts of the order:\n"+b.String()+"\nWrite the read-back now, following the format, in your own words."); draft != "" &&
+			strings.Contains(draft, s.Product.Name) && strings.Contains(draft, needFigure) && voiceClean(draft) && recapFiguresClean(draft, moneyAllowed, bareAllowed) {
 			return draft
 		}
 	}
@@ -1293,9 +1401,16 @@ func isNoMessage(lower string) bool {
 }
 
 // cleanNote takes her message for the seller as said, trimmed of
-// its edges and capped at a note's length.
+// its edges and capped at a note's length. Newlines become
+// spaces (the sixth audit): the note is rendered inside the
+// seller's line-structured order record, and a note carrying
+// its own line breaks could forge the record's own lines —
+// a payment line, a second item — in the buyer's words.
 func cleanNote(msg string) string {
-	t := strings.TrimSpace(msg)
+	t := strings.Join(strings.FieldsFunc(msg, func(r rune) bool {
+		return r == '\n' || r == '\r'
+	}), " ")
+	t = strings.TrimSpace(t)
 	if len(t) > 300 {
 		t = strings.TrimSpace(t[:300])
 	}

@@ -100,10 +100,19 @@ type understood struct {
 	Words string `json:"-"`
 }
 
-// figureTokenRe reads a money figure as it is written,
+// figureTokenRe reads one figure token as it is written,
 // thousands comma and all: GH₵1,800 is one figure of 1800,
 // never a 1 and an 800.
-var figureTokenRe = regexp.MustCompile(`\d[\d,]*(?:\.\d+)?`)
+// The k form comes first in the alternation: "900k" is
+// nine hundred thousand, and a tokeniser that stops at
+// the digits reads it as 900 (the fifth audit found the
+// face-value read on eight surfaces at once, while the
+// platform's own figure readers — figurePattern and
+// parseNumbered — have always honoured the k). The k
+// must end the figure: "1kg" is a weight and tokenises
+// as its plain 1. Tokens are valued with parseFigure,
+// which applies the thousand the k carries.
+var figureTokenRe = regexp.MustCompile(`\d[\d,]*(?:\.\d+)?[kK]\b|\d[\d,]*(?:\.\d+)?`)
 
 // figuresClean reports whether every figure in a drafted reply
 // is one of the facts it was allowed to use. A draft that
@@ -122,9 +131,267 @@ func voiceClean(text string) bool {
 	return !voiceBadRe.MatchString(text)
 }
 
+// Number words are figures too. A drafted reply that writes
+// "five thousand cedis" states the same fact as GH₵5,000 and
+// must face the same gate; before this parser existed, the
+// verifier read only digits, and a figure spelled out in
+// words walked straight past it (the 2026-10-30 audit
+// demonstrated it on both the reply gate and the haggle
+// guard). The parser is bounded English: units, tens,
+// hundred, thousand, million, with "and" inside the phrase.
+var smallNumberWords = map[string]float64{
+	"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
+	"five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+	"ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+	"fourteen": 14, "fifteen": 15, "sixteen": 16,
+	"seventeen": 17, "eighteen": 18, "nineteen": 19,
+}
+
+var tensNumberWords = map[string]float64{
+	"twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+	"sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+
+var scaleNumberWords = map[string]float64{
+	"hundred": 100, "thousand": 1000, "million": 1000000,
+}
+
+func isNumberWord(w string) bool {
+	if _, ok := smallNumberWords[w]; ok {
+		return true
+	}
+	if _, ok := tensNumberWords[w]; ok {
+		return true
+	}
+	_, ok := scaleNumberWords[w]
+	return ok
+}
+
+// parseNumberPhrase reads one English number phrase
+// starting at words[i], returning its value and how many
+// words it consumed (0 when words[i] does not start one).
+func parseNumberPhrase(words []string, i int) (float64, int) {
+	total, current := 0.0, 0.0
+	j := i
+	started := false
+	// English number order is part of the phrase's meaning:
+	// tens may precede a unit ("fifty two"), never follow
+	// one — "two fifty" is the unit-plus-fraction idiom
+	// (GH₵2.50) or two figures, never fifty-two, and the
+	// second audit caught the sum releasing a draft at a
+	// figure no reader would take from it. An out-of-order
+	// word ends the phrase, so each figure is verified as
+	// itself.
+	seenSmall, seenTens := false, false
+	for j < len(words) {
+		w := words[j]
+		if v, ok := smallNumberWords[w]; ok {
+			if seenSmall {
+				break
+			}
+			seenSmall = true
+			current += v
+		} else if v, ok := tensNumberWords[w]; ok {
+			if seenSmall || seenTens {
+				break
+			}
+			seenTens = true
+			current += v
+		} else if w == "hundred" {
+			seenSmall, seenTens = false, false
+			if current == 0 {
+				current = 1
+			}
+			current *= 100
+		} else if w == "thousand" || w == "million" {
+			if current == 0 {
+				current = 1
+			}
+			total += current * scaleNumberWords[w]
+			current = 0
+			seenSmall, seenTens = false, false
+		} else if w == "and" && started && j+1 < len(words) && isNumberWord(words[j+1]) {
+			// "and" lives inside a phrase ("one hundred and
+			// fifty") and nowhere else for our purposes.
+		} else {
+			break
+		}
+		started = true
+		j++
+	}
+	if !started {
+		return 0, 0
+	}
+	return total + current, j - i
+}
+
+// wordFigure is one spelled-out figure found in a text,
+// with whether a currency word stands next to it.
+type wordFigure struct {
+	value            float64
+	currencyAdjacent bool
+}
+
+var currencyWords = map[string]bool{
+	"cedi": true, "cedis": true, "ghs": true, "gh₵": true, "₵": true,
+	// The short forms the rest of the codebase already
+	// treats as currency markers (photo, merchant and
+	// burst paths): without them a spelled figure priced
+	// in "ghc" skipped verification entirely (second
+	// audit).
+	"ghc": true, "gh": true,
+}
+
+// wordFigures finds every spelled-out number phrase in a
+// text. Ordinary English uses small numbers constantly
+// ("one of the bags"), so each phrase reports whether it
+// reads as money; callers decide what follows (see
+// figuresClean and the haggle guard). A phrase reads as
+// money in two cases:
+//
+//   - a currency word stands beside it, within two
+//     tokens ("five thousand cedis", "cedis fifty"): the
+//     second audit showed a currency word two tokens off
+//     left a sub-100 price wholly unverified;
+//   - its sentence names a currency and carries no digit
+//     figure at all: then the spelled figure is the
+//     sentence's money, however far the currency word
+//     stands — the fourth audit's escape was "fifty bags
+//     of rice in cedis", four tokens apart.
+//   - its sentence names a currency AND carries a digit
+//     figure, and the spelled figure is not a plain
+//     count: the fifth audit found the digit switched
+//     the sentence rule off wholesale, so a spelled
+//     price standing in a money position ("the delivery
+//     is 50, and the cloth is fifty cedis in all") went
+//     unverified. A plain count — a spelled figure
+//     directly followed by a goods noun, with no money
+//     word just before it ("two bags for 800 cedis") —
+//     stays a count; anything else in a currency-naming
+//     sentence is judged money and verified.
+func wordFigures(text string) []wordFigure {
+	var out []wordFigure
+	sentences := strings.FieldsFunc(text, func(r rune) bool {
+		return r == '.' || r == '!' || r == '?' || r == ';' || r == '\n'
+	})
+	for _, s := range sentences {
+		out = append(out, wordFiguresIn(s)...)
+	}
+	return out
+}
+
+func wordFiguresIn(text string) []wordFigure {
+	raw := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !(r >= 'a' && r <= 'z') && r != '₵'
+	})
+	words := make([]string, 0, len(raw))
+	for _, w := range raw {
+		if w != "" {
+			words = append(words, w)
+		}
+	}
+	namesCurrency := false
+	for _, w := range words {
+		if currencyWords[w] {
+			namesCurrency = true
+		}
+	}
+	hasDigit := figureTokenRe.MatchString(text)
+	// Money words mark a money position: a spelled figure
+	// standing just after one ("is fifty", "charge fifty",
+	// "fifty more to pay") is being used as money, not
+	// counted as goods.
+	moneyWords := map[string]bool{
+		"is": true, "more": true, "charge": true, "charges": true,
+		"fee": true, "costs": true, "cost": true, "total": true,
+		"pay": true, "price": true,
+	}
+	var out []wordFigure
+	for i := 0; i < len(words); {
+		v, consumed := parseNumberPhrase(words, i)
+		if consumed == 0 {
+			i++
+			continue
+		}
+		adjacent := false
+		for _, j := range []int{i + consumed, i + consumed + 1, i + consumed + 2, i - 1, i - 2} {
+			if j >= 0 && j < len(words) && currencyWords[words[j]] {
+				adjacent = true
+			}
+		}
+		if !adjacent && namesCurrency {
+			if !hasDigit {
+				// The run-4 sentence rule: with no digit
+				// figure, the spelled figure is the
+				// sentence's money.
+				adjacent = true
+			} else {
+				// A digit figure stands in the sentence,
+				// but it no longer switches the rule off
+				// wholesale (the fifth audit). The
+				// spelled figure is money unless it is a
+				// plain count: directly followed by a
+				// word that is neither a currency word
+				// nor a money word (the goods noun), and
+				// with no money word in the two tokens
+				// before it.
+				moneyBefore := false
+				for _, j := range []int{i - 1, i - 2} {
+					if j >= 0 && moneyWords[words[j]] {
+						moneyBefore = true
+					}
+				}
+				// A money word just after the following
+				// token defeats the count reading too
+				// ("five in total" — the sixth audit),
+				// and "in" right after the figure cannot
+				// establish a count: it names no goods.
+				// ("Of" is deliberately not a marker:
+				// "two of the large bags" is the
+				// canonical count shape, held by the
+				// fourth audit's control case.)
+				moneyAfter := false
+				for _, j := range []int{i + consumed + 1, i + consumed + 2} {
+					if j < len(words) && moneyWords[words[j]] {
+						moneyAfter = true
+					}
+				}
+				plainCount := false
+				if next := i + consumed; next < len(words) && !currencyWords[words[next]] && !moneyWords[words[next]] && !moneyBefore && !moneyAfter && words[next] != "in" {
+					plainCount = true
+				}
+				adjacent = !plainCount
+			}
+		}
+		out = append(out, wordFigure{value: v, currencyAdjacent: adjacent})
+		i += consumed
+	}
+	return out
+}
+
 func figuresClean(text string, allowed ...float64) bool {
+	for _, wf := range wordFigures(text) {
+		// A spelled figure is money when a currency word
+		// stands beside it, or when it is large enough that
+		// in a sales reply it can only be a price or a fee.
+		// Small bare numbers are ordinary English ("one of
+		// the bags") and are not held against the draft.
+		if !wf.currencyAdjacent && wf.value < 100 {
+			continue
+		}
+		ok := false
+		for _, a := range allowed {
+			if money.Round(wf.value*100) == money.Round(a*100) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
 	for _, tok := range figureTokenRe.FindAllString(text, -1) {
-		v, err := strconv.ParseFloat(strings.ReplaceAll(tok, ",", ""), 64)
+		v, err := parseFigure(tok)
 		if err != nil {
 			return false
 		}
@@ -138,6 +405,88 @@ func figuresClean(text string, allowed ...float64) bool {
 		if !ok {
 			return false
 		}
+	}
+	return true
+}
+
+// figureNearCurrency reports whether a digit token at
+// [start, end) in text carries a currency marker of its
+// own: the marker attached directly before it ("GH₵42",
+// "cedis 42") or directly after it ("42 cedis", "42 ghs"),
+// with only spaces between. A marker belonging to the
+// NEXT figure does not count — "size 42, comes to GH₵850"
+// leaves the 42 bare.
+func figureNearCurrency(text string, start, end int) bool {
+	wordAt := func(s string) string {
+		s = strings.TrimSpace(strings.ToLower(s))
+		end := 0
+		for _, r := range s {
+			if (r >= 'a' && r <= 'z') || r == '₵' {
+				end += len(string(r))
+				continue
+			}
+			break
+		}
+		return s[:end]
+	}
+	if w := wordAt(text[end:]); currencyWords[w] {
+		return true
+	}
+	before := strings.TrimSpace(text[:start])
+	if strings.HasSuffix(before, "₵") {
+		return true
+	}
+	if i := strings.LastIndexFunc(before, func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r == '₵')
+	}); i >= 0 {
+		if currencyWords[strings.ToLower(before[i+1:])] {
+			return true
+		}
+	} else if currencyWords[strings.ToLower(before)] {
+		return true
+	}
+	return false
+}
+
+// recapFiguresClean verifies an order recap's figures
+// with the units kept apart — the pooled figuresClean
+// cannot: the third audit showed a numeric size in the
+// shared pool licensing an invented fee of the same value
+// ("size 42" admitting "GH₵42 delivery"). Money figures
+// (currency-marked, or spelled at 100 and above) must be
+// money facts of the order. A bare, unmarked digit token
+// may instead be one of the order's non-money values —
+// its quantities and sizes — because an honest recap
+// names those too, in bare positions.
+func recapFiguresClean(text string, moneyAllowed, bareAllowed []float64) bool {
+	inSet := func(set []float64, v float64) bool {
+		for _, a := range set {
+			if money.Round(v*100) == money.Round(a*100) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, wf := range wordFigures(text) {
+		if !wf.currencyAdjacent && wf.value < 100 {
+			continue
+		}
+		if !inSet(moneyAllowed, wf.value) {
+			return false
+		}
+	}
+	for _, m := range figureTokenRe.FindAllStringIndex(text, -1) {
+		v, err := parseFigure(text[m[0]:m[1]])
+		if err != nil {
+			return false
+		}
+		if inSet(moneyAllowed, v) {
+			continue
+		}
+		if inSet(bareAllowed, v) && !figureNearCurrency(text, m[0], m[1]) {
+			continue
+		}
+		return false
 	}
 	return true
 }
@@ -218,7 +567,7 @@ func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, sh
 	if w := recentSpeakerWords(s, 4); w != "" {
 		b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
 	}
-	b.WriteString(quoteFactLine())
+	b.WriteString(quoteFactLine(from))
 	if order := orders.Default.NewestUnpaidFor(shopID, from); order != nil {
 		b.WriteString("She has an open order waiting for payment: " + order.ProductName + ", " + money.GHS(order.Charged()) + ", reference " + order.Reference + ". Payment is only through the payment button Stall sent for it, and Stall confirms it itself.\n")
 	} else if latest := orders.Default.NewestFor(shopID, from); latest != nil && latest.Status == "paid" {
@@ -238,7 +587,7 @@ func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, sh
 	}
 	b.WriteString("\nHer message: " + msg)
 	sys := thinkSystem
-	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys})
+	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, Turn: turnTokenFor(from)})
 	u := parseUnderstood(out)
 	if u != nil {
 		u.DirectRoute = directWordsRe.MatchString(strings.ToLower(msg))
@@ -250,9 +599,24 @@ func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, sh
 // merchantDayFigures returns the merchant's day as a fact
 // line for the thinking prompt, plus the day's figures a
 // drafted reply is allowed to use.
-func merchantDayFigures(merchant *catalogue.Merchant, shopID string) (string, []float64) {
+// merchantDayFigures returns the day report with its
+// figures SPLIT by kind — money values and bare counts —
+// because the gates that verify a reply against them
+// must not pool the two (the fifth audit: pooled, a sale
+// count of 850 licensed a drafted "GH₵850" the day never
+// saw; a count is not money and must never verify as
+// one). Callers verify currency-marked figures against
+// the money set and bare figures against either, the
+// recap gate's shape.
+func merchantDayFigures(merchant *catalogue.Merchant, shopID string) (string, []float64, []float64) {
 	day := daybook.Default.GetDayState(shopID, daybook.Options{Allowance: merchant.DailyGiveawayAllowance})
-	return insights.DayReportText(day), []float64{day.Revenue, day.GivenAway, day.Allowance, float64(day.Sales), float64(day.WalkAways)}
+	left := day.Allowance - day.GivenAway
+	if left < 0 {
+		left = 0
+	}
+	return insights.DayReportText(day),
+		[]float64{day.Revenue, day.GivenAway, day.Allowance, left},
+		[]float64{float64(day.Sales), float64(day.WalkAways)}
 }
 
 // understandMerchantMessage asks the model what the merchant
@@ -263,17 +627,17 @@ func merchantDayFigures(merchant *catalogue.Merchant, shopID string) (string, []
 // this step replaced.
 func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID, msg string) *understood {
 	shelf, _ := shelfFacts(shopID)
-	dayText, _ := merchantDayFigures(merchant, shopID)
+	dayText, _, _ := merchantDayFigures(merchant, shopID)
 	var b strings.Builder
 	b.WriteString("The person writing is the OWNER of the shop " + merchant.Name + ", talking to her own sales agent.\n")
 	b.WriteString("Your name is Stall. When she asks your name or what to call you, the answer is Stall.\n")
 	b.WriteString("On her shelf: " + shelf + ".\n")
-	if ms, ok := sessions[sessionKey(shopID, from)]; ok {
+	if ms, ok := sessions.lookup(sessionKey(shopID, from)); ok {
 		if w := recentSpeakerWords(ms, 4); w != "" {
 			b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
 		}
 	}
-	b.WriteString(quoteFactLine())
+	b.WriteString(quoteFactLine(from))
 	b.WriteString("Her day so far: " + dayText + "\n")
 	b.WriteString("Her daily giveaway allowance is the amount she allows the agent to give away in discounts across a day; every discount agreed comes out of it, and the agent haggles firmer as it runs down. It stands at " + money.GHS(merchant.DailyGiveawayAllowance) + ".\n")
 	if !merchant.AllowanceSet {
@@ -302,14 +666,14 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	if focus := focusOrder(shopID); focus != nil {
 		b.WriteString("The order in focus, the one she means when she says \"this order\" or asks about \"the payment\" without naming another, is " + focus.Reference + " (the " + focus.ProductName + ", " + money.GHS(focus.Charged()) + ", buyer " + focus.From + ", status " + focus.Status + ").\n")
 	}
-	if key := sessionKey(shopID, from); sessions[key] != nil && sessions[key].LastMerchantNote != "" {
-		b.WriteString("The last thing the agent told her, which an \"explain this\" from her most likely points at: \"" + sessions[key].LastMerchantNote + "\" If she asks to explain, explain THAT, in plain words, from the facts.\n")
+	if key := sessionKey(shopID, from); sessions.get(key) != nil && sessions.get(key).LastMerchantNote != "" {
+		b.WriteString("The last thing the agent told her, which an \"explain this\" from her most likely points at: \"" + sessions.get(key).LastMerchantNote + "\" If she asks to explain, explain THAT, in plain words, from the facts.\n")
 	}
 	b.WriteString("Things she can ask the agent to do: show her catalogue, change a price or a last price, set her daily giveaway allowance, remove a product, add a product by describing it or sending a photo, tell her how today is going, report on the payment of an order, ask a buyer a question on her behalf, and tell her what needs her attention.\n")
 	b.WriteString("Use \"order_payment\" when she is asking about the payment on an order, \"ask_buyer\" when she is telling the agent to ask her buyer something, and \"attention\" when she is asking what needs her or what is outstanding. Use \"ask\" for any other question her shelf, her day, her allowance or those abilities can answer, drafting the reply from the facts only.\n")
 	b.WriteString("\nThe owner's message: " + msg)
 	sys := thinkSystem
-	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys})
+	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, Turn: turnTokenFor(from)})
 	return parseUnderstood(out)
 }
 
@@ -387,7 +751,7 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		// figure or a pitch is not a courtesy; the plain line
 		// stands in for it.
 		reply := strings.TrimSpace(u.Reply)
-		if reply == "" || !voiceClean(reply) || strings.Contains(reply, "₵") ||
+		if reply == "" || !voiceClean(reply) || !figuresClean(reply) ||
 			strings.Contains(strings.ToLower(reply), "here is what we have") {
 			reply = courtesyLine(shopID, from, merchant)
 		}
@@ -408,9 +772,9 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		whatsapp.SendText(from, orderReadback(merchant, o))
 		return true
 	case intentOrderReceived:
-		return buyerConfirmReceived(from, merchant, shopID)
+		return buyerConfirmReceived(from, merchant, shopID, u.Words)
 	case intentOrderMissing:
-		return buyerReportMissing(from, merchant, shopID)
+		return buyerReportMissing(from, merchant, shopID, u.Words)
 	case intentOrderDispute:
 		order := disputeTarget(shopID, from)
 		if order == nil {
@@ -431,14 +795,27 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 	case intentItem:
 		p := catalogue.FindProduct(shopID, strings.ToLower(u.Item))
 		if p == nil {
-			p = quotedProductIn(shopID)
+			p = quotedProductIn(shopID, from)
 		}
 		if p == nil {
 			return false
 		}
+		if p.AvailableUnits() <= 0 {
+			// "Still available." is printed by code, so
+			// code owns its truth (the seventh audit): a
+			// sold-out product is answered honestly, with
+			// no priced view and no place in her view.
+			whatsapp.SendText(from, "That one has sold out just now.")
+			return true
+		}
 		s.LastViewed = p
 		if s.Stage == "agreed" {
+			// The agreed shell sheds its sale identity
+			// with its stage (the sixth audit), as on the
+			// browsing road.
 			s.Stage = "browsing"
+			s.SaleID = ""
+			s.PaymentURL = ""
 		}
 		whatsapp.SendText(from, "Still available.")
 		sendProductView(from, p, " Want to make an offer?")
@@ -452,7 +829,7 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 			p = catalogue.FindProduct(shopID, strings.ToLower(u.Item))
 		}
 		if p == nil {
-			p = quotedProductIn(shopID)
+			p = quotedProductIn(shopID, from)
 		}
 		if p == nil {
 			p = s.LastViewed
@@ -460,8 +837,15 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		if p == nil {
 			return false
 		}
+		if p.AvailableUnits() <= 0 {
+			// No photos, view, merchant photo solicitation
+			// or LastViewed for goods that cannot be
+			// bought (the seventh audit).
+			whatsapp.SendText(from, "The "+p.Name+" has sold out just now, so it is not available to buy.")
+			return true
+		}
 		s.LastViewed = p
-		if sendProductPhotos(from, p) {
+		if sendProductPhotos(from, shopID, p) {
 			sendProductView(from, p, " Make me an offer and let us see.")
 			return true
 		}
@@ -587,7 +971,7 @@ func reissueLink(from string, s *Session, merchant *catalogue.Merchant, order *o
 		Reference:      order.Reference + "-" + strconv.Itoa(attempts+1),
 		IdempotencyKey: checkout.FreshKey(order.Reference),
 		RecipientName:  order.PackageName,
-		Subaccount:     merchant.SubaccountCode,
+		Subaccount:     subaccountFor(merchant),
 	})
 	if link.URL == nil {
 		whatsapp.SendText(from, "The link is not coming up right now, even a fresh one. The shop has been told, and your order "+order.Reference+" is still open.")
@@ -597,8 +981,33 @@ func reissueLink(from string, s *Session, merchant *catalogue.Merchant, order *o
 		return true
 	}
 	newRef := link.ProviderRef
+	// The mint above can take seconds, and the order can
+	// move inside that window — the webhook settles it,
+	// the merchant cancels it. The third audit found this
+	// write assigning Status='pending' unconditionally
+	// from the pre-mint copy, reopening an order that had
+	// already ended. Transition only a stored order that
+	// is still open, rebind the session's nature with its
+	// reference, and if the order moved on, say so from
+	// the stored record instead of sending a live button
+	// for an order that no longer wants one.
+	applied := false
 	orders.Default.Update(order.Reference, func(o *orders.Order) {
+		if o.Status != "pending" && o.Status != "link_failed" {
+			return
+		}
+		applied = true
+		// The session attributes follow the successful
+		// mint unconditionally (the fifth audit): a
+		// dry-run mint carries ProviderRef nil and
+		// DryRun true by construction, and the old guard
+		// skipped the write exactly then — leaving the
+		// order bound to its old REAL provider session
+		// with the flag unset, a session the sweep and
+		// the webhook would keep verifying against an
+		// order the re-issue believed was dry.
 		o.ProviderRef = newRef
+		o.DryRun = link.DryRun
 		o.LinkAttempts = attempts + 1
 		// A live session exists again: an order whose link
 		// never came up goes back to plain pending, the
@@ -606,6 +1015,15 @@ func reissueLink(from string, s *Session, merchant *catalogue.Merchant, order *o
 		// working link.
 		o.Status = "pending"
 	})
+	if !applied {
+		stored := orders.Default.GetOrder(order.Reference)
+		if stored != nil && stored.Status == "paid" {
+			whatsapp.SendText(from, "Good news: your order "+stored.Reference+" has already been paid and confirmed, so there is nothing more to pay on it.")
+		} else {
+			whatsapp.SendText(from, "That order, "+order.Reference+", has ended, so there is nothing to pay on it. If you still want the item, tell me and we will start it fresh.")
+		}
+		return true
+	}
 	if s != nil {
 		s.PaymentURL = *link.URL
 	}
@@ -642,15 +1060,15 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 		sendPieces(from, u.Reply)
 		return true
 	case intentAttention:
-		whatsapp.SendText(from, merchantAttentionText(merchant, sessions[sessionKey(shopID, from)]))
+		whatsapp.SendText(from, merchantAttentionText(merchant, sessions.get(sessionKey(shopID, from))))
 		return true
 	case intentAsk, intentUnclear:
 		if strings.TrimSpace(u.Reply) == "" {
 			return false
 		}
 		_, figures := shelfFacts(shopID)
-		_, dayFigures := merchantDayFigures(merchant, shopID)
-		figures = append(figures, dayFigures...)
+		_, dayMoney, dayCounts := merchantDayFigures(merchant, shopID)
+		figures = append(figures, dayMoney...)
 		if focus := focusOrder(shopID); focus != nil {
 			figures = append(figures, focus.Charged(), focus.Price)
 		}
@@ -660,14 +1078,20 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 		// naturally repeats its example ("set allowance 300"),
 		// and a guard that rejects the agent's own words makes
 		// the explanation unsendable.
-		if s, ok := sessions[sessionKey(shopID, from)]; ok && s.LastMerchantNote != "" {
+		if s, ok := sessions.lookup(sessionKey(shopID, from)); ok && s.LastMerchantNote != "" {
 			for _, tok := range figureTokenRe.FindAllString(s.LastMerchantNote, -1) {
-				if v, err := strconv.ParseFloat(tok, 64); err == nil {
+				if v, err := parseFigure(tok); err == nil {
 					figures = append(figures, v)
 				}
 			}
 		}
-		if !figuresClean(u.Reply, figures...) || !voiceClean(u.Reply) {
+		// The day counts ride the BARE pool only (the
+		// fifth audit): pooled with the money, a count
+		// licensed a currency figure the books never saw.
+		// recapFiguresClean checks currency-marked
+		// figures against the money alone and bare
+		// figures against money or counts.
+		if !recapFiguresClean(u.Reply, figures, dayCounts) || !voiceClean(u.Reply) {
 			return false
 		}
 		sendPieces(from, u.Reply)

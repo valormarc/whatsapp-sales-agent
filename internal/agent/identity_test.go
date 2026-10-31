@@ -12,7 +12,7 @@ import (
 func stubDraftListing(t *testing.T, fn func(caption, openName string) *model.ListingDraft) {
 	t.Helper()
 	old := draftListingFn
-	draftListingFn = func(dataURI, caption, openName, openDesc string) *model.ListingDraft {
+	draftListingFn = func(dataURI, caption, openName, openDesc, turn string) *model.ListingDraft {
 		return fn(caption, openName)
 	}
 	t.Cleanup(func() { draftListingFn = old })
@@ -44,7 +44,7 @@ func TestIdentityVerdictDifferentKeepsDesignsApart(t *testing.T) {
 	c.replies(t, owner)
 	c.photo(t, owner, "37-41@80")
 	c.replies(t, owner)
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil {
 		t.Fatal("the open listing should still be open")
 	}
@@ -80,7 +80,7 @@ func TestIdentityVerdictSameCollectsDespiteNameShape(t *testing.T) {
 	c.replies(t, owner)
 	c.photo(t, owner, "37-41@80")
 	c.replies(t, owner)
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil {
 		t.Fatal("the open listing should still be open")
 	}

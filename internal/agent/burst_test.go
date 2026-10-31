@@ -43,7 +43,7 @@ func TestBurstBatchIsPricedTogetherAndSaved(t *testing.T) {
 		t.Fatalf("the second product should be kept for the batch, got %q", joined)
 	}
 	c.photo(t, owner, "Serving Trays\nGold trim, set of 3\nGH₵170")
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || len(s.BurstBatch) != 2 {
 		t.Fatalf("two products should be waiting in the batch, got %+v", s)
 	}
@@ -137,7 +137,7 @@ func TestBurstNegatedFixedSentenceSavesNothing(t *testing.T) {
 
 	c.say(t, owner, "I don't want a fixed price; customers can bargain")
 	c.replies(t, owner)
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || !s.BurstAwaiting || len(s.BurstBatch) != 2 {
 		t.Fatalf("the negated sentence should leave the batch waiting, got %+v", s)
 	}
@@ -186,7 +186,7 @@ func TestBurstFoldTakesTheIdentityVerdict(t *testing.T) {
 	c.photo(t, owner, "Corner Rack\nSteel frame with 4 tiers\nGH₵270")
 	c.photo(t, owner, "Metal Rack\nBlack double rack with bottom shelf\nGH₵270")
 	c.photo(t, owner, "Metal Rack\nWhite single rack with wheels\nGH₵270")
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || len(s.BurstBatch) != 2 {
 		t.Fatalf("two different racks under one name should stay two batch items, got %+v", s)
 	}
@@ -292,7 +292,7 @@ func TestBurstBatchPartialAndOverListAnswers(t *testing.T) {
 	if catalogue.FindByName(MerchantID, "Dinner Set") != nil {
 		t.Fatal("the refused item must not be saved")
 	}
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || len(s.BurstBatch) != 1 || len(s.BurstHeld) != 1 || !s.BurstAwaiting {
 		t.Fatalf("the sound item should still be waiting and the doubted one held, got batch=%v held=%v awaiting=%v", s.BurstBatch, s.BurstHeld, s.BurstAwaiting)
 	}
@@ -322,7 +322,7 @@ func TestBurstAlikeNamesWithDifferentPricesStaySeparate(t *testing.T) {
 	c.photo(t, owner, "Corner Rack\nSteel frame with 4 tiers\nGH₵270")
 	c.photo(t, owner, "Metal Rack\nWall mounted steel rack\nGH₵150")
 	c.photo(t, owner, "Metal Rack\nHeavy duty floor rack\nGH₵200")
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || len(s.BurstBatch) != 2 {
 		t.Fatalf("the two differently priced racks should be separate batch items, got %+v", s)
 	}
@@ -334,9 +334,18 @@ func TestBurstAlikeNamesWithDifferentPricesStaySeparate(t *testing.T) {
 	}
 
 	c.photo(t, owner, "Metal Rack\nWall mounted steel rack\nGH₵150")
-	s = sessions[sessionKey(MerchantID, owner)]
-	if len(s.BurstBatch) != 2 || len(s.BurstBatch[0].PhotoRefs) != 2 {
-		t.Fatalf("a same-price angle should fold into its own item only, got %+v", s.BurstBatch)
+	s = sessions.get(sessionKey(MerchantID, owner))
+	// The repeat photo carries the first rack's exact
+	// caption facts, but no identity judgement stands
+	// behind it in this harness (the model is off, so no
+	// verdict was ever made). Caption equality alone no
+	// longer folds a photo into a kept item (the fifth
+	// audit): two distinct products can share a caption,
+	// and an unjudged photo stands as its own item for
+	// the seller's own eyes at the batch, rather than
+	// merging on text that happens to match.
+	if len(s.BurstBatch) != 3 || len(s.BurstBatch[0].PhotoRefs) != 1 {
+		t.Fatalf("an unjudged repeat should stand as its own item, got %+v", s.BurstBatch)
 	}
 }
 
@@ -367,7 +376,7 @@ func TestBurstNumberedSentenceIsNotAPriceAnswer(t *testing.T) {
 	if catalogue.FindByName(MerchantID, "Dinner Set") != nil {
 		t.Fatal("the numbered sentence must not save the batch item")
 	}
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || !s.BurstAwaiting || len(s.BurstBatch) != 1 {
 		t.Fatalf("the batch should still be waiting, got %+v", s)
 	}

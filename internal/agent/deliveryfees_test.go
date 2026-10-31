@@ -88,7 +88,7 @@ func TestQuoteStylePausesAsksAndCompletes(t *testing.T) {
 	if got := strings.Join(c.replies(t, merchant), "\n"); !strings.Contains(got, "Delivery fee needed") || !strings.Contains(got, "Osu") {
 		t.Fatalf("the seller must be asked for the fee, got %q", got)
 	}
-	if s := sessions[sessionKey("demo", buyer)]; s == nil || s.FulfilStep != "feewait" {
+	if s := sessions.get(sessionKey("demo", buyer)); s == nil || s.FulfilStep != "feewait" {
 		t.Fatalf("the buyer must be waiting on the fee, got %+v", s)
 	}
 
@@ -132,7 +132,7 @@ func TestQuoteDeclineHandsTheChoiceBack(t *testing.T) {
 	if !strings.Contains(got, "cannot deliver to Osu") {
 		t.Fatalf("the buyer must be told plainly, got %q", got)
 	}
-	if s := sessions[sessionKey("demo", buyer)]; s == nil || s.FulfilStep != "choice" {
+	if s := sessions.get(sessionKey("demo", buyer)); s == nil || s.FulfilStep != "choice" {
 		t.Fatalf("the buyer must be back at the choice, got %+v", s)
 	}
 }
@@ -143,12 +143,12 @@ func TestQuoteTimeoutOffersTheWaysOut(t *testing.T) {
 	c := &chat{dir: dir}
 	buyer := "233550003032"
 
-	bindings[buyer] = "demo"
-	sessions[sessionKey("demo", buyer)] = &Session{
+	bindings.put(buyer, "demo")
+	sessions.put(sessionKey("demo", buyer), &Session{
 		Stage: "fulfilment", MerchantID: "demo", FulfilStep: "feewait",
 		FeeQuotePlace: "Osu", AgreedPrice: 850,
 		Product: &catalogue.Product{ID: "beaded-bag", Name: "Handmade Beaded Bag", ListPrice: 850, FloorPrice: 680},
-	}
+	})
 	openFeeQuote(feeQuote{ShopID: "demo", Buyer: buyer, Item: "Handmade Beaded Bag", Price: 850, Place: "Osu"})
 	// Age the request past the timeout.
 	all := loadFeeQuotes()
@@ -161,7 +161,7 @@ func TestQuoteTimeoutOffersTheWaysOut(t *testing.T) {
 	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "has not given the delivery fee") || !strings.Contains(got, "say wait") {
 		t.Fatalf("the timeout must offer the ways out, got %q", got)
 	}
-	if s := sessions[sessionKey("demo", buyer)]; s == nil || s.FulfilStep != "feeexpired" {
+	if s := sessions.get(sessionKey("demo", buyer)); s == nil || s.FulfilStep != "feeexpired" {
 		t.Fatalf("the step must be feeexpired, got %+v", s)
 	}
 

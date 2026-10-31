@@ -45,7 +45,7 @@ func doorText() string {
 // there, with its open question held up, never by opening
 // the door over it.
 func midDiscovery(from string) bool {
-	pre, ok := sessions[sessionKey("", from)]
+	pre, ok := sessions.lookup(sessionKey("", from))
 	return ok && pre != nil && (len(pre.DiscoveryShown) > 0 || pre.DiscoveryAsked || len(pre.History) > 0)
 }
 

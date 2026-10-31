@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
@@ -142,7 +143,7 @@ func attachPhotos(merchantID string, product catalogue.Product, refs []string) {
 	if len(refs) == 0 {
 		return
 	}
-	_ = os.MkdirAll(datadir.Path("photos"), 0o755)
+	_ = os.MkdirAll(datadir.Path(filepath.Join("photos", merchantID)), 0o755)
 	var kept []string
 	for i, id := range refs {
 		data, mime, ok := downloadMediaBytesFn(id)
@@ -156,7 +157,7 @@ func attachPhotos(merchantID string, product catalogue.Product, refs []string) {
 		case strings.Contains(mime, "webp"):
 			ext = ".webp"
 		}
-		rel := filepath.Join("photos", product.ID+"-"+string(rune('1'+i))+ext)
+		rel := scopedPhotoRel(merchantID, product.ID, i+1, ext)
 		if err := os.WriteFile(datadir.Path(rel), data, 0o600); err != nil {
 			continue
 		}
@@ -167,22 +168,117 @@ func attachPhotos(merchantID string, product catalogue.Product, refs []string) {
 	}
 }
 
+// scopedPhotoRel is where a product's photo lives: under
+// its own shop's directory, so two shops selling a product
+// with the same name (and therefore the same product id)
+// can never overwrite or serve each other's pictures —
+// the collision the 2026-10-30 audit demonstrated with
+// two shops' beaded bags.
+func scopedPhotoRel(merchantID, productID string, n int, ext string) string {
+	return filepath.Join("photos", merchantID, productID+"-"+strconv.Itoa(n)+ext)
+}
+
+// nextPhotoSlot is the slot a new photo for a product
+// takes: one past the HIGHEST slot its record already
+// holds, never the count of its photos. Slots are minted
+// by source index in attachPhotos, so a failed download
+// leaves a gap (photos 1 and 3, say) — and the third
+// audit found a count-derived slot (3) overwriting the
+// surviving photo at that slot while its record still
+// pointed there.
+func nextPhotoSlot(p *catalogue.Product) int {
+	max := 0
+	prefix := p.ID + "-"
+	for _, rel := range p.Photos {
+		base := filepath.Base(rel)
+		if !strings.HasPrefix(base, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(base, prefix)
+		if i := strings.Index(rest, "."); i > 0 {
+			if n, err := strconv.Atoi(rest[:i]); err == nil && n > max {
+				max = n
+			}
+		}
+	}
+	return max + 1
+}
+
+// readStoredPhoto reads one kept photo. A path recorded
+// before shop scoping (a flat photos/<id>-<n> path) is
+// migrated on first read: the file moves under its shop's
+// directory and the listing's record follows, so the old
+// shared namespace drains away on its own.
+func readStoredPhoto(shopID string, p *catalogue.Product, rel string) ([]byte, bool) {
+	if data, err := os.ReadFile(datadir.Path(rel)); err == nil && len(data) > 0 {
+		return data, true
+	}
+	// Legacy flat path: try the shop-scoped home of the
+	// same file name and migrate it there.
+	base := filepath.Base(rel)
+	scoped := filepath.Join("photos", shopID, base)
+	if scoped == rel {
+		return nil, false
+	}
+	data, err := os.ReadFile(datadir.Path(scoped))
+	if err == nil && len(data) > 0 {
+		return data, true
+	}
+	legacy := filepath.Join("photos", base)
+	data, err = os.ReadFile(datadir.Path(legacy))
+	if err != nil || len(data) == 0 {
+		return nil, false
+	}
+	_ = os.MkdirAll(datadir.Path(filepath.Join("photos", shopID)), 0o755)
+	if err := os.WriteFile(datadir.Path(scoped), data, 0o600); err == nil {
+		photos := append([]string{}, p.Photos...)
+		for i, r := range photos {
+			if r == rel {
+				photos[i] = scoped
+			}
+		}
+		_ = catalogue.SetProductPhotos(shopID, p.ID, photos)
+		// The legacy file is this reader's copy source,
+		// not hers to take away: a flat path from before
+		// scoping can be named by ANOTHER shop's product
+		// too (the run-1 collision), and the old move
+		// deleted it from under that shop (second audit,
+		// needs-validation). It is removed only once no
+		// product anywhere still names it.
+		if !catalogue.PhotoReferenced(legacy) {
+			_ = os.Remove(datadir.Path(legacy))
+		}
+	}
+	return data, true
+}
+
 // sendProductPhotos sends a product's kept photos to the
 // buyer, the first carrying the product's name as its
 // caption, and reports whether at least one went out. With
 // no kept photos, or a send that cannot be made, it reports
 // false and the caller answers in words, as before.
-func sendProductPhotos(from string, p *catalogue.Product) bool {
-	if p == nil || len(p.Photos) == 0 {
+//
+// The product is re-resolved against the live catalogue
+// first: a session-held copy of a product the merchant has
+// since removed (or re-photographed) must never send the
+// old pictures — the control servePendingPicRequest always
+// had, now kept by every reader.
+func sendProductPhotos(from, shopID string, p *catalogue.Product) bool {
+	if p == nil {
 		return false
 	}
+	live := catalogue.FindByID(shopID, p.ID)
+	if live == nil || len(live.Photos) == 0 {
+		return false
+	}
+	p = live
 	sent := false
 	for i, rel := range p.Photos {
 		if i >= 3 {
 			break
 		}
-		data, err := os.ReadFile(datadir.Path(rel))
-		if err != nil || len(data) == 0 {
+		data, ok := readStoredPhoto(shopID, p, rel)
+		if !ok {
 			continue
 		}
 		mime := "image/jpeg"
@@ -204,4 +300,34 @@ func sendProductPhotos(from string, p *catalogue.Product) bool {
 		sent = true
 	}
 	return sent
+}
+
+// sessionPhotoRefs lists every stored photo path a live
+// session still names: an open listing's kept photos and
+// the burst batch and held sets. Registered with the
+// catalogue at startup (see catalogue.ExtraPhotoRefs) so
+// orphan deletion never takes a file a session can still
+// send.
+func sessionPhotoRefs() []string {
+	var out []string
+	sessions.rangeAll(func(_ string, s *Session) bool {
+		if s == nil {
+			return true
+		}
+		if s.Onboarding != nil {
+			out = append(out, s.Onboarding.PhotoRefs...)
+		}
+		for _, it := range s.BurstBatch {
+			out = append(out, it.PhotoRefs...)
+		}
+		for _, it := range s.BurstHeld {
+			out = append(out, it.PhotoRefs...)
+		}
+		return true
+	})
+	return out
+}
+
+func init() {
+	catalogue.ExtraPhotoRefs = sessionPhotoRefs
 }

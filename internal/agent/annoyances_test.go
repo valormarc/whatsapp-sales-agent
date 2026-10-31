@@ -74,7 +74,7 @@ func TestAnswerToTheAllowanceNoteSetsIt(t *testing.T) {
 	// it, and say "set it 300" in her own words.
 	c.say(t, owner, "How is today going?")
 	c.replies(t, owner)
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.LastNoteMsgID == "" {
 		t.Fatal("the day answer should have left the allowance note on the session")
 	}

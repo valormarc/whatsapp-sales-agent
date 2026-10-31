@@ -15,6 +15,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -129,17 +130,117 @@ func nowISO() string {
 	return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
+// The outbox is the local record of everything sent. It
+// used to grow without bound for the deployment's life —
+// an indefinite copy of every message on the one disk
+// every shop shares. It now rotates at a size ceiling,
+// keeping a few siblings: recent sends stay inspectable
+// (the simulators and tests read the current file), and
+// the total is bounded.
+const outboxCeiling = 8 << 20 // 8 MiB
+const outboxSiblings = 3
+
+var outboxMu sync.Mutex
+
 func appendOutbox(rec outboxRecord) {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
 	_ = enc.Encode(rec)
-	f, err := os.OpenFile(datadir.Path("outbox.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	outboxMu.Lock()
+	defer outboxMu.Unlock()
+	path := datadir.Path("outbox.jsonl")
+	if st, err := os.Stat(path); err == nil && st.Size()+int64(buf.Len()) > outboxCeiling {
+		rotateOutbox(path)
+	}
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
 		return
 	}
 	defer f.Close()
 	_, _ = f.Write(buf.Bytes())
+}
+
+// rotateOutbox shifts the siblings up one and moves the
+// current file to .1. The caller holds outboxMu.
+func rotateOutbox(path string) {
+	for i := outboxSiblings - 1; i >= 1; i-- {
+		_ = os.Rename(path+"."+itoa(i), path+"."+itoa(i+1))
+	}
+	_ = os.Rename(path, path+".1")
+}
+
+func itoa(i int) string {
+	return string(rune('0' + i))
+}
+
+// PurgeOutbox removes every outbox record addressed to one
+// recipient, for a "delete my data" request: the outbox is
+// the local copy of what was sent to her, and her copy is
+// hers to have deleted. Returns how many records went.
+// PurgeOutbox removes every outbox line that belongs to
+// one party: lines addressed to her, and lines addressed
+// to anyone else whose body carries her number (a relay
+// about her, a question naming her order). The sweep
+// covers the rotated siblings as well as the live file:
+// the second audit found the purge stopping at the live
+// file while rotated copies kept her words indefinitely.
+// The fourth audit found the last copy standing: the
+// number-less ask-buyer relay, addressed to the merchant
+// with her words and her order's reference but not her
+// number. Callers pass her order references, and a line
+// naming one of them goes too — the same reference rule
+// the message book's purge applies.
+func PurgeOutbox(to string, orderRefs ...string) int {
+	outboxMu.Lock()
+	defer outboxMu.Unlock()
+	base := datadir.Path("outbox.jsonl")
+	paths := []string{base}
+	for i := 1; i <= outboxSiblings; i++ {
+		paths = append(paths, base+"."+itoa(i))
+	}
+	total := 0
+	for _, path := range paths {
+		total += purgeOutboxFile(path, to, orderRefs)
+	}
+	return total
+}
+
+func purgeOutboxFile(path, to string, orderRefs []string) int {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var kept []string
+	n := 0
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var rec outboxRecord
+		drop := false
+		if json.Unmarshal([]byte(line), &rec) == nil {
+			drop = rec.To == to || strings.Contains(rec.Body, to)
+			if !drop {
+				for _, ref := range orderRefs {
+					if ref != "" && strings.Contains(rec.Body, ref) {
+						drop = true
+						break
+					}
+				}
+			}
+		}
+		if drop {
+			n++
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if n > 0 {
+		_ = os.WriteFile(path, []byte(strings.Join(kept, "\n")+"\n"), 0o600)
+	}
+	return n
 }
 
 // Send pacing: bubbles to one person arrive a beat apart,
@@ -251,9 +352,20 @@ func DownloadMedia(mediaID string) (string, bool) {
 // media id, with their content type. Any failure, including
 // dry-run mode with no token configured, returns false, and
 // callers carry on without the picture itself.
+// graphMediaIDRe is the shape of a genuine Graph media
+// id: decimal digits and nothing else. The id arrives in
+// a webhook payload and is interpolated into the Graph
+// URL path under the process's own token, so anything
+// else — path segments, dots, a query string — is
+// refused before a request is built (second audit,
+// needs-validation: what the provider would do with a
+// crafted path is its own behaviour; never offering it
+// one is ours).
+var graphMediaIDRe = regexp.MustCompile(`^\d{1,40}$`)
+
 func DownloadMediaBytes(mediaID string) (data []byte, mimeType string, ok bool) {
 	token := os.Getenv("WHATSAPP_TOKEN")
-	if token == "" || mediaID == "" {
+	if token == "" || !graphMediaIDRe.MatchString(mediaID) {
 		return nil, "", false
 	}
 	get := func(url string) ([]byte, int, error) {

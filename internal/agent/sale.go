@@ -5,6 +5,7 @@ package agent
 
 import (
 	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -42,6 +43,169 @@ func refTail() string {
 // order is recorded with how the goods move, the day book books
 // the item price, the payment link goes out, and the merchant is
 // told the whole story, including who to hand the goods to.
+
+
+// liveAgreementOrder finds the order this session's sale
+// already minted, by the sale identity the session carries
+// (see beginFulfilment). It is the replay guard for a stale
+// session restore: the snapshot cadence can hand back a
+// session from just before its completion, and the buyer
+// answering again must meet her order, not a twin. A new
+// purchase — buy-again included — begins a new fulfilment
+// and carries a new identity, so it can never collide.
+func liveAgreementOrder(shopID, from string, s *Session) *orders.Order {
+	if s.SaleID == "" {
+		return nil
+	}
+	for _, o := range orders.Default.All() {
+		oo := o
+		if oo.SaleID == s.SaleID && oo.MerchantID == shopID && oo.From == from {
+			return &oo
+		}
+	}
+	return nil
+}
+
+// resumeAgreementOrder answers a completion that turns out
+// to be a replay: the order already stands, so the buyer is
+// told its reference and, while it still awaits payment,
+// handed its payment button again. No second order, no
+// second day-book line, no second draw on the shelf.
+func resumeAgreementOrder(from string, s *Session, merchant *catalogue.Merchant, o *orders.Order) {
+	shopID := s.MerchantID
+	if o.Status == "paid" {
+		whatsapp.SendText(from, "That order is already confirmed: "+o.Reference+". The shop has it and will take it from here.")
+	} else if o.Status != "pending" && o.Status != "link_failed" {
+		// The second audit found this road re-minting a
+		// payment link for orders that had already ended —
+		// cancelled by the merchant or failed by the sweep —
+		// overwriting the ended order's session reference
+		// and sending the buyer a live button for money
+		// settlement would refuse. An ended order is told
+		// as ended; nothing is minted on it, ever.
+		whatsapp.SendText(from, "That order, "+o.Reference+", has ended, so there is nothing to pay on it. If you still want the item, tell me and we will start it fresh.")
+	} else if link := checkout.CreatePaymentLink(checkout.LinkRequest{Amount: o.Charged(), Reference: o.Reference, Subaccount: subaccountFor(merchant)}); link.URL != nil {
+		// The order's session attributes must always
+		// describe its LATEST mint: the third audit found
+		// this road updating ProviderRef alone, leaving a
+		// stale DryRun flag from an earlier disabled-
+		// checkout mint riding on a real session — and,
+		// once the session was later struck, the stale
+		// flag borrowed the dry-run settlement exemption
+		// for a real order. Rebind both together, always.
+		// And the rebind itself is conditional, decided
+		// from the stored record inside the book's lock
+		// (the fifth audit): the mint can take seconds and
+		// the order can end or settle inside that window —
+		// the merchant cancels it, the sweep flips it, the
+		// buyer pays the original session — and this road
+		// rebound the ended order to a brand-new live
+		// session and sent its buyer a working button for
+		// it. The re-issue road has carried this discipline
+		// since the third audit; the resume road now does
+		// too: rebind only a stored order still open, and
+		// answer from the stored record otherwise.
+		applied := false
+		orders.Default.Update(o.Reference, func(x *orders.Order) {
+			if x.Status != "pending" && x.Status != "link_failed" {
+				return
+			}
+			applied = true
+			x.ProviderRef = link.ProviderRef
+			x.DryRun = link.DryRun
+		})
+		if applied {
+			whatsapp.SendText(from, "Your order "+o.Reference+" is already recorded. Here is its payment button again.")
+			sendPayButton(from, o.Charged(), *link.URL)
+		} else if stored := orders.Default.GetOrder(o.Reference); stored != nil && stored.Status == "paid" {
+			whatsapp.SendText(from, "That order is already confirmed: "+stored.Reference+". The shop has it and will take it from here.")
+		} else {
+			whatsapp.SendText(from, "That order, "+o.Reference+", has ended, so there is nothing to pay on it. If you still want the item, tell me and we will start it fresh.")
+		}
+	} else {
+		whatsapp.SendText(from, "Your order "+o.Reference+" is already recorded, and the shop has it. Nothing more is needed from you just now.")
+	}
+	sessions.put(sessionKey(shopID, from), &Session{Stage: "browsing", MerchantID: shopID, Location: s.Location, History: s.History})
+	go SnapshotSessionsNow()
+}
+
+// newSaleID mints a fresh sale identity.
+func newSaleID() string {
+	var raw [6]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(raw[:])
+}
+
+// saleStockLines lists what a completing sale takes from
+// the shelf: every basket line plus the pending item, each
+// in its product's own units (one piece for a plain product,
+// the taken quantity for a by-measure one, the whole piece
+// when no quantity was settled).
+func saleStockLines(s *Session) []orders.StockLine {
+	lines := make([]orders.StockLine, 0, len(s.Basket)+1)
+	add := func(p *catalogue.Product, qty float64) {
+		if p == nil {
+			return
+		}
+		units := 1.0
+		unit, base := "", 0.0
+		if p.Unit != "" && p.BaseQty > 0 {
+			units = qty
+			if units <= 0 {
+				units = p.BaseQty
+			}
+			// The line remembers the measure it was taken
+			// in (the sixth audit), so the give-back can
+			// restore in that denomination.
+			unit, base = p.Unit, p.BaseQty
+		}
+		for i := range lines {
+			if lines[i].Name == p.Name {
+				lines[i].Units += units
+				return
+			}
+		}
+		lines = append(lines, orders.StockLine{Name: p.Name, Units: units, Unit: unit, BaseQty: base})
+	}
+	for _, it := range s.Basket {
+		add(it.Product, it.Qty)
+	}
+	add(s.Product, s.Qty)
+	return lines
+}
+
+// refuseSaleStock ends a sale the shelf can no longer
+// honour: the buyer hears why in plain words, the merchant
+// hears the fact, and the pending sale is put down the way
+// a cancellation puts it down, minus the cancellation words.
+func refuseSaleStock(from string, s *Session, merchant *catalogue.Merchant, why string) {
+	shopID := s.MerchantID
+	p := s.Product
+	view := p
+	if s.Qty > 0 {
+		view = wholeProductOf(shopID, p)
+	}
+	cancelFeeQuote(shopID, from)
+	cancelInHand(shopID, from)
+	whatsapp.SendText(from, why)
+	if phone := merchantNotifyPhone(merchant); phone != "" {
+		whatsapp.SendText(phone, "A sale to "+from+" could not go ahead: "+why)
+	}
+	sessions.put(sessionKey(shopID, from), &Session{Stage: "browsing", MerchantID: shopID, LastViewed: view, Location: s.Location, History: s.History})
+}
+
+// giveStockLines returns claimed shelf units to the
+// catalogue. The claim itself — once only, decided inside
+// the order book's lock — is orders.Book.ClaimRestock;
+// this is only the giving.
+func giveStockLines(merchantID string, lines []orders.StockLine) {
+	for _, ln := range lines {
+		catalogue.GiveStockMeasured(merchantID, ln.Name, ln.Units, ln.Unit, ln.BaseQty)
+	}
+}
+
 func completeSale(from string, s *Session, price float64, f fulfilment) {
 	p := s.Product
 	shopID := s.MerchantID
@@ -57,6 +221,20 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 			return
 		}
 	}
+	// A completion must never mint the same agreement
+	// twice. If this session's sale was already recorded —
+	// the shape of a stale snapshot restored over a
+	// completion the books already hold — the standing order
+	// is resumed instead of a second one being minted (see
+	// liveAgreementOrder).
+	if s.SaleID == "" {
+		s.SaleID = newSaleID()
+	}
+	if existing := liveAgreementOrder(shopID, from, s); existing != nil {
+		resumeAgreementOrder(from, s, merchant, existing)
+		return
+	}
+
 	// The reference is the order's key in the book and the
 	// buyer's receipt: the shop's own code and the shop's own
 	// count, so the code alone names whose order it is (EFUA-0007
@@ -67,7 +245,9 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	// short unguessable tail (EFUA-0007-K7Q): a reference is
 	// quoted back to pull an order up, and a bare serial is
 	// guessable by anyone who can count, so the serial alone
-	// is never the whole credential.
+	// is never the whole credential. It is minted first now,
+	// before any stock moves, because the completion journal
+	// below names the sale by it.
 	code := merchant.ShopCode
 	if code == "" {
 		code = strings.ToUpper(shopID)
@@ -77,6 +257,67 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	for orders.Default.GetOrder(reference) != nil {
 		serial++
 		reference = fmt.Sprintf("%s-%04d-%s", code, serial, refTail())
+	}
+
+	// The stock gate: every line of this sale is taken from
+	// the shelf now, at the mint — not at selection time,
+	// which may be many turns and other buyers ago. The
+	// take is the check: each line's deduction is atomic
+	// in the catalogue, so two buyers completing at once
+	// cannot both pass a look at the same last unit (the
+	// second audit found the old shape — a full check
+	// loop, then a take loop that discarded the results —
+	// overselling exactly there). A line the shelf can no
+	// longer cover refuses the whole sale plainly, and
+	// what this completion already took goes back before
+	// the refusal is spoken, so a refused sale moves no
+	// stock at all. An order that later dies unpaid gives
+	// its units back (see ClaimRestock). Until this gate
+	// existed stock was never consumed at all: a stock-1
+	// one-off item could be sold again and again.
+	stockLines := saleStockLines(s)
+	// The completion is journalled before the first unit
+	// moves: if the process dies between the take and the
+	// order reaching the book, the journal is what the
+	// next boot reconciles the shelf against, instead of
+	// the units vanishing with no record anywhere (the
+	// second audit's crash window). See sale_journal.go.
+	recordSaleCompletion(sessionKey(shopID, from), s.SaleID, reference, p.ID, shopID, stockLines)
+	taken := make([]orders.StockLine, 0, len(stockLines))
+	for _, ln := range stockLines {
+		if catalogue.TakeStock(shopID, ln.Name, ln.Units) {
+			taken = append(taken, ln)
+			// The journal learns of each take as it
+			// lands, so a crash inside this loop leaves
+			// a record of exactly what moved.
+			recordJournalTake(reference, ln)
+			continue
+		}
+		// The journal intent settles BEFORE the rollback
+		// gives anything back (the fifth audit): while
+		// the entry stood unsettled, a crash after a
+		// rollback give persisted left boot
+		// reconciliation treating the entry as a sale
+		// that took stock and never landed — and giving
+		// every taken line back a second time. Settled
+		// first, a crash can lose a rollback give but
+		// can never double one, the direction the
+		// codebase already chose for this trade.
+		settleSaleIntent(reference)
+		for _, tk := range taken {
+			catalogue.GiveStockMeasured(shopID, tk.Name, tk.Units, tk.Unit, tk.BaseQty)
+		}
+		live := catalogue.FindByName(shopID, ln.Name)
+		if live == nil {
+			refuseSaleStock(from, s, merchant, "I am sorry — the shop no longer has the "+ln.Name+", so this order cannot go ahead. Nothing has been charged.")
+			return
+		}
+		why := "I am sorry — the " + ln.Name + " has just sold out, so this order cannot go ahead. Nothing has been charged."
+		if live.Unit != "" && live.BaseQty > 0 {
+			why = "I am sorry — there is only " + formatQty(live.AvailableUnits()) + " " + unitWord(live.Unit, live.AvailableUnits()) + " of the " + ln.Name + " left, so this order cannot go ahead. Nothing has been charged."
+		}
+		refuseSaleStock(from, s, merchant, why)
+		return
 	}
 	// Delivery money has two purses, and the shop's own setting
 	// (deliveryPaidToOf) says which one it falls into. When the
@@ -109,7 +350,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	goods := basketGoods(s) + price
 	multi := len(items) > 1
 	total := goods + chargedFee
-	link := checkout.CreatePaymentLink(checkout.LinkRequest{Amount: total, Reference: reference, Subaccount: merchant.SubaccountCode})
+	link := checkout.CreatePaymentLink(checkout.LinkRequest{Amount: total, Reference: reference, Subaccount: subaccountFor(merchant)})
 	linkAttempts := 1
 	if link.URL == nil && checkout.Enabled() {
 		// A dead first key must not strand a closed sale.
@@ -122,7 +363,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		// key that has never existed, and the order points
 		// at the session that actually opened, so
 		// settlement still finds it.
-		if retry := checkout.CreatePaymentLink(checkout.LinkRequest{Amount: total, Reference: reference, IdempotencyKey: checkout.FreshKey(reference), Subaccount: merchant.SubaccountCode}); retry.URL != nil {
+		if retry := checkout.CreatePaymentLink(checkout.LinkRequest{Amount: total, Reference: reference, IdempotencyKey: checkout.FreshKey(reference), Subaccount: subaccountFor(merchant)}); retry.URL != nil {
 			link = retry
 			linkAttempts = 2
 		}
@@ -167,14 +408,26 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		Quantity:       s.Qty,
 		Unit:           s.Unit,
 		LinkAttempts:   linkAttempts,
+		StockLines:     stockLines,
+		SaleID:         s.SaleID,
+		DryRun:         link.DryRun,
 	})
+	// The completion is durable in the books from here; the
+	// session snapshot follows the moment this turn lets go
+	// of the lock, so a restart restores the buyer's place
+	// after the sale, never the moment just before it. The
+	// completion journal (written before the stock moved)
+	// covers the gap if the process dies first: it rebinds
+	// this session's sale identity at restore, so her next
+	// answer resumes this order instead of minting a twin.
+	go SnapshotSessionsNow()
 	merchantPhone := merchantNotifyPhone(merchant)
 	// Seev was configured but the session could not be created: say so,
 	// to both sides, rather than send a link that does not work. No
 	// sale is booked in the day book for a deal the customer cannot pay
 	// for.
 	if link.URL == nil {
-		sessions[sessionKey(shopID, from)] = &Session{Stage: "browsing", MerchantID: shopID, Location: s.Location}
+		sessions.put(sessionKey(shopID, from), &Session{Stage: "browsing", MerchantID: shopID, Location: s.Location})
 		whatsapp.SendText(from, "We have a deal at "+money.GHS(goods)+" for the "+orderName+", but the payment link is not coming up right now. The shop has been told and will reach out here to complete your order.")
 		if merchantPhone != "" {
 			whatsapp.SendText(merchantPhone, "Payment link failed for an agreed deal: "+orderName+" at "+money.GHS(goods)+", buyer "+from+". Ref: "+reference+". Please reach out to the buyer to complete it.")
@@ -187,6 +440,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 	// measured against its own list, delivery money nowhere in
 	// the day's figures.
 	var day daybook.State
+	bookedLists := make([]float64, 0, len(items))
 	if multi {
 		for _, it := range s.Basket {
 			day = daybook.Default.RecordSale(shopID, daybook.Sale{
@@ -194,6 +448,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 				AgreedPrice: it.AgreedPrice,
 				Allowance:   merchant.DailyGiveawayAllowance,
 			})
+			bookedLists = append(bookedLists, it.Product.ListPrice)
 		}
 	}
 	day = daybook.Default.RecordSale(shopID, daybook.Sale{
@@ -201,7 +456,25 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		AgreedPrice: price,
 		Allowance:   merchant.DailyGiveawayAllowance,
 	})
-	sessions[sessionKey(shopID, from)] = &Session{Stage: "agreed", MerchantID: shopID, Product: p, AgreedPrice: price, PaymentURL: url, Location: s.Location}
+	bookedLists = append(bookedLists, p.ListPrice)
+	// The booked list figures are recorded on the order
+	// itself (the sixth audit): a later cancellation
+	// reverses this booking line by line at these
+	// figures, instead of recomputing a single total from
+	// the shelf as it stands then — which corrupted the
+	// day book's sales count and giveaway pool for
+	// multi-item and by-measure orders. bookedLists is
+	// aligned with items (basket lines first, the main
+	// line last), the order orderItemsOf wrote.
+	orders.Default.Update(reference, func(x *orders.Order) {
+		x.BookedList = p.ListPrice
+		for i := range x.Items {
+			if i < len(bookedLists) {
+				x.Items[i].ListPrice = bookedLists[i]
+			}
+		}
+	})
+	sessions.put(sessionKey(shopID, from), &Session{Stage: "agreed", MerchantID: shopID, Product: p, AgreedPrice: price, PaymentURL: url, Location: s.Location})
 	// The completion goes out in the two families. The total
 	// is a record: one message on the fixed paper, never split
 	// (see records.go). What happens with the goods is talk,

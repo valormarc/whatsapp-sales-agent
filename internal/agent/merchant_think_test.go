@@ -26,7 +26,7 @@ func TestMerchantOrderPaymentAnswersFromTheRecord(t *testing.T) {
 	fakeSeevReadback(t, "pending", 87500)
 
 	shop := catalogue.GetMerchant(MerchantID)
-	if !actOnMerchantUnderstanding(merchant, shop, MerchantID, "Is it made to seev link or my momo direct?", &understood{Intent: intentOrderPayment}) {
+	if !inTurn(merchant, func() bool { return actOnMerchantUnderstanding(merchant, shop, MerchantID, "Is it made to seev link or my momo direct?", &understood{Intent: intentOrderPayment}) }) {
 		t.Fatal("the payment question must be answered")
 	}
 	got := strings.Join(c.replies(t, merchant), "\n")
@@ -47,7 +47,7 @@ func TestMerchantOrderPaymentSettlesALandedLinkPayment(t *testing.T) {
 	seedOpenOrder(t, "TEST-5002", buyer, 1)
 	fakeSeevReadback(t, "completed", 87500)
 
-	if !actOnMerchantUnderstanding(merchant, catalogue.GetMerchant(MerchantID), MerchantID, "what is happening with the payment", &understood{Intent: intentOrderPayment}) {
+	if !inTurn(merchant, func() bool { return actOnMerchantUnderstanding(merchant, catalogue.GetMerchant(MerchantID), MerchantID, "what is happening with the payment", &understood{Intent: intentOrderPayment}) }) {
 		t.Fatal("the payment question must be answered")
 	}
 	if o := orders.Default.GetOrder("TEST-5002"); o == nil || o.Status != "paid" {
@@ -64,7 +64,7 @@ func TestMerchantAskBuyerAndTheAnswerComesBack(t *testing.T) {
 	c.replies(t, merchant)
 
 	shop := catalogue.GetMerchant(MerchantID)
-	if !actOnMerchantUnderstanding(merchant, shop, MerchantID, "Ask the buyer", &understood{Intent: intentAskBuyer}) {
+	if !inTurn(merchant, func() bool { return actOnMerchantUnderstanding(merchant, shop, MerchantID, "Ask the buyer", &understood{Intent: intentAskBuyer}) }) {
 		t.Fatal("the instruction to ask the buyer must be carried out")
 	}
 	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "TEST-5003") || !strings.Contains(got, "payment link") {
@@ -123,7 +123,7 @@ func TestVoiceGuardRefusesPidginAndTitles(t *testing.T) {
 	if got := c.replies(t, buyer); len(got) != 0 {
 		t.Fatalf("nothing should have been sent, got %v", got)
 	}
-	if actOnMerchantUnderstanding(merchant, shop, MerchantID, "", &understood{Intent: intentAsk, Reply: "Madam, your bag is listed at GH₵850."}) {
+	if inTurn(merchant, func() bool { return actOnMerchantUnderstanding(merchant, shop, MerchantID, "", &understood{Intent: intentAsk, Reply: "Madam, your bag is listed at GH₵850."}) }) {
 		t.Fatal("a draft addressing the owner as Madam must never be sent")
 	}
 }
@@ -139,7 +139,7 @@ func TestQuotingTheAllowanceNoteIsNotACommand(t *testing.T) {
 	}
 	note := "One thing: you have not set a daily giveaway allowance, so it stands at GH\u20b50. To set it, say: set allowance 300"
 
-	sessions[sessionKey(shop.ID, owner)] = &Session{Stage: "merchant", MerchantID: shop.ID, LastNoteMsgID: "wamid.NOTE1"}
+	sessions.put(sessionKey(shop.ID, owner), &Session{Stage: "merchant", MerchantID: shop.ID, LastNoteMsgID: "wamid.NOTE1"})
 	HandleInbound(Inbound{From: owner, ContextID: "wamid.NOTE1", Text: note})
 	if got := catalogue.GetMerchant(shop.ID); got.DailyGiveawayAllowance != 0 {
 		t.Fatalf("a quoted note executed as a command: allowance = %v", got.DailyGiveawayAllowance)

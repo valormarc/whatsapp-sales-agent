@@ -67,6 +67,21 @@ var (
 // limit under viral pressure.
 const keepPerParty = 300
 
+// keepTotalMax is the aggregate ceiling over all parties
+// together. The per-party cap alone leaves the total
+// unbounded — every new stranger who sends one message adds
+// a party — so compaction also drops the globally oldest
+// records until the book fits under this ceiling.
+// compactionSlack is the hysteresis: compaction runs only
+// once the book has grown this far past the ceiling, and
+// always cuts back to the ceiling, so it settles instead of
+// running on every message forever (the 2026-10-30 audit
+// measured the old compaction slowing some 700x past 6,000
+// records because it re-ran, removing almost nothing, on
+// every record after the trigger).
+const keepTotalMax = 6000
+const compactionSlack = 1000
+
 func msgBookFile() string { return datadir.Path("messages.jsonl") }
 
 // loadMsgIndex returns the in-memory index over the book
@@ -126,13 +141,14 @@ func recordMsg(rec msgRecord) {
 	_ = f.Close()
 	idx[rec.ID] = rec
 	msgOrder = append(msgOrder, rec.ID)
-	if len(msgOrder) > keepPerParty*20 {
+	if len(msgOrder) > keepTotalMax+compactionSlack {
 		compactMsgBook()
 	}
 }
 
-// compactMsgBook rewrites the book keeping only each party's
-// most recent messages. The caller holds msgMu.
+// compactMsgBook rewrites the book keeping each party's
+// most recent messages, then the newest records overall up
+// to the aggregate ceiling. The caller holds msgMu.
 func compactMsgBook() {
 	counts := map[string]int{}
 	keep := map[string]bool{}
@@ -141,6 +157,20 @@ func compactMsgBook() {
 		if counts[rec.Party] < keepPerParty {
 			counts[rec.Party]++
 			keep[rec.ID] = true
+		}
+	}
+	if len(keep) > keepTotalMax {
+		// Oldest first: walk from the front of the book
+		// dropping kept records until the ceiling fits.
+		excess := len(keep) - keepTotalMax
+		for _, id := range msgOrder {
+			if excess <= 0 {
+				break
+			}
+			if keep[id] {
+				keep[id] = false
+				excess--
+			}
 		}
 	}
 	var b strings.Builder
@@ -157,7 +187,72 @@ func compactMsgBook() {
 		}
 	}
 	msgOrder = order
-	_ = os.WriteFile(msgBookFile(), []byte(b.String()), 0o600)
+	// The rewrite is atomic (temp file, renamed over the
+	// book): a torn compaction must not silently drop the
+	// records the redelivery guard and quote resolution
+	// stand on.
+	tmp := msgBookFile() + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err == nil {
+		_ = os.Rename(tmp, msgBookFile())
+	}
+}
+
+// purgeMsgParty removes every message recorded for one
+// party — hers to the shop and the shop's to her — from the
+// index and the file, for a "delete my data" request: after
+// it, nothing she said can be quoted back or resolved.
+// Returns how many records went.
+func purgeMsgParty(party string, orderRefs ...string) int {
+	msgMu.Lock()
+	defer msgMu.Unlock()
+	idx := loadMsgIndex()
+	var b strings.Builder
+	var order []string
+	n := 0
+	for _, id := range msgOrder {
+		rec := idx[id]
+		// Hers: records under her own party, and copies
+		// recorded under anyone else whose body carries
+		// her number (relays about her) — the second
+		// audit found the purge stopping at her own
+		// party while relay copies survived. The third
+		// audit narrowed the survivors to relay shapes;
+		// the fourth found the shape gate itself was the
+		// hole: dispute-flow notices to the merchant
+		// name her order's reference with neither her
+		// number nor a relay marker, and sat between
+		// every branch. The rule is now the reference
+		// itself: a record under another party naming
+		// one of her orders is a copy about her, relay
+		// shaped or not, and goes.
+		foreignRef := false
+		if rec.Party != party {
+			for _, ref := range orderRefs {
+				if ref != "" && strings.Contains(rec.Body, ref) {
+					foreignRef = true
+					break
+				}
+			}
+		}
+		if rec.Party == party || strings.Contains(rec.Body, party) || foreignRef {
+			delete(idx, id)
+			n++
+			continue
+		}
+		if line, err := json.Marshal(rec); err == nil {
+			b.Write(line)
+			b.WriteByte('\n')
+			order = append(order, id)
+		}
+	}
+	if n > 0 {
+		msgOrder = order
+		tmp := msgBookFile() + ".tmp"
+		if err := os.WriteFile(tmp, []byte(b.String()), 0o600); err == nil {
+			_ = os.Rename(tmp, msgBookFile())
+		}
+	}
+	return n
 }
 
 // lookupMsg finds one recorded message by id, inside one
@@ -191,25 +286,14 @@ func init() {
 	}
 }
 
-// alreadyHandled reports whether an inbound message id is
-// already in the book, meaning an earlier delivery of the
-// same message was handled in full. WhatsApp delivers a
-// webhook more than once when the answer is slow, and a
-// photo turn is slow; the book refuses to record the same
-// id twice, but until this check the handling itself ran
-// again on every redelivery — the same photo opening a
-// second listing, the same "last price" answer saving the
-// next product too. A message with no id cannot be judged
-// and is never dropped on this ground.
-func alreadyHandled(id string) bool {
-	if id == "" {
-		return false
-	}
-	msgMu.Lock()
-	defer msgMu.Unlock()
-	_, seen := loadMsgIndex()[id]
-	return seen
-}
+// alreadyHandled used to read the message book: an id in
+// the book meant handled. The fourth audit showed the
+// flaw — the book records a message when its turn STARTS
+// (so the turn can quote), so the dedupe mark was durable
+// before the turn ran, and a crash mid-turn lost the
+// message permanently and silently. The predicate now
+// lives with the delivery ledger in inbox.go, where
+// "handled" means the turn completed.
 
 // recordInboundMsg writes one received message into the
 // book, under the id the webhook carried, so the person's
@@ -244,11 +328,18 @@ type resolvedQuote struct {
 	Order       *orders.Order
 }
 
-// turnQuote is the quote in play on the turn being handled.
-// Turns are serialised by the session lock (the same
-// discipline as currentDiscoveryFrom), so a plain package
-// variable is safe.
-var turnQuote *resolvedQuote
+// turnQuotes holds the quote in play for each speaker's
+// live turn, keyed by the speaker: turns run in parallel
+// now, and one person's quoted message must never leak
+// into another person's turn (the single global this
+// replaces could do exactly that).
+var turnQuotes = newLockedMap[string, *resolvedQuote]()
+
+// turnQuoteOf returns the quote in play on this speaker's
+// turn, or nil.
+func turnQuoteOf(from string) *resolvedQuote {
+	return turnQuotes.get(from)
+}
 
 // resolveQuote turns an inbound message's quote pointer
 // into the turn's resolved quote, or nil when the message
@@ -278,6 +369,8 @@ func resolveQuote(in Inbound) *resolvedQuote {
 	q.Body = rec.Body
 	q.Kind = rec.Kind
 	q.At = rec.At
+	// (the order this message names is bound to this
+	// conversation at the end of this function, below.)
 	q.Product, q.ProductShop = productNamedIn(rec.Body)
 	if ref := orderRefRe.FindString(rec.Body); ref != "" {
 		q.Order = orders.Default.GetOrder(strings.ToUpper(ref))
@@ -291,6 +384,13 @@ func resolveQuote(in Inbound) *resolvedQuote {
 					break
 				}
 			}
+		}
+	}
+	// The order binding, applied once the order is known
+	// (see the note at the product attachment above).
+	if q.Order != nil && q.Order.From != in.From {
+		if shop := ownerShopFor(in.From); shop == nil || shop.ID != q.Order.MerchantID {
+			q.Order = nil
 		}
 	}
 	return q
@@ -335,13 +435,23 @@ func quoteClock(at string) string {
 	return ""
 }
 
+// relayedBuyerText reports whether an agent message is
+// one of the shop's relays of a buyer's words: the
+// ask-buyer answer ("Your buyer answered about order X:
+// \"...\"") and the dispute notice ("She says: \"...\"").
+// Both are the agent's own fixed shapes.
+func relayedBuyerText(body string) bool {
+	return strings.Contains(body, "Your buyer answered about order ") ||
+		strings.Contains(body, "She says: \"")
+}
+
 // quoteFactLine states the turn's quote as a fact for a
 // thinking step: the quoted words, who sent them, when, and
 // what they were about, with the reasoning order spelled
 // out — the quoted message first, the current conversation
 // second. It returns "" when the turn quotes nothing.
-func quoteFactLine() string {
-	q := turnQuote
+func quoteFactLine(from string) string {
+	q := turnQuoteOf(from)
 	if q == nil {
 		return ""
 	}
@@ -360,7 +470,17 @@ func quoteFactLine() string {
 	if q.Author == "user" {
 		who = "herself"
 	}
-	b.WriteString("She is replying to a message sent by " + who + " earlier in this chat")
+	if q.Author == "agent" && relayedBuyerText(q.Body) {
+		// The shop's message is a relay: it carries the
+		// buyer's own words inside it (an ask-buyer answer,
+		// a dispute's "she says"). Those words are the
+		// buyer's, with a buyer's standing — never the
+		// shop's own statement or instruction, however
+		// briefly the merchant answers it.
+		b.WriteString("She is replying to a message the shop sent that RELAYS the buyer's own words: the words in quotes inside it are the buyer's, not the shop's")
+	} else {
+		b.WriteString("She is replying to a message sent by " + who + " earlier in this chat")
+	}
 	if clock := quoteClock(q.At); clock != "" {
 		b.WriteString(" (at " + clock + ")")
 	}
@@ -377,8 +497,8 @@ func quoteFactLine() string {
 
 // quotedProductIn returns the product of this shop the
 // turn's quote is about, or nil.
-func quotedProductIn(shopID string) *catalogue.Product {
-	q := turnQuote
+func quotedProductIn(shopID, from string) *catalogue.Product {
+	q := turnQuoteOf(from)
 	if q == nil || !q.Known || q.Product == nil || q.ProductShop == nil || q.ProductShop.ID != shopID {
 		return nil
 	}
@@ -390,8 +510,8 @@ func quotedProductIn(shopID string) *catalogue.Product {
 // offer, a bare "Ok" or a picture ask after quoting a
 // product's bubble is about that product, however far the
 // conversation has wandered since it was sent.
-func applyQuotedFocus(s *Session, shopID string) {
-	p := quotedProductIn(shopID)
+func applyQuotedFocus(from string, s *Session, shopID string) {
+	p := quotedProductIn(shopID, from)
 	if p == nil || s == nil {
 		return
 	}
@@ -404,7 +524,7 @@ func applyQuotedFocus(s *Session, shopID string) {
 // about when it is this buyer's order in this shop, read
 // fresh from the book, or nil.
 func quotedOrderFor(shopID, from string) *orders.Order {
-	q := turnQuote
+	q := turnQuoteOf(from)
 	if q == nil || !q.Known || q.Order == nil {
 		return nil
 	}

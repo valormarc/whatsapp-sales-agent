@@ -174,6 +174,16 @@ func paymentConfirmedRecord(o *orders.Order) string {
 // the seller works from. The caller appends the total, the
 // payment status and the day's figures, which differ
 // between the sale's opening notice and its settlement.
+// flatLine renders buyer-supplied text inside the
+// line-structured record: its line breaks become spaces,
+// so the text can never start a line of its own at the
+// record's indentation (the sixth audit).
+func flatLine(s string) string {
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool {
+		return r == '\n' || r == '\r'
+	}), " ")
+}
+
 func orderNoticeLines(o *orders.Order, merchant *catalogue.Merchant) []string {
 	lines := []string{"New order " + o.Reference, "Buyer: " + o.From}
 	items := o.Items
@@ -184,7 +194,37 @@ func orderNoticeLines(o *orders.Order, merchant *catalogue.Merchant) []string {
 	for _, it := range items {
 		label := it.Name
 		if it.Quantity > 0 && it.Unit != "" {
-			label = formatQty(it.Quantity) + " " + unitWord(it.Unit, it.Quantity) + " of " + it.Name
+			// A measured line's stored name already
+			// carries its measure ("3 yards of Ankara
+			// fabric" is the name the basket kept), and
+			// the buyer's own records rely on that —
+			// prefixing it again states the quantity
+			// twice in the seller's one fulfilment
+			// record (the fifth audit). The prefix is
+			// added only when the name does not already
+			// carry it.
+			prefix := formatQty(it.Quantity) + " " + unitWord(it.Unit, it.Quantity) + " of "
+			// Any leading measure prefix counts, not
+			// only the exact one rebuilt from the
+			// line's fields (the sixth audit): when
+			// the name was rendered from a measure the
+			// fields no longer agree with — a re-set
+			// measure, a buy-again line — the exact
+			// test failed and the notice stated the
+			// quantity twice ("3 yards of 3 metres of
+			// Ankara Fabric"). A name that already
+			// opens with a quantity phrase and its
+			// "of" carries a measure; print it as
+			// stored.
+			carries := strings.HasPrefix(it.Name, prefix)
+			if !carries {
+				if loc := quantityRe.FindStringIndex(it.Name); loc != nil && loc[0] == 0 && strings.HasPrefix(strings.TrimSpace(it.Name[loc[1]:]), "of ") {
+					carries = true
+				}
+			}
+			if !carries {
+				label = prefix + it.Name
+			}
 		}
 		if it.Size != "" {
 			label += ", size " + it.Size
@@ -198,16 +238,21 @@ func orderNoticeLines(o *orders.Order, merchant *catalogue.Merchant) []string {
 	lines = append(lines, "Agreed price: "+money.GHS(o.Price))
 	lines = append(lines, deliveryInstruction(o, merchant))
 	if o.PackageName != "" {
-		lines = append(lines, "Package name: "+o.PackageName)
+		lines = append(lines, "Package name: "+flatLine(o.PackageName))
 	}
 	if o.Landmark != "" {
-		lines = append(lines, "Landmark: "+o.Landmark)
+		lines = append(lines, "Landmark: "+flatLine(o.Landmark))
 	}
 	if o.DeliveryPhone != "" {
 		lines = append(lines, "Delivery phone: "+o.DeliveryPhone)
 	}
 	if o.Note != "" {
-		lines = append(lines, "Buyer's message: "+o.Note)
+		// The note renders flattened and quoted (the
+		// sixth audit): even a legacy stored note with
+		// line breaks of its own cannot start a line of
+		// the record at the record's own indentation and
+		// pass as one of its lines.
+		lines = append(lines, "Buyer's message: "+flatLine(o.Note))
 	}
 	return lines
 }

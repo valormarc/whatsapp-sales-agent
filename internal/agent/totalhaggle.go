@@ -29,6 +29,7 @@ package agent
 // declared keeps the conservative rule.
 
 import (
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -142,7 +143,7 @@ func openTotalHaggle(from string, s *Session, merchant *catalogue.Merchant, offe
 	ns.ShelfPicks = s.ShelfPicks
 	ns.LastViewed = s.LastViewed
 	ns.TotalHand = hand
-	sessions[sessionKey(shopID, from)] = ns
+	sessions.put(sessionKey(shopID, from), ns)
 	whatsapp.SendText(from, "For all of them together, then. "+handLabel(hand)+" come to "+money.GHS(totalList)+" in all.")
 	processOffer(from, ns, merchant, offer, msg)
 	return true
@@ -154,43 +155,103 @@ func openTotalHaggle(from string, s *Session, merchant *catalogue.Merchant, offe
 // item settles below its last price, and the shares sum
 // to the total exactly, with any rounding residue laid
 // on the item that can carry it.
+//
+// The arithmetic is integer pesewas throughout. The
+// second audit found the earlier float shape rounding
+// every share, room and residue to WHOLE cedis while the
+// floor clamp used the exact fractional floor, so a
+// pesewa-priced hand (list 10.50, floor 10.20, twice,
+// total 20.50) apportioned to 20.40 — ten pesewas the
+// buyer was charged never reached a share — and a share
+// could round above its own list price. In pesewas the
+// sum is exact by construction.
 func apportionTotal(hand []catalogue.Product, total float64) []float64 {
 	n := len(hand)
-	prices := make([]float64, n)
-	heads := make([]float64, n)
-	var listSum, headSum float64
+	toP := func(v float64) int64 { return int64(math.Round(v * 100)) }
+	listP := make([]int64, n)
+	floorP := make([]int64, n)
+	headP := make([]int64, n)
+	var listSum, headSum int64
 	for i, p := range hand {
-		listSum += p.ListPrice
-		heads[i] = p.ListPrice - effFloor(p)
-		headSum += heads[i]
-	}
-	discount := listSum - total
-	for i, p := range hand {
-		share := 0.0
-		if headSum > 0 {
-			share = discount * heads[i] / headSum
+		listP[i] = toP(p.ListPrice)
+		floorP[i] = toP(effFloor(p))
+		headP[i] = listP[i] - floorP[i]
+		if headP[i] < 0 {
+			headP[i] = 0
 		}
-		prices[i] = money.Round(p.ListPrice - share)
-		if prices[i] < effFloor(p) {
-			prices[i] = effFloor(p)
-		}
+		listSum += listP[i]
+		headSum += headP[i]
 	}
-	var sum float64
+	totalP := toP(total)
+	discount := listSum - totalP
+	prices := make([]int64, n)
+	for i := range hand {
+		var share int64
+		if headSum > 0 && discount > 0 {
+			share = discount * headP[i] / headSum
+		}
+		price := listP[i] - share
+		if price < floorP[i] {
+			price = floorP[i]
+		}
+		if price > listP[i] {
+			price = listP[i]
+		}
+		prices[i] = price
+	}
+	var sum int64
 	for _, v := range prices {
 		sum += v
 	}
-	if residue := money.Round(total - sum); residue != 0 {
+	if residue := totalP - sum; residue != 0 {
 		order := make([]int, n)
 		for i := range order {
 			order[i] = i
 		}
-		sort.Slice(order, func(a, b int) bool { return heads[order[a]] > heads[order[b]] })
-		for _, i := range order {
-			if nv := money.Round(prices[i] + residue); nv >= effFloor(hand[i]) && nv <= hand[i].ListPrice {
-				prices[i] = nv
+		sort.Slice(order, func(a, b int) bool { return headP[order[a]] > headP[order[b]] })
+		// The residue belongs to the hand, not to one item:
+		// spread it across every item that still has room,
+		// in headroom order, until it is placed. An earlier
+		// shape offered the whole residue to a single item
+		// and silently dropped what no one item could
+		// absorb, so the shares summed to a few cedis more
+		// or less than the total the buyer agreed (the
+		// 2026-10-30 audit found 34 violating totals in an
+		// ordinary sweep).
+		for residue != 0 {
+			placed := false
+			for _, i := range order {
+				if residue == 0 {
+					break
+				}
+				var room int64
+				if residue > 0 {
+					room = listP[i] - prices[i]
+				} else {
+					room = prices[i] - floorP[i]
+				}
+				if room <= 0 {
+					continue
+				}
+				step := residue
+				if step > room {
+					step = room
+				}
+				if step < -room {
+					step = -room
+				}
+				prices[i] += step
+				residue -= step
+				placed = true
+			}
+			if !placed {
 				break
 			}
 		}
 	}
-	return prices
+	out := make([]float64, n)
+	for i := range prices {
+		out[i] = float64(prices[i]) / 100
+	}
+	return out
 }

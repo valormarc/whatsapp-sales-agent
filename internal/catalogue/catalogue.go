@@ -12,18 +12,25 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/datadir"
 	"github.com/valormarc/hackathon-agent/internal/money"
 )
 
 // fileMu serialises reads and writes of the catalogue file
-// itself. Callers above this package compose their own
-// load, modify, save cycles under their own locks; this one
-// guarantees the file is never torn between two writers
-// and never read mid-write.
+// itself: the file is never torn between two writers and
+// never read mid-write. It does NOT make a load, modify,
+// save cycle atomic — two cycles can interleave their
+// loads and saves and lose one another's changes whole,
+// which for a stock take means selling the same last unit
+// twice. cycleMu is the lock for that: every composer of a
+// load-modify-save cycle in this package holds it from
+// load to save. The third audit demonstrated the gap by
+// taking 46 units against a stock of 20 through the
+// unlocked cycle. Lock order is cycleMu before fileMu,
+// never the reverse.
 var fileMu sync.Mutex
+var cycleMu sync.Mutex
 
 // writeAtomic writes data over path by way of a temporary
 // file in the same directory, renamed into place: a crash
@@ -63,6 +70,14 @@ type Product struct {
 	FloorPrice  float64 `json:"floorPrice"`
 	Fixed       bool    `json:"fixed,omitempty"`
 	Stock       int     `json:"stock"`
+	// StockUnits is the exact remaining quantity of a
+	// by-measure product, in its base unit (yards, litres):
+	// a partly cut piece still counts as one in Stock, so
+	// Stock alone would overstate what can still be sold.
+	// Zero means "not tracked" for plain products and for
+	// listings saved before this field existed; there the
+	// piece count and base quantity carry the figure.
+	StockUnits  float64 `json:"stockUnits,omitempty"`
 	Unit        string  `json:"unit,omitempty"`
 	BaseQty     float64 `json:"baseQty,omitempty"`
 	// Photos are the seller's own pictures of this product,
@@ -173,6 +188,13 @@ type Merchant struct {
 	ShopCode         string    `json:"shopCode,omitempty"`
 	PayoutPhone      string    `json:"payoutPhone,omitempty"`
 	SubaccountCode   string    `json:"subaccountCode,omitempty"`
+	// SubaccountPhone is the payout number the recorded
+	// subaccount was minted for. A link may route through
+	// the code only while the two agree (see the agent's
+	// subaccountFor): the binding is recorded at mint time
+	// so a payout change can never leave links settling
+	// through an account opened for another number.
+	SubaccountPhone  string    `json:"subaccountPhone,omitempty"`
 	PayoutHolderName string    `json:"payoutHolderName,omitempty"`
 	DeliveryFee      float64   `json:"deliveryFee,omitempty"`
 	DeliveryNote     string    `json:"deliveryNote,omitempty"`
@@ -289,11 +311,25 @@ func marshalJSON(v any) ([]byte, error) {
 	return []byte(strings.TrimSuffix(buf.String(), "\n")), nil
 }
 
+// cataloguePoisoned is set under fileMu when a load met a
+// catalogue that would not parse and no last-known-good
+// copy could be restored: saves are then refused rather
+// than cementing the empty read over every shop on the
+// shelf (the fifth audit: this store still had the
+// preserve-only behaviour the fourth audit condemned in
+// the order book, and a routine new-shop signup was the
+// save that cemented the loss).
+var cataloguePoisoned bool
+
 // LoadCatalogue reads the catalogue file, writing and returning the
 // seed first when the file does not exist. A file that exists but
-// does not parse is preserved byte for byte under a .corrupt- name
-// and shouted about before the empty catalogue is returned: read as
-// silently empty, the next save would wipe every shop on the shelf.
+// does not parse is preserved byte for byte under a single
+// .corrupt name and shouted about; the load then restores from
+// the last-known-good copy every save leaves beside the file and
+// repairs the main file with those bytes, and only when both
+// copies fail does the catalogue read empty — poisoned, with
+// saves refused until a load parses again. Read as silently
+// empty without the poison, the next save would wipe every shop.
 func LoadCatalogue() Catalogue {
 	fileMu.Lock()
 	defer fileMu.Unlock()
@@ -302,34 +338,75 @@ func LoadCatalogue() Catalogue {
 		_ = os.MkdirAll(filepath.Dir(path), 0o700)
 		if b, err := marshalJSON(seed); err == nil {
 			writeAtomic(path, b)
+			writeAtomic(path+".bak", b)
 		}
+		cataloguePoisoned = false
 		return seed
+	}
+	// restore tries the last known good copy, repairing
+	// the main file with its bytes. Both failure roads —
+	// unparseable bytes and an existing file that cannot
+	// be read — go through it (the sixth audit).
+	restore := func() (Catalogue, bool) {
+		bak, berr := os.ReadFile(path + ".bak")
+		if berr != nil {
+			return Catalogue{}, false
+		}
+		var restored Catalogue
+		if uerr := json.Unmarshal(bak, &restored); uerr != nil {
+			return Catalogue{}, false
+		}
+		writeAtomic(path, bak)
+		if restored.Merchants == nil {
+			restored.Merchants = map[string]Merchant{}
+		}
+		cataloguePoisoned = false
+		return restored, true
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
+		if restored, ok := restore(); ok {
+			fmt.Fprintf(os.Stderr, "catalogue: %s could not be read (%v); restored from the last known good copy\n", path, err)
+			return restored
+		}
+		fmt.Fprintf(os.Stderr, "catalogue: %s could not be read (%v) and no good copy could be restored; read as empty; saves are refused until the book loads again\n", path, err)
+		cataloguePoisoned = true
 		return Catalogue{Merchants: map[string]Merchant{}}
 	}
 	var c Catalogue
 	if err := json.Unmarshal(b, &c); err != nil {
-		bad := path + ".corrupt-" + time.Now().Format("20060102-150405")
+		bad := path + ".corrupt"
 		_ = os.WriteFile(bad, b, 0o600)
-		fmt.Fprintf(os.Stderr, "catalogue: %s does not parse (%v); preserved as %s and read as empty\n", path, err, bad)
+		if restored, ok := restore(); ok {
+			fmt.Fprintf(os.Stderr, "catalogue: %s does not parse (%v); preserved as %s and restored from the last known good copy\n", path, err, bad)
+			return restored
+		}
+		fmt.Fprintf(os.Stderr, "catalogue: %s does not parse (%v); preserved as %s and read as empty; saves are refused until the book parses again\n", path, err, bad)
+		cataloguePoisoned = true
 		return Catalogue{Merchants: map[string]Merchant{}}
 	}
 	if c.Merchants == nil {
 		c.Merchants = map[string]Merchant{}
 	}
+	cataloguePoisoned = false
 	return c
 }
 
-// SaveCatalogue writes the catalogue back to its file.
+// SaveCatalogue writes the catalogue back to its file and
+// refreshes the last-known-good copy with the same bytes. A
+// poisoned catalogue refuses the save outright.
 func SaveCatalogue(c Catalogue) {
 	fileMu.Lock()
 	defer fileMu.Unlock()
+	if cataloguePoisoned {
+		fmt.Fprintf(os.Stderr, "catalogue: refusing to save over %s: the last load did not parse and no good copy could be restored\n", FilePath())
+		return
+	}
 	path := FilePath()
 	_ = os.MkdirAll(filepath.Dir(path), 0o700)
 	if b, err := marshalJSON(c); err == nil {
 		writeAtomic(path, b)
+		writeAtomic(path+".bak", b)
 	}
 }
 

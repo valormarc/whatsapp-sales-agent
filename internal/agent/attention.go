@@ -35,11 +35,19 @@ func merchantAttentionText(merchant *catalogue.Merchant, s *Session) string {
 	}
 	sort.Slice(mine, func(i, j int) bool { return mine[i].CreatedAt > mine[j].CreatedAt })
 
-	var disputes, toSend, waiting []orders.Order
+	var disputes, missing, toSend, waiting []orders.Order
 	for _, o := range mine {
 		switch {
 		case o.DisputeState == "open" || o.DisputeState == "refund_claimed":
 			disputes = append(disputes, o)
+		case o.Status == "paid" && o.DeliveryState == "missing":
+			// A paid order the buyer says has not arrived
+			// is seller work until it resolves (the
+			// seventh audit): it matched no bucket, so
+			// the list could answer that nothing needs
+			// her while the buyer waited on a follow-up
+			// only she can give.
+			missing = append(missing, o)
 		case o.Status == "paid" && o.DeliveryState == "":
 			toSend = append(toSend, o)
 		case o.Unpaid():
@@ -48,7 +56,7 @@ func merchantAttentionText(merchant *catalogue.Merchant, s *Session) string {
 	}
 
 	work := attentionWorkLines(s)
-	needs := len(disputes) + len(toSend) + len(work)
+	needs := len(disputes) + len(missing) + len(toSend) + len(work)
 
 	// The list is laid out in blocks — the heading, one block
 	// per kind of work, the day's figures to close — with a
@@ -79,6 +87,17 @@ func merchantAttentionText(merchant *catalogue.Merchant, s *Session) string {
 				tail = "the buyer has claimed a refund on it"
 			}
 			block = append(block, orderLine(o, tail))
+		}
+		blocks = append(blocks, block)
+	}
+	if len(missing) > 0 {
+		block := make([]string, 0, len(missing)+1)
+		for i, o := range missing {
+			if i == 5 {
+				block = append(block, "And "+strconv.Itoa(len(missing)-5)+" more the buyer says have not arrived.")
+				break
+			}
+			block = append(block, orderLine(o, "the buyer says it has not arrived"))
 		}
 		blocks = append(blocks, block)
 	}

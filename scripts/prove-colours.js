@@ -15,6 +15,19 @@ const os = require("os");
 const path = require("path");
 const net = require("net");
 
+// Sandbox hygiene: a dry-run child must never inherit live
+// send or settle credentials from the operator's shell. This
+// proof keeps the WhatsApp token — the sandbox needs it to
+// download the real media it is fed — but the phone number
+// id (the sending identity) and the Seev credentials are
+// blanked, so the child cannot send or settle anything.
+delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+delete process.env.WHATSAPP_APP_SECRET;
+delete process.env.WHATSAPP_VERIFY_TOKEN;
+delete process.env.SEEV_SECRET_KEY;
+delete process.env.SEEV_API_KEY;
+delete process.env.SEEV_WEBHOOK_SECRET;
+
 const ROOT = path.join(__dirname, "..");
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "colours-"));
 fs.mkdirSync(path.join(dir, "data"), { recursive: true });
@@ -57,7 +70,7 @@ async function main() {
   }
   const port = await freePort();
   const base = "http://127.0.0.1:" + port;
-  const env = { ...process.env, WHATSAPP_DRY_RUN: "1", HACKATHON_AGENT_DATA_DIR: path.join(dir, "data"), PORT: String(port) };
+  const env = { ...process.env, WHATSAPP_DRY_RUN: "1", STALL_SANDBOX_ALLOW_MODEL: "1", HACKATHON_AGENT_DATA_DIR: path.join(dir, "data"), PORT: String(port) };
   delete env.SEEV_API_KEY; delete env.SEEV_SECRET_KEY; delete env.SEEV_WEBHOOK_SECRET;
   const agent = spawn(path.join(ROOT, "agent"), [], { cwd: dir, env, stdio: ["ignore", "pipe", "pipe"] });
   let agentLog = "";

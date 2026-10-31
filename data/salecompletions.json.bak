@@ -1,0 +1,16 @@
+[
+  {
+    "key": "demo|233550000001",
+    "saleId": "7b3bc903335d",
+    "reference": "EFUA-0001-TTE",
+    "productId": "beaded-bag",
+    "shopId": "demo",
+    "lines": [
+      {
+        "name": "Handmade Beaded Bag",
+        "units": 1
+      }
+    ],
+    "at": "2026-10-30T12:30:31Z"
+  }
+]

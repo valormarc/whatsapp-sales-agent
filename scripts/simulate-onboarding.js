@@ -16,6 +16,19 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+// Sandbox hygiene: a dry-run child must never inherit live
+// send or settle credentials from the operator's shell. The
+// agent's sandbox exception is bound to a send-incapable
+// process, so the live WhatsApp and Seev credentials are
+// blanked here, before any child env is built from this one.
+delete process.env.WHATSAPP_TOKEN;
+delete process.env.WHATSAPP_PHONE_NUMBER_ID;
+delete process.env.WHATSAPP_APP_SECRET;
+delete process.env.WHATSAPP_VERIFY_TOKEN;
+delete process.env.SEEV_SECRET_KEY;
+delete process.env.SEEV_API_KEY;
+delete process.env.SEEV_WEBHOOK_SECRET;
+
 const BIN = fileURLToPath(new URL('../agent', import.meta.url));
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
@@ -124,7 +137,7 @@ if (!existsSync(BIN)) {
 const child = spawn(BIN, [], {
   cwd: ROOT,
   env: {
-    WHATSAPP_DRY_RUN: '1', WHATSAPP_APP_SECRET: '',
+    WHATSAPP_DRY_RUN: '1', STALL_SANDBOX_ALLOW_MODEL: '1', WHATSAPP_APP_SECRET: '',
     ...process.env,
     PORT: `${PORT}`,
     MERCHANT_WHATSAPP: MERCHANT,
@@ -329,6 +342,13 @@ try {
   console.log(`\nonboarding simulation ${failures === 0 ? 'complete: the merchant stocked her shelf in chat and the agent sold from it' : `FAILED with ${failures} failed check(s)`}`);
 } finally {
   child.kill();
+  // Wait for the child to die before clearing its data
+  // away: on the kill signal the agent writes a final
+  // session snapshot into that directory, and removing
+  // files under a process that is still writing them
+  // races (ENOTEMPTY). Three seconds is generous; the
+  // wait ends the moment the child exits.
+  await new Promise((resolve) => { child.once('exit', resolve); setTimeout(resolve, 3000); });
   if (failures === 0) rmSync(DATA, { recursive: true, force: true });
   else console.log(`scratch data kept for inspection: ${DATA}`);
 }

@@ -27,7 +27,7 @@ func TestBudgetIsCarriedFromHerWords(t *testing.T) {
 	c.replies(t, salesBuyer)
 	c.say(t, salesBuyer, "My budget is 1500")
 	c.replies(t, salesBuyer)
-	s := sessions[sessionKey("efua", salesBuyer)]
+	s := sessions.get(sessionKey("efua", salesBuyer))
 	if s == nil || s.Budget != 1500 {
 		t.Fatalf("budget not carried on the session: %+v", s)
 	}
@@ -55,7 +55,7 @@ func TestBalkBringsTheCheaperThingForward(t *testing.T) {
 	if !strings.Contains(got, "make me an offer on the Handmade Beaded Bag") {
 		t.Fatalf("the haggle door must stay open behind the alternative: %q", got)
 	}
-	s := sessions[sessionKey("efua", salesBuyer)]
+	s := sessions.get(sessionKey("efua", salesBuyer))
 	if s == nil || s.LastViewed == nil || s.LastViewed.Name != "Silk Scarf" {
 		t.Fatalf("she should now be looking at the alternative: %+v", s)
 	}

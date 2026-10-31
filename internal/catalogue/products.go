@@ -6,8 +6,13 @@ package catalogue
 import (
 	"errors"
 	"fmt"
+	"math"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/valormarc/hackathon-agent/internal/datadir"
 )
 
 // ListProducts returns the merchant's products, or none.
@@ -121,7 +126,11 @@ func uniqueID(products []Product, base string) string {
 // updateMerchant loads the catalogue, applies fn to one merchant and
 // saves the file back, with the same write discipline as the day book
 // and the order book: the whole JSON file, indented, in one write.
+// The cycle lock is held from load to save, so two cycles
+// can never interleave and lose one another's changes.
 func updateMerchant(merchantID string, fn func(*Merchant) error) error {
+	cycleMu.Lock()
+	defer cycleMu.Unlock()
 	c := LoadCatalogue()
 	m, ok := c.Merchants[merchantID]
 	if !ok {
@@ -156,6 +165,9 @@ func AddProduct(merchantID string, p Product) (Product, error) {
 	if p.FloorPrice <= 0 || p.FloorPrice > p.ListPrice ||
 		(p.FloorPrice == p.ListPrice && !p.Fixed) {
 		return Product{}, ErrFloorPrice
+	}
+	if p.Unit != "" && p.BaseQty > 0 && p.StockUnits == 0 && p.Stock > 0 {
+		p.StockUnits = float64(p.Stock) * p.BaseQty
 	}
 	stored := p
 	err := updateMerchant(merchantID, func(m *Merchant) error {
@@ -243,7 +255,84 @@ func RemoveProduct(merchantID, name string) (Product, error) {
 		m.Products = append(m.Products[:i], m.Products[i+1:]...)
 		return nil
 	})
+	if err == nil {
+		// The product's photo files go with it: a removed
+		// product's pictures are never sent again and never
+		// left orphaned on the disk (see deleteOrphanedPhoto).
+		for _, rel := range removed.Photos {
+			deleteOrphanedPhoto(rel)
+		}
+	}
 	return removed, err
+}
+
+// ExtraPhotoRefs, when the agent sets it, reports stored
+// photo paths held OUTSIDE the catalogue — session-held
+// photo lists, burst staging, an open listing's kept
+// photos — that are still live. The catalogue cannot see
+// those stores, and the second audit (needs-validation)
+// found orphan deletion scanning only products: a file a
+// session still names could be deleted from under a send
+// that re-resolves it. The agent registers its stores at
+// startup; until it does, product references alone decide.
+var ExtraPhotoRefs func() []string
+
+// PhotoReferenced reports whether anything still names
+// this stored photo path: any product in any shop, or a
+// live reference the agent registered. A legacy FLAT path
+// (photos/<file>, or a bare <file> from the oldest
+// records) is one file under several spellings, so a flat
+// path counts as referenced while any flat reference
+// shares its file name; scoped paths (photos/<shop>/…)
+// are distinct files and match exactly.
+func PhotoReferenced(rel string) bool {
+	flat := filepath.Dir(rel) == "." || filepath.Dir(rel) == "photos"
+	for _, m := range ListMerchants() {
+		for _, p := range m.Products {
+			for _, r := range p.Photos {
+				if r == rel {
+					return true
+				}
+				if flat && (filepath.Dir(r) == "." || filepath.Dir(r) == "photos") && filepath.Base(r) == filepath.Base(rel) {
+					return true
+				}
+			}
+		}
+	}
+	if ExtraPhotoRefs != nil {
+		for _, r := range ExtraPhotoRefs() {
+			if r == rel {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func photoReferenced(rel string) bool {
+	return PhotoReferenced(rel)
+}
+
+// deleteOrphanedPhoto removes a stored photo file once
+// nothing references it. A path still named by any product
+// (a legacy flat path can be shared by two shops' listings
+// from before paths were shop-scoped) is left alone.
+func deleteOrphanedPhoto(rel string) {
+	if rel == "" || photoReferenced(rel) {
+		return
+	}
+	// A flat reference — the oldest records' spelling, a
+	// bare file name or one under photos/ — names its
+	// file at photos/<base>, the location the photo
+	// readers resolve it to. Removing the verbatim path
+	// deleted nothing real and left the actual file
+	// orphaned on disk forever (the fifth audit). Scoped
+	// references keep the verbatim removal.
+	if dir := filepath.Dir(rel); dir == "." || dir == "photos" {
+		_ = os.Remove(datadir.Path(filepath.Join("photos", filepath.Base(rel))))
+		return
+	}
+	_ = os.Remove(datadir.Path(rel))
 }
 
 // SetAllowance sets the merchant's daily giveaway allowance: the pool
@@ -284,10 +373,14 @@ func SetDeliveryFee(merchantID string, amount float64) error {
 // on the MoMo account its link money settles to, and the Seev
 // subaccount code once creation succeeds. The holder name is kept
 // even when creation fails, so a retry needs nothing re-asked.
-func SetSubaccount(merchantID, code, holderName string) error {
+// The phone the code was minted for is recorded with it, so the
+// binding between code and number is a fact of the record, not
+// an assumption (see SubaccountPhone).
+func SetSubaccount(merchantID, code, holderName, phone string) error {
 	return updateMerchant(merchantID, func(m *Merchant) error {
 		if code != "" {
 			m.SubaccountCode = code
+			m.SubaccountPhone = phone
 		}
 		if holderName != "" {
 			m.PayoutHolderName = holderName
@@ -309,6 +402,7 @@ func SetPayoutDetails(merchantID, phone, holderName, subaccountCode string) erro
 		m.PayoutPhone = phone
 		m.PayoutHolderName = holderName
 		m.SubaccountCode = subaccountCode
+		m.SubaccountPhone = phone
 		return nil
 	})
 }
@@ -429,6 +523,146 @@ func SetDeliveryPaidTo(merchantID, who string) error {
 	})
 }
 
+// AvailableUnits is how much of the product can still be
+// sold, counted in the product's own measure: pieces for a
+// plain product, base units (yards, litres) for a by-measure
+// one. It is the figure every sale is checked against.
+func (p Product) AvailableUnits() float64 {
+	if p.Unit != "" && p.BaseQty > 0 {
+		if p.StockUnits > 0 {
+			return p.StockUnits
+		}
+		return float64(p.Stock) * p.BaseQty
+	}
+	return float64(p.Stock)
+}
+
+// applyTake deducts units from a product in place, keeping
+// the piece count honest for by-measure goods: the count is
+// the whole pieces the remaining units still make, so a
+// partly cut last piece still reads as one in stock.
+func applyTake(p *Product, units float64) {
+	if p.Unit != "" && p.BaseQty > 0 {
+		rem := p.AvailableUnits() - units
+		if rem <= 0 {
+			p.Stock, p.StockUnits = 0, 0
+			return
+		}
+		p.StockUnits = rem
+		p.Stock = int(math.Ceil(rem / p.BaseQty))
+		return
+	}
+	p.Stock -= int(units)
+	if p.Stock < 0 {
+		p.Stock = 0
+	}
+}
+
+// applyGive returns units to a product in place: a sale
+// that died unpaid puts its goods back on the shelf.
+func applyGive(p *Product, units float64) {
+	if p.Unit != "" && p.BaseQty > 0 {
+		rem := p.AvailableUnits() + units
+		p.StockUnits = rem
+		p.Stock = int(math.Ceil(rem / p.BaseQty))
+		return
+	}
+	// A plain product's stock counts whole pieces: a
+	// fractional give is never truncated into the shelf
+	// (the sixth audit) — it is refused whole, the mirror
+	// of TakeStock's plain-product validation. Lines
+	// recorded at a sale carry their take-time measure,
+	// so a legitimate by-measure give-back never arrives
+	// here as a bare fraction.
+	if units != math.Trunc(units) {
+		return
+	}
+	p.Stock += int(units)
+}
+
+// applyGiveMeasured restores units in the denomination
+// they were taken in (the sixth audit): the line's
+// recorded measure governs, even when the product's own
+// measure has since been cleared or re-based, so the
+// give-back lands whole instead of being judged — and
+// truncated — against the product's current shape.
+func applyGiveMeasured(p *Product, units float64, baseQty float64) {
+	current := p.StockUnits
+	if !(p.Unit != "" && p.BaseQty > 0) {
+		current = float64(p.Stock) * baseQty
+	}
+	rem := current + units
+	p.StockUnits = rem
+	p.Stock = int(math.Ceil(rem / baseQty))
+}
+
+// TakeStock deducts units from a product's shelf, reporting
+// whether the shelf could cover them. Nothing is deducted
+// when it cannot: a sale either takes all its lines or none.
+func TakeStock(merchantID, name string, units float64) bool {
+	// A take is a removal: a non-positive quantity is
+	// refused at the boundary. Without the guard a
+	// negative take ADDED stock (the fourth audit's
+	// parent check took -3 and watched the shelf rise
+	// 10 -> 13); every production caller is gated to
+	// positive journal quantities today, and the
+	// boundary is where that gate belongs.
+	if units <= 0 {
+		return false
+	}
+	took := false
+	_ = updateMerchant(merchantID, func(m *Merchant) error {
+		i := productIndex(m, name)
+		if i < 0 {
+			return ErrProductNotFound
+		}
+		// A plain product is counted in whole pieces: a
+		// fractional take on one passed the float
+		// sufficiency check and then deducted only its
+		// truncated whole part — 0.5 against a stock of
+		// 1 deducted nothing and still reported success
+		// (the fifth audit). By-measure products take
+		// fractions by their nature and are untouched.
+		p := &m.Products[i]
+		if (p.Unit == "" || p.BaseQty <= 0) && units != math.Trunc(units) {
+			return nil
+		}
+		if p.AvailableUnits() < units {
+			return nil
+		}
+		applyTake(p, units)
+		took = true
+		return nil
+	})
+	return took
+}
+
+// GiveStock returns units to a product's shelf. A product
+// that has left the catalogue takes nothing back.
+func GiveStock(merchantID, name string, units float64) {
+	GiveStockMeasured(merchantID, name, units, "", 0)
+}
+
+// GiveStockMeasured returns units taken in a recorded
+// measure (unit/baseQty from the sale's stock line): the
+// restore is denominated by the take-time measure, not
+// the product's current one (the sixth audit). A line
+// with no recorded measure takes the plain road.
+func GiveStockMeasured(merchantID, name string, units float64, unit string, baseQty float64) {
+	_ = updateMerchant(merchantID, func(m *Merchant) error {
+		i := productIndex(m, name)
+		if i < 0 {
+			return nil
+		}
+		if unit != "" && baseQty > 0 {
+			applyGiveMeasured(&m.Products[i], units, baseQty)
+			return nil
+		}
+		applyGive(&m.Products[i], units)
+		return nil
+	})
+}
+
 // SetStock sets how many of a product the shop has. The
 // count is a fact she owns like her prices: it is what the
 // in-hand gate reads (a count of one is a one-off, confirmed
@@ -445,6 +679,9 @@ func SetStock(merchantID, name string, count int) (Product, error) {
 			return ErrProductNotFound
 		}
 		m.Products[i].Stock = count
+		if m.Products[i].Unit != "" && m.Products[i].BaseQty > 0 {
+			m.Products[i].StockUnits = float64(count) * m.Products[i].BaseQty
+		}
 		updated = m.Products[i]
 		return nil
 	})
@@ -454,15 +691,34 @@ func SetStock(merchantID, name string, count int) (Product, error) {
 // SetProductPhotos records the kept photo paths on a saved
 // product, after the product exists to hold them.
 func SetProductPhotos(merchantID, productID string, photos []string) error {
-	return updateMerchant(merchantID, func(m *Merchant) error {
+	var dropped []string
+	err := updateMerchant(merchantID, func(m *Merchant) error {
 		for i := range m.Products {
 			if m.Products[i].ID == productID {
+				for _, old := range m.Products[i].Photos {
+					kept := false
+					for _, n := range photos {
+						if n == old {
+							kept = true
+							break
+						}
+					}
+					if !kept {
+						dropped = append(dropped, old)
+					}
+				}
 				m.Products[i].Photos = photos
 				return nil
 			}
 		}
 		return ErrProductNotFound
 	})
+	if err == nil {
+		for _, rel := range dropped {
+			deleteOrphanedPhoto(rel)
+		}
+	}
+	return err
 }
 
 // FindByID returns the product with this exact id inside a

@@ -22,7 +22,9 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
+	"strconv"
 	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/haggle"
@@ -72,6 +74,9 @@ type Options struct {
 	System    *string
 	TimeoutMs *int
 	Kind      int
+	// Turn is the budget token of the turn making the call
+	// (see BeginTurn); empty means uncounted.
+	Turn string
 }
 
 // The per-turn budget, the platform's standing rule made
@@ -93,33 +98,70 @@ const (
 
 const draftTurnCap = 2
 
-var (
-	turnArmed      atomic.Bool
-	turnUnderstand atomic.Int64
-	turnDraft      atomic.Int64
-)
-
-// BeginTurn opens a fresh per-turn budget.
-func BeginTurn() {
-	turnUnderstand.Store(0)
-	turnDraft.Store(0)
-	turnArmed.Store(true)
+// A turn's budget is its own. Budgets used to be one
+// process-global pair of counters that BeginTurn reset, so
+// any background pass that opened a "turn" (the unpaid
+// sweep did) silently reset the budget of a live buyer's
+// turn mid-flight, and two turns running in parallel shared
+// one budget. Now BeginTurn mints a token, the token rides
+// on every call the turn makes (Options.Turn), and each
+// token's counts are its own. A call carrying no token —
+// unit tests, one-off tools, internal composition — is
+// uncounted, as calls were before the first BeginTurn.
+type turnBudget struct {
+	understand atomic.Int64
+	draft      atomic.Int64
+	born       time.Time
 }
 
-// spend charges one call of the kind against the turn's
-// budget and reports whether it may go ahead.
-func spend(kind int) bool {
-	if !turnArmed.Load() {
+var turnBudgets sync.Map // token string -> *turnBudget
+
+var turnSeq atomic.Uint64
+
+// BeginTurn opens a fresh per-turn budget and returns its
+// token. Stale budgets (a turn that never closed) are
+// swept as new ones open.
+func BeginTurn() string {
+	now := time.Now()
+	turnBudgets.Range(func(k, v any) bool {
+		if now.Sub(v.(*turnBudget).born) > 15*time.Minute {
+			turnBudgets.Delete(k)
+		}
+		return true
+	})
+	token := "turn-" + strconv.FormatUint(turnSeq.Add(1), 10)
+	turnBudgets.Store(token, &turnBudget{born: now})
+	return token
+}
+
+// EndTurn closes a turn's budget.
+func EndTurn(token string) {
+	if token != "" {
+		turnBudgets.Delete(token)
+	}
+}
+
+// spend charges one call of the kind against the budget of
+// the turn named by token, and reports whether it may go
+// ahead. No token, or a token whose turn has closed, is
+// uncounted.
+func spend(kind int, token string) bool {
+	if token == "" {
 		return true
 	}
+	v, ok := turnBudgets.Load(token)
+	if !ok {
+		return true
+	}
+	b := v.(*turnBudget)
 	if kind == KindDraft {
-		if turnDraft.Add(1) <= draftTurnCap {
+		if b.draft.Add(1) <= draftTurnCap {
 			return true
 		}
 		log.Printf("model: turn budget refused a drafting call (cap %d)", draftTurnCap)
 		return false
 	}
-	if turnUnderstand.Add(1) <= 1 {
+	if b.understand.Add(1) <= 1 {
 		return true
 	}
 	log.Printf("model: turn budget refused an understanding call (cap 1)")
@@ -165,7 +207,7 @@ func Chat(messages []Message, opts Options) *string {
 	if !Enabled() {
 		return nil
 	}
-	if !spend(opts.Kind) {
+	if !spend(opts.Kind, opts.Turn) {
 		return nil
 	}
 	var system *string
@@ -268,13 +310,13 @@ type ListingDraft struct {
 // themselves state count: a range like "sizes 37 to 42"
 // becomes each size in it; words carrying no sizes return
 // an empty list.
-func JudgeShape(name, description string) (unit string, certain bool, sizes []string) {
+func JudgeShape(name, description, turn string) (unit string, certain bool, sizes []string) {
 	system := "You help a market seller list her goods. Read the product below and judge how it is sold, the way the seller herself would say it, and which sizes it comes in. " +
 		"Reply with exactly one JSON object, no other text: {\"unit\": \"...\", \"certain\": true, \"sizes\": [\"...\"]}. " +
 		"The unit is one word or two: piece for clothes, shoes and bags, yard for fabric, bottle for creams and oils, kilo or bag for foodstuffs, and so on. " +
 		"certain is false only when how it is sold genuinely cannot be told from the name and description. " +
 		"sizes lists only sizes the words themselves state, in the seller's own terms (shoe numbers, UK sizes, S M L, waist numbers): a stated range like 37 to 42 becomes each size in it. When the words state no sizes, or the goods do not come in sizes, give an empty list. Never guess sizes such goods usually come in."
-	reply := Chat([]Message{{Role: "user", Content: "Product: " + name + "\nDescription: " + description}}, Options{System: &system, Kind: KindDraft})
+	reply := Chat([]Message{{Role: "user", Content: "Product: " + name + "\nDescription: " + description}}, Options{System: &system, Kind: KindDraft, Turn: turn})
 	if reply == nil {
 		return "", false, nil
 	}
@@ -341,16 +383,21 @@ type visionRequest struct {
 	Messages []visionMessage `json:"messages"`
 }
 
-// ChatVision makes one chat completion that carries an image (a
-// data URI) beside the text. It returns the reply text, or nil on
-// any failure, under the same fail-soft contract as Chat.
-func ChatVision(system, text, imageDataURI string) *string {
+// ChatVisionTurn makes one chat completion that carries
+// an image (a data URI) beside the text, charged against
+// one turn's budget (see Options.Turn). It returns the
+// reply text, or nil on any failure, under the same
+// fail-soft contract as Chat. There is deliberately no
+// tokenless form: the fourth audit found the old one
+// spending uncounted — spend("") waves a call through —
+// so every vision call now names the turn it belongs to.
+func ChatVisionTurn(system, text, imageDataURI, turn string) *string {
 	if !Enabled() || imageDataURI == "" {
 		return nil
 	}
 	// Vision serves listing composition (DraftListing), a
 	// drafting-class call under the turn budget.
-	if !spend(KindDraft) {
+	if !spend(KindDraft, turn) {
 		return nil
 	}
 	img := struct {
@@ -393,23 +440,21 @@ func ChatVision(system, text, imageDataURI string) *string {
 	return extractReply(data)
 }
 
-// DraftListing asks the model to draft a listing from a seller's
-// product photo and the words she sent with it, if any. Her own
-// words come first in the prompt and the reply is read as exactly
-// one JSON object, { name, description }; anything else returns
-// nil and the caller works from her words alone. Prices are never
-// asked for and never read from the reply.
-func DraftListing(imageDataURI, caption string) *ListingDraft {
-	return DraftListingAgainst(imageDataURI, caption, "", "")
-}
-
-// DraftListingAgainst is DraftListing with the seller's
-// already-open listing in view, when there is one: the
-// model drafts this photo's listing and judges whether the
-// photo shows that same product. The judgement rides in
-// the same single call, so a photo turn still costs one
-// model call.
-func DraftListingAgainst(imageDataURI, caption, openName, openDescription string) *ListingDraft {
+// DraftListingAgainst asks the model to draft a listing
+// from a seller's product photo and the words she sent
+// with it, if any, with the seller's already-open listing
+// in view when there is one: the model drafts this
+// photo's listing and judges whether the photo shows
+// that same product. The judgement rides in the same
+// single call, so a photo turn still costs one model
+// call. Her own words come first in the prompt and the
+// reply is read as exactly one JSON object,
+// { name, description }; anything else returns nil and
+// the caller works from her words alone. Prices are
+// never asked for and never read from the reply. As with
+// ChatVisionTurn there is no tokenless form: every call
+// names its turn and spends against its budget.
+func DraftListingAgainst(imageDataURI, caption, openName, openDescription, turn string) *ListingDraft {
 	system := "You help a market seller turn a photo of her goods into a shop listing. " +
 		"Reply with exactly one JSON object, no other text: {\"name\": \"...\", \"description\": \"...\", \"unit\": \"...\", \"unit_certain\": true, \"sizes\": [\"...\"], \"colour\": \"...\"}. " +
 		"\"colour\" is the main colour of the goods in this one photo, as a buyer would name it (white, black, rose gold); give an empty string when no single colour dominates, as with a multicoloured print. " +
@@ -433,7 +478,7 @@ func DraftListingAgainst(imageDataURI, caption, openName, openDescription string
 		text = "The seller sent this photo with her own words: \"" + strings.TrimSpace(caption) + "\". " +
 			"Draft the listing for the product in the photo. Where her words name or describe the product, use her words first."
 	}
-	reply := ChatVision(system, text, imageDataURI)
+	reply := ChatVisionTurn(system, text, imageDataURI, turn)
 	if reply == nil {
 		return nil
 	}

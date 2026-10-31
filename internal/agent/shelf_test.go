@@ -224,7 +224,7 @@ func TestShelfTapAddsTicksAndTakesOff(t *testing.T) {
 	if !strings.Contains(sheet, "✓ Item Three") || !strings.Contains(sheet, "Your picks") || !strings.Contains(sheet, "Done, settle them") {
 		t.Fatalf("the sheet should come back with the pick ticked and Done riding, got %q", sheet)
 	}
-	s := sessions[sessionKey(MerchantID, buyer)]
+	s := sessions.get(sessionKey(MerchantID, buyer))
 	if s == nil || len(s.ShelfPicks) != 1 || s.ShelfPicks[0] != "item-3" {
 		t.Fatalf("the pick should be held on the session, got %+v", s)
 	}
@@ -268,7 +268,7 @@ func TestShelfDoneStartsTheSettling(t *testing.T) {
 	if !strings.Contains(got, "one by one") || !strings.Contains(got, "Denim Mini Dress") || !strings.Contains(got, "GH₵190") {
 		t.Fatalf("Done should open the settling on the first pick, got %q", got)
 	}
-	s := sessions[sessionKey(MerchantID, buyer)]
+	s := sessions.get(sessionKey(MerchantID, buyer))
 	if s == nil || !s.ShelfSettling || s.Product == nil || s.Product.ID != "dress" || len(s.ShelfPicks) != 1 || s.ShelfPicks[0] != "bag" {
 		t.Fatalf("the session should be settling the dress with the bag queued, got %+v", s)
 	}
@@ -291,7 +291,7 @@ func TestShelfPicksSettleIntoOneOrder(t *testing.T) {
 	if !strings.Contains(ask, "Now the next one you picked:") || !strings.Contains(ask, "Black Tote Bag") || !strings.Contains(ask, "GH₵80") {
 		t.Fatalf("agreeing the first pick should park it and present the next, got %q", ask)
 	}
-	s := sessions[sessionKey(MerchantID, buyer)]
+	s := sessions.get(sessionKey(MerchantID, buyer))
 	if s == nil || len(s.Basket) != 1 || s.Basket[0].Product.ID != "dress" || s.Product == nil || s.Product.ID != "bag" {
 		t.Fatalf("the dress should be parked with the bag in front of her, got %+v", s)
 	}

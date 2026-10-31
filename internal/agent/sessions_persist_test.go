@@ -19,10 +19,10 @@ import (
 // the way a restart does: the durable books (catalogue,
 // orders, day book) live on disk and are untouched.
 func dropInMemoryState() {
-	sessions = map[string]*Session{}
-	bindings = map[string]string{}
-	doorShown = map[string]bool{}
-	packageNames = map[string]string{}
+	sessions.replaceAll(map[string]*Session{})
+	bindings.replaceAll(map[string]string{})
+	doorShown.replaceAll(map[string]bool{})
+	packageNames.replaceAll(map[string]string{})
 }
 
 func TestKeptBatchSurvivesRestart(t *testing.T) {
@@ -42,22 +42,22 @@ func TestKeptBatchSurvivesRestart(t *testing.T) {
 	if !strings.Contains(joined, "last price for each") || !strings.Contains(joined, "Dinner Set") {
 		t.Fatalf("the batch should be presented before the restart, got %q", joined)
 	}
-	bindings[buyer] = MerchantID
+	bindings.put(buyer, MerchantID)
 
 	// The restart: snapshot, drop everything, restore.
 	SnapshotSessionsNow()
 	dropInMemoryState()
-	if len(sessions) != 0 {
+	if sessions.len() != 0 {
 		t.Fatal("the wipe should empty the session state")
 	}
 	restoreSessions()
 
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || !s.BurstAwaiting || len(s.BurstBatch) != 1 {
 		t.Fatalf("the kept batch should be restored mid-question, got %+v", s)
 	}
-	if bindings[buyer] != MerchantID {
-		t.Fatalf("the buyer's binding should be restored, got %q", bindings[buyer])
+	if bindings.get(buyer) != MerchantID {
+		t.Fatalf("the buyer's binding should be restored, got %q", bindings.get(buyer))
 	}
 
 	// Her next message is still the batch's answer.
@@ -84,7 +84,7 @@ func TestOpenListingSurvivesRestart(t *testing.T) {
 
 	c.photo(t, owner, "Corner Rack\nSteel frame with 4 tiers\nGH₵270")
 	c.replies(t, owner)
-	s := sessions[sessionKey(MerchantID, owner)]
+	s := sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil {
 		t.Fatal("a listing should be open before the restart")
 	}
@@ -93,7 +93,7 @@ func TestOpenListingSurvivesRestart(t *testing.T) {
 	dropInMemoryState()
 	restoreSessions()
 
-	s = sessions[sessionKey(MerchantID, owner)]
+	s = sessions.get(sessionKey(MerchantID, owner))
 	if s == nil || s.Onboarding == nil || s.Onboarding.Name != "Corner Rack" || s.Onboarding.ListPrice != 270 {
 		t.Fatalf("the open listing should be restored with its draft, got %+v", s)
 	}

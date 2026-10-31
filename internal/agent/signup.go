@@ -37,7 +37,7 @@ var sellIntentRe = regexp.MustCompile(`\b(open|start|create|set up)\b[^.!?]*\bsh
 
 // startSignup begins the open-a-shop walk on the pre-shop session.
 func startSignup(from string) {
-	sessions[sessionKey("", from)] = &Session{Stage: "signup", Signup: &SignupFlow{Step: "name"}}
+	sessions.put(sessionKey("", from), &Session{Stage: "signup", Signup: &SignupFlow{Step: "name"}})
 	whatsapp.SendText(from, "Welcome. Let us open your shop here, in this chat. Nothing to install and nothing to sign up for anywhere else. First, what is your shop called? You can say cancel and nothing will be created.")
 }
 
@@ -56,6 +56,30 @@ func shareTextFor(shop catalogue.Merchant) string {
 // signupQuestionText is the open question for a signup
 // step, as one string, so the seller stage read can reason
 // against the very question she was asked.
+// holderRefusal reads a confirmation-step answer that
+// denies the account is hers without being a bare "no":
+// "not mine", "not my name", "that's not me", "wrong
+// account". The third audit found "not mine" itself
+// recorded as the MoMo holder name — the exact-match
+// refusal list let every other negation through as
+// content. These shapes are answers about the account,
+// never names a MoMo account carries.
+func holderRefusal(lower string) bool {
+	t := strings.TrimSpace(lower)
+	if strings.HasPrefix(t, "not ") {
+		return true
+	}
+	for _, p := range []string{
+		"not mine", "not my ", "not me", "isn't mine", "isnt mine",
+		"that's not", "thats not", "this is not", "wrong name", "wrong account",
+	} {
+		if strings.Contains(t, p) {
+			return true
+		}
+	}
+	return false
+}
+
 func signupQuestionText(from string, flow *SignupFlow) string {
 	switch flow.Step {
 	case "holder":
@@ -83,7 +107,7 @@ func serveSignupQuestion(from string, s *Session, text string) bool {
 	reading := thinkSellerWalkIntent(from, s, "opening her shop", signupQuestionText(from, flow), given, text, nil)
 	switch reading.Intent {
 	case stageIntentCancel:
-		delete(sessions, sessionKey("", from))
+		sessions.del(sessionKey("", from))
 		whatsapp.SendText(from, "Dropped it. No shop was created. Say \"open a shop\" whenever you are ready.")
 		return true
 	case stageIntentAsk:
@@ -99,7 +123,7 @@ func serveSignupQuestion(from string, s *Session, text string) bool {
 // advanceSignup feeds one message to the open-a-shop walk.
 func advanceSignup(from string, s *Session, text, lower string) {
 	if controlWord(lower) == "cancel" {
-		delete(sessions, sessionKey("", from))
+		sessions.del(sessionKey("", from))
 		whatsapp.SendText(from, "Dropped it. No shop was created. Say \"open a shop\" whenever you are ready.")
 		return
 	}
@@ -125,6 +149,16 @@ func advanceSignup(from string, s *Session, text, lower string) {
 	case "confirmholder":
 		if isClearYes(lower) {
 			finishSignup(from, flow)
+			return
+		}
+		if isClearNo(lower) || holderRefusal(lower) {
+			// A no here is an answer, not a name: the
+			// second audit found "no" itself recorded as
+			// the MoMo holder name and sent to Seev. She
+			// is asked for the right account's name
+			// instead, on the plain holder step.
+			flow.Step = "holder"
+			whatsapp.SendText(from, "No problem. What name is on the MoMo account your money should go to?")
 			return
 		}
 		holder := strings.TrimSpace(text)
@@ -174,9 +208,9 @@ func finishSignup(from string, flow *SignupFlow) {
 
 	payoutLine := ""
 	if checkout.Enabled() && flow.HolderName != "" {
-		_ = catalogue.SetSubaccount(shop.ID, "", flow.HolderName)
+		_ = catalogue.SetSubaccount(shop.ID, "", flow.HolderName, shop.PayoutPhone)
 		if code, ok := checkout.CreateSubaccount(shop.Name, shop.PayoutPhone, flow.HolderName); ok {
-			_ = catalogue.SetSubaccount(shop.ID, code, flow.HolderName)
+			_ = catalogue.SetSubaccount(shop.ID, code, flow.HolderName, shop.PayoutPhone)
 			payoutLine = "Your payment account is set up too: money from your payment links settles to your MoMo in the name " + flow.HolderName + ", usually the next day. Of every sale you keep 99%; 1% stays with the platform."
 		} else {
 			payoutLine = "One thing needs attention: I could not set up your payment account just now. Your shop is open and you can stock it and sell. Say \"set up my payment\" whenever you are ready and we will do it again."
@@ -186,12 +220,12 @@ func finishSignup(from string, flow *SignupFlow) {
 	// Her shop exists now, so she stops being a pre-shop sender: the
 	// session moves under her own shop's key, with the add-a-product
 	// walk already open, the same handover an existing merchant gets.
-	delete(sessions, sessionKey("", from))
-	sessions[sessionKey(shop.ID, from)] = &Session{
+	sessions.del(sessionKey("", from))
+	sessions.put(sessionKey(shop.ID, from), &Session{
 		Stage:      "merchant",
 		MerchantID: shop.ID,
 		Onboarding: &OnboardingFlow{Step: "name"},
-	}
+	})
 	whatsapp.SendText(from, "Your shop "+shop.Name+" is open, and this number is its owner, so I will know you whenever you chat. "+shareTextFor(shop))
 	if payoutLine != "" {
 		whatsapp.SendText(from, payoutLine)

@@ -23,6 +23,8 @@ func buySheaPickup(t *testing.T, c *chat, buyer string) string {
 	c.last(t, buyer)
 	c.say(t, buyer, "120")
 	c.replies(t, buyer)
+	tap(t, buyer, "ff_pickup")
+	c.replies(t, buyer) // the pickup-kind buttons, drained
 	tap(t, buyer, "ff_self")
 	c.finishDetails(t, buyer)
 	return strings.Join(c.replies(t, buyer), "\n")
@@ -61,6 +63,8 @@ func TestReferencesAreSerialPerShop(t *testing.T) {
 	c.last(t, buyer)
 	c.say(t, buyer, "180")
 	c.replies(t, buyer)
+	tap(t, buyer, "ff_pickup")
+	c.replies(t, buyer) // the pickup-kind buttons, drained
 	tap(t, buyer, "ff_self")
 	c.finishDetails(t, buyer)
 	amaRef := orders.Default.NewestFor("ama", buyer).Reference
