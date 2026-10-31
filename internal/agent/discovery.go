@@ -40,6 +40,7 @@ Read her message and decide:
 - intent "order_received": she is telling you that an order she already PAID for has arrived and she has the goods now. The facts name her paid orders when she has any; give "shop" as that order's shop code. This is about an order she already made, never a new purchase.
 - intent "order_missing": she is telling you that an order she already paid for has NOT arrived: it never came, it is lost, she is still waiting and it is overdue. The facts name her paid orders when she has any; give "shop" as that order's shop code. Merely asking where an order stands is a search of another kind, not this.
 - intent "browse": she asks what shops or goods there are.
+- intent "basket_view": she asks to see her basket, what she has picked or settled so far, in any words. She has not chosen a shop on this number yet, so she holds no basket here; the agent answers that plainly.
 - intent "no_shop": she says she has no particular shop, without naming a thing she wants. If she names a thing as well, it is a search.
 - intent "offtopic": her message is not about buying or shops at all.
 - intent "unclear": none of the above fits.
@@ -360,7 +361,7 @@ func presentDiscoveryRecommendation(from, ask string, matches []struct {
 // factual line otherwise.
 func discoveryReplyOr(u *discoveryUnderstanding, fallback string) string {
 	if u != nil {
-		if draft := strings.TrimSpace(u.Reply); draft != "" && voiceClean(draft) && figuresClean(draft) {
+		if draft := strings.TrimSpace(u.Reply); draft != "" && voiceClean(draft) && figuresClean(draft) && !productsStrung(draft) {
 			return draft
 		}
 	}
@@ -795,8 +796,8 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 			block = append(block, orderItemLines(byShop[code])...)
 			lines = append(lines, strings.Join(block, "\n"))
 		}
-		lines = append(lines, "Which one do you want to look at?")
-		sendPieces(from, lines...)
+		whatsapp.SendText(from, codeBox(lines))
+		whatsapp.SendText(from, "Which one do you want to look at?")
 		if pre, ok := sessions.lookup(sessionKey("", from)); ok {
 			pre.DiscoveryShown = pre.DiscoveryShown[:0]
 			for _, v := range matches {
@@ -825,7 +826,7 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 			// The directory lists, one product per line
 			// under the shop's heading, never a row of
 			// names strung along one line.
-			block := []string{m.Name + " (SHOP-" + m.ShopCode + ")"}
+			block := []string{m.ShopCode}
 			for i, p := range products {
 				if i >= 3 {
 					break
@@ -837,8 +838,11 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 		if len(lines) == 0 {
 			return false
 		}
-		lines = append(lines, discoveryReplyOr(u, "Tell me a shop, or tell me what you want to buy and I will search every shop for it."))
-		sendPieces(from, lines...)
+		whatsapp.SendText(from, codeBox(lines))
+		whatsapp.SendText(from, discoveryReplyOr(u, "Tell me a shop, or tell me what you want to buy and I will search every shop for it."))
+		return true
+	case "basket_view":
+		whatsapp.SendText(from, discoveryReplyOr(u, "Your basket is empty at the moment: you have not picked anything on this number yet. Tell me a shop code if you have one, or tell me what you want to buy and I will search every shop for it."))
 		return true
 	case "no_shop":
 		if strings.TrimSpace(u.Item) != "" || len(u.Matches) > 0 {
@@ -855,6 +859,16 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 		return true
 	}
 	return false
+}
+
+// codeBox wraps a shop-block list in WhatsApp's code
+// fences, so it lands as the monospace card: one shop's
+// name on its own line, its goods under it as
+// "Name - GH₵Price", a blank line, then the next shop.
+// The directory and the cross-shop search results are
+// the surfaces built from shops, and they print this way.
+func codeBox(blocks []string) string {
+	return "```\n" + strings.Join(blocks, "\n\n") + "\n```"
 }
 
 // discoveryTaste names a few real goods across the shops, so

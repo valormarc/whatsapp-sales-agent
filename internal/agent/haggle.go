@@ -4,6 +4,8 @@
 package agent
 
 import (
+	"encoding/json"
+
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/daybook"
 	"github.com/valormarc/hackathon-agent/internal/haggle"
@@ -235,6 +237,68 @@ func counterFrame(s *Session, listPrice, price float64) string {
 // below the list price is ordinary trading and draws no
 // correction: the figure she beat was a counter, not
 // the price.
+// standSubject names what a standing price is for: a hand
+// is "all of them", a single product is "the <name>". The
+// hand's joined label is a bookkeeping string, never a
+// thing to say aloud: "the A and B stands at..." is not
+// English a person behind a counter would produce.
+func standSubject(s *Session) string {
+	if s != nil && len(s.TotalHand) > 0 {
+		return "all of them"
+	}
+	if s == nil || s.Product == nil {
+		return "it"
+	}
+	return "the " + s.Product.Name
+}
+
+// haggleTurnReadsAccept asks the thinking to read a
+// figure-free turn inside a haggle: with a price standing
+// on the table, is she accepting it? Whether "Ok" after a
+// counter is a yes is a judgement about the whole moment,
+// not a word to match: the same letters stall a chat that
+// has no standing price and close one that does, so the
+// reading carries the standing price, the goods and what
+// she said before. It answers only accept or other; an
+// unreadable turn is other, and the caller keeps its
+// holding behaviour, so a model that is down never
+// invents a sale.
+func haggleTurnReadsAccept(from string, s *Session, merchant *catalogue.Merchant, msg string) bool {
+	if !model.Enabled() || s == nil || s.Product == nil {
+		return false
+	}
+	subject := "the " + s.Product.Name
+	if len(s.TotalHand) > 0 {
+		subject = "all of them together (" + s.Product.Name + ")"
+	}
+	var b strings.Builder
+	b.WriteString("The shop is " + merchant.Name + ". A haggle is open over " + subject + ".\n")
+	b.WriteString("The seller's standing price is " + money.GHS(s.Ask) + "; the list price is " + money.GHS(s.Product.ListPrice) + ".\n")
+	if w := recentSpeakerWords(s, 4); w != "" {
+		b.WriteString("What she said earlier in this chat, oldest first: " + w + ".\n")
+	}
+	b.WriteString("Her message now: \"" + msg + "\"")
+	sys := `You read one message inside a price haggle, with a price standing on the table. Decide what she is doing with this message: "accept" when she agrees to buy at the standing price — in any words, signs or emoji: a bare ok, yes, deal, agreed, fine, a handshake, "send it", "I will take it" — judged from the whole context, where a short warm reply right after a price was named usually accepts it. "other" for everything else: a question, a refusal, a complaint, stalling, chatting, or anything that is not plainly taking the standing price. Answer with strict JSON only: {"act": "accept"} or {"act": "other"}.`
+	timeout := 10000
+	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, TimeoutMs: &timeout, Turn: turnTokenFor(from)})
+	if out == nil {
+		return false
+	}
+	text := *out
+	open := strings.Index(text, "{")
+	closeIdx := strings.LastIndex(text, "}")
+	if open == -1 || closeIdx <= open {
+		return false
+	}
+	var raw struct {
+		Act string `json:"act"`
+	}
+	if err := json.Unmarshal([]byte(text[open:closeIdx+1]), &raw); err != nil {
+		return false
+	}
+	return raw.Act == "accept"
+}
+
 func correctOverOffer(from string, s *Session, offer float64) {
 	p := s.Product
 	if p == nil || offer <= p.ListPrice {
@@ -269,6 +333,10 @@ func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer f
 			return
 		}
 		sessions.put(key, s)
+		if len(s.TotalHand) > 0 {
+			whatsapp.SendText(from, "All of them together are "+money.GHS(s.Ask)+", and that price is fixed. I cannot take "+money.GHS(offer)+" for them. If you want them at "+money.GHS(s.Ask)+", say the word and they are yours.")
+			return
+		}
 		whatsapp.SendText(from, "The "+s.itemLabel()+" is "+money.GHS(s.Ask)+", and that price is fixed. I cannot take "+money.GHS(offer)+" for it. If you want it at "+money.GHS(s.Ask)+", say the word and it is yours.")
 		return
 	}

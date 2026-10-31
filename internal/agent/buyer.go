@@ -5,6 +5,8 @@
 package agent
 
 import (
+	"strings"
+
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/daybook"
 	"github.com/valormarc/hackathon-agent/internal/money"
@@ -171,6 +173,22 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		return
 	}
 
+	// The same ask in her own words ("check basket") is the
+	// thinking's to read, at the guided stages the open-turn
+	// thinking does not reach: when the turn names the
+	// basket and carries no figure, one reading is taken,
+	// and only its basket reading is acted on here — the
+	// guided flows own every other meaning of the turn, and
+	// the list itself is printed from the session, never
+	// drafted.
+	if (s.Stage == "haggling" || s.Stage == "fulfilment" || s.Stage == "lastprice") &&
+		strings.Contains(lower, "basket") && parseOffer(lower) == nil {
+		if u := thinkBuyerMessage(from, s, merchant, shopID, msg); u != nil && u.Intent == intentBasketView {
+			serveBasketView(from, s, shopID)
+			return
+		}
+	}
+
 	// Thinking first. On an open turn (not inside a guided
 	// flow: no haggle running, no fulfilment, no pending close,
 	// no onboarding), the agent thinks before it answers: the
@@ -331,7 +349,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		// she heard the price, not that she took it. The stand is
 		// held up again, and nothing closes.
 		if isBareAck(lower) {
-			whatsapp.SendText(from, "My last price stands at "+money.GHS(s.Ask)+" for the "+s.Product.Name+". Say yes and I will send the payment link, or feel free to look around.")
+			whatsapp.SendText(from, "My last price stands at "+money.GHS(s.Ask)+" for "+standSubject(s)+". Say yes and I will send the payment link, or feel free to look around.")
 			return
 		}
 		if totalRe.MatchString(lower) || deliveryRe.MatchString(lower) {
@@ -399,7 +417,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			beginFulfilment(from, s, s.Ask)
 			return
 		}
-		whatsapp.SendText(from, "My last price stands at "+money.GHS(s.Ask)+" for the "+s.Product.Name+". Say yes and I will send the payment link, or feel free to look around.")
+		whatsapp.SendText(from, "My last price stands at "+money.GHS(s.Ask)+" for "+standSubject(s)+". Say yes and I will send the payment link, or feel free to look around.")
 		return
 	}
 
@@ -474,7 +492,22 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				whatsapp.SendText(from, "It is this: "+p.Description+" The price stands at "+money.GHS(s.Ask)+"."+tail)
 				return
 			}
+			// A figure-free turn inside a haggle is read
+			// before it is held: with a price standing, her
+			// "Ok" or "Deal" is the sale agreeing, and
+			// stalling it as talk was the live failure. The
+			// reading carries the standing price; accepting
+			// opens the same confirmation "I will take it"
+			// opens, so a misread costs one "Not yet" tap.
+			if haggleTurnReadsAccept(from, s, merchant, msg) {
+				startConfirmation(from, s, merchant, s.Product, s.Ask, false)
+				return
+			}
 			if p.Fixed {
+				if len(s.TotalHand) > 0 {
+					whatsapp.SendText(from, "All of them together are "+money.GHS(s.Ask)+", and that price is fixed. Say the word if you want them at that price.")
+					return
+				}
 				whatsapp.SendText(from, "The "+p.Name+" is "+money.GHS(s.Ask)+", and that price is fixed. Say the word if you want it at that price.")
 				return
 			}
@@ -485,6 +518,13 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				"The " + p.Name + " stands at " + money.GHS(s.Ask) + ". Give me your price and let us see.",
 				"We are still on the " + p.Name + " at " + money.GHS(s.Ask) + ". What price works for you?",
 				"The " + p.Name + " is at " + money.GHS(s.Ask) + " for now. Talk to me, give me your price.",
+			}
+			if len(s.TotalHand) > 0 {
+				holds = []string{
+					"All of them stand at " + money.GHS(s.Ask) + ". Give me your price and let us see.",
+					"We are still on all of them at " + money.GHS(s.Ask) + ". What price works for you?",
+					"All of them are at " + money.GHS(s.Ask) + " for now. Talk to me, give me your price.",
+				}
 			}
 			whatsapp.SendText(from, holds[s.Holds%len(holds)])
 			s.Holds++

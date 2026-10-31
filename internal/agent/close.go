@@ -86,23 +86,33 @@ func startConfirmation(from string, s *Session, merchant *catalogue.Merchant, pr
 	if s.Qty > 0 && product.Unit != "" {
 		name = qtyLabel(product, s.Qty)
 	}
+	// The opener names what the price is for: a hand is
+	// never introduced by its bookkeeping label ("The A
+	// and B is GH₵..."), it is all of them together.
+	lead := "The " + name + " is " + money.GHS(price)
+	unit := "it"
+	askItem := product.Name
+	if len(s.TotalHand) > 0 {
+		lead = "All of them together are " + money.GHS(price)
+		unit = "them"
+		askItem = "your items"
+	}
 	if fee := deliveryFeeOf(merchant); fee > 0 {
 		if deliveryPaidToOf(merchant) == "carrier" {
 			// The fee is not hers to pay here at all: it goes
 			// to whoever brings the item, when it arrives.
 			sendPieces(from,
-				"The "+name+" is "+money.GHS(price)+". If you want it sent, delivery is "+money.GHS(fee)+", paid to "+carrierTarget(merchant.DeliveryNote)+" when it reaches you.")
-			askYesNo(from, s, "close", product.Name, "Shall I send the payment link?", "Yes, send it", "Not yet")
+				lead+". If you want "+unit+" sent, delivery is "+money.GHS(fee)+", paid to "+carrierTarget(merchant.DeliveryNote)+" when it reaches you.")
+			askYesNo(from, s, "close", askItem, "Shall I send the payment link?", "Yes, send it", "Not yet")
 			return
 		}
 		sendPieces(from,
-			"The "+name+" is "+money.GHS(price)+", plus "+money.GHS(fee)+" delivery if you want it sent to you.")
-		askYesNo(from, s, "close", product.Name, "Shall I send the payment link?", "Yes, send it", "Not yet")
+			lead+", plus "+money.GHS(fee)+" delivery if you want "+unit+" sent to you.")
+		askYesNo(from, s, "close", askItem, "Shall I send the payment link?", "Yes, send it", "Not yet")
 		return
 	}
-	sendPieces(from,
-		"The "+name+" is "+money.GHS(price)+".")
-	askYesNo(from, s, "close", product.Name, "Shall I send the payment link?", "Yes, send it", "Not yet")
+	sendPieces(from, lead+".")
+	askYesNo(from, s, "close", askItem, "Shall I send the payment link?", "Yes, send it", "Not yet")
 }
 
 // answerDeliveryOrTotal answers a delivery question, or the demand

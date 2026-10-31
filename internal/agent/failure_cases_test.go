@@ -111,7 +111,7 @@ func TestFailureModelErrorsDiscoveryStillAnswers(t *testing.T) {
 	// the shops.
 	c.say(t, buyer, "Hello, what shops do you have?")
 	got := c.joined(t, buyer)
-	if !strings.Contains(got, "Test Shop") {
+	if !strings.Contains(got, "```\nTEST\nHandmade Beaded Bag - GH₵850\n```") {
 		t.Fatalf("discovery must answer with the model erroring, got %q", got)
 	}
 }

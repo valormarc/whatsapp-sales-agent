@@ -36,6 +36,7 @@ const OWNER = "233551209701";
 const BUYER_A = "233551209711";
 const BUYER_B = "233551209712";
 const BUYER_C = "233551209713";
+const BUYER_D = "233551209714";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "basketview-"));
 const cat = { merchants: { luxe: { id: "luxe", name: "Luxe", shopCode: "LUXE", ownerWhatsApp: OWNER, payoutPhone: OWNER, dailyGiveawayAllowance: 300, deliveryFee: 25, deliveryNote: "Sent by bus to your station", products: [
   { id: "sandals", name: "Thong Sandals", description: "Thong sandals, sizes 37-41.", listPrice: 80, floorPrice: 60, stock: 5 },
@@ -172,6 +173,17 @@ async function pickBoth(buyer) {
     console.log("LEG C BASKET REPLY:\n" + texts(recs));
     check(texts(recs).includes("Thong Sandals - GH₵") && texts(recs).includes("Double Clothes Rack - GH₵"),
       "leg C: the agreed hand is listed item by item at its shares", texts(recs));
+
+    // Leg D: the ask in the owner's own words — "Check
+    // basket", no "my", no viewing phrase the net knows.
+    // The net does not claim it; the thinking reads it and
+    // the same view answers.
+    recs = await pickBoth(BUYER_D);
+    await say(BUYER_D, "Check basket");
+    recs = await fresh(BUYER_D);
+    console.log("LEG D BASKET REPLY:\n" + texts(recs));
+    check(texts(recs).includes("Thong Sandals - GH₵80") && texts(recs).includes("Double Clothes Rack - GH₵270"),
+      "leg D: 'Check basket' is read by the thinking and answered with the list", texts(recs));
   } finally {
     child.kill();
     fs.rmSync(dir, { recursive: true, force: true });

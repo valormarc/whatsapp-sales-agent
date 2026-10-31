@@ -419,6 +419,28 @@ func reaskFulfilStep(from string, s *Session) {
 // person. Cancel drops the pending sale cleanly; a question about
 // the sale itself is answered and the question held up again, so
 // drifting never kills a deal that was already agreed.
+// readPlace takes the place from her reply inside the
+// fulfilment walk. A place she stated in her own words
+// ("I am in Accra", from the stated extractor) stands as
+// she said it. A bare shaped word is a place only when
+// the thinking read her turn as an answer to the place
+// question: whether a word is a town or a greeting is a
+// judgement, not a shape, and completing a sale on the
+// wrong side of it printed "Hello" as a buyer's town on
+// her record. When the reading is present and reads
+// anything else, there is no place; with no reading to
+// be had, the shaped word stands as it always did.
+func readPlace(stated, msg string, reading stageReading) string {
+	if stated != "" {
+		return stated
+	}
+	loc := cleanPlace(msg)
+	if loc != "" && reading.Intent != "" && reading.Intent != stageIntentAnswer {
+		return ""
+	}
+	return loc
+}
+
 func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg, lower string) {
 	shopID := s.MerchantID
 	key := sessionKey(shopID, from)
@@ -480,7 +502,7 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		// question is held up again. A draft that cannot be
 		// verified is not sent; the step machine below then
 		// does what it can with her words, as before.
-		if reading.Reply != "" && voiceClean(reading.Reply) &&
+		if reading.Reply != "" && voiceClean(reading.Reply) && !productsStrung(reading.Reply) &&
 			figuresClean(reading.Reply, s.Product.ListPrice, s.AgreedPrice, merchant.DeliveryFee, s.AgreedPrice+merchant.DeliveryFee) {
 			whatsapp.SendText(from, reading.Reply)
 			reaskFulfilStep(from, s)
@@ -657,16 +679,10 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		// Whatever she answers is her place, read conservatively;
 		// no readable place means she declined, and the sale
 		// completes anyway: the question is asked once, never twice.
-		loc := extractStatedLocation(msg)
-		if loc == "" {
-			loc = cleanPlace(msg)
-		}
+		loc := readPlace(extractStatedLocation(msg), msg, reading)
 		complete(fulfilment{Mode: "arranged", Location: loc})
 	case "where":
-		loc := extractDeliveryPlace(msg)
-		if loc == "" {
-			loc = cleanPlace(msg)
-		}
+		loc := readPlace(extractDeliveryPlace(msg), msg, reading)
 		if loc == "" {
 			// A delivery with no place is not a delivery:
 			// the third audit found "to my house" settled
@@ -681,7 +697,7 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 	case "meetwhere":
 		place := extractMeetPlace(msg)
 		if place == "" {
-			place = cleanPlace(msg)
+			place = readPlace("", msg, reading)
 			// "the station" is how the place is said; keep the
 			// "the" cleanPlace dropped, as extractMeetPlace does.
 			if place != "" && strings.HasPrefix(lower, "the ") {
@@ -927,6 +943,21 @@ func rememberedPackageName(shopID, from string) string {
 	return name
 }
 
+// lastOrderNote is the message this buyer left for the
+// seller on her newest order at this shop that carried
+// one, read from the order book the way the remembered
+// package name is.
+func lastOrderNote(shopID, from string) string {
+	bestAt, note := "", ""
+	for _, o := range orders.Default.All() {
+		if o.MerchantID != shopID || o.From != from || o.Note == "" || o.CreatedAt < bestAt {
+			continue
+		}
+		bestAt, note = o.CreatedAt, o.Note
+	}
+	return note
+}
+
 // beginPackageName opens the name question of the details:
 // a collector she sends has already given the package its
 // name, so that question is skipped for her; everyone else
@@ -1166,7 +1197,15 @@ func handlePackageDetails(from string, s *Session, msg, lower string, reading st
 		sessions.put(key, s)
 		askPackageMessage(from, s)
 	case "pkgmessage":
-		if !isNoMessage(lower) {
+		// "Same" here is the same word it is at the name
+		// question: the message her last order carried,
+		// taken onto this one. Stored literally it put
+		// the word Same itself on the order as her
+		// message to the seller.
+		if remembered := lastOrderNote(s.MerchantID, from); remembered != "" &&
+			(lower == "same" || strings.HasPrefix(lower, "same ") || isClearYes(lower)) {
+			f.Note = remembered
+		} else if !isNoMessage(lower) {
 			if note := cleanNote(msg); note != "" {
 				f.Note = note
 			}
@@ -1308,7 +1347,7 @@ func composeOrderRecap(s *Session, f fulfilment, turn string) string {
 		lines = append(lines, line)
 	}
 	if f.Note != "" {
-		lines = append(lines, "Your message for the seller is on the order.")
+		lines = append(lines, "Your message for the seller: "+strings.TrimRight(flatLine(f.Note), ".")+".")
 	}
 	lines = append(lines, "Reply yes and I will send your payment link, or tell me what to change.")
 	return strings.Join(lines, "\n")

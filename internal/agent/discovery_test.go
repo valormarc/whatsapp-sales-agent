@@ -54,6 +54,8 @@ func stubDiscoveryModel(t *testing.T) {
 			content = `{"intent":"no_shop","reply":"No problem at all. What are you looking to buy? I will check every shop for it."}`
 		case strings.Contains(lower, "looking for a bag"):
 			content = `{"intent":"search","item":"bag","matches":[{"shop":"EFUA","product":"Handmade Beaded Bag"}]}`
+		case strings.Contains(lower, "anything beaded"):
+			content = `{"intent":"search","item":"beaded","matches":[{"shop":"EFUA","product":"Handmade Beaded Bag"},{"shop":"LUXE","product":"Beaded Sandals"}]}`
 		case strings.Contains(lower, "show me picture"):
 			content = `{"intent":"picture","matches":[{"shop":"EFUA","product":"Handmade Beaded Bag"}]}`
 		case strings.Contains(lower, "the elitebook"):

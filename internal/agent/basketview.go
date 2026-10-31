@@ -22,6 +22,7 @@ package agent
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
@@ -34,8 +35,41 @@ import (
 // word aimed at "my basket", a what-question over "in my
 // basket", the bare words on their own, or a membership
 // question carrying "in my basket". "Add to my basket"
-// names no viewing word and is not this ask.
+// names no viewing word and is not this ask. Every other
+// phrasing of the ask ("check basket") is the model's to
+// read: the buyer board names it and this view prints it
+// (see understand.go), because what counts as asking
+// after her basket is a judgement, not a word list.
 var basketViewRe = regexp.MustCompile(`\b(show|see|list|view|check)\b[^.?!]*\bmy basket\b|\bwhat\b[^.?!]*\bin my basket\b|^\s*my basket\s*[.!?]?\s*$|\bin my basket\b[^.?!]*\?`)
+
+// basketFactLine states her basket's shape for a reading:
+// how much stands settled and how much is only picked. The
+// names stay out of it; the reading only needs to know the
+// basket is a live topic in this conversation.
+func basketFactLine(s *Session) string {
+	settled := len(s.Basket)
+	if s.Stage == "fulfilment" || s.Stage == "agreed" || s.AgreedPrice > 0 {
+		if s.Product != nil {
+			settled++
+		}
+	}
+	picked := 0
+	if s.ShelfSettling && s.Product != nil {
+		picked++
+	}
+	picked += len(s.ShelfPicks)
+	if settled == 0 && picked == 0 {
+		return ""
+	}
+	return "In her basket so far: " + countPhrase(settled, "settled item") + ", " + countPhrase(picked, "picked item") + "."
+}
+
+func countPhrase(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return strconv.Itoa(n) + " " + noun + "s"
+}
 
 // serveBasketView answers the basket ask from the session
 // and reports whether it did. The ask is matched by the

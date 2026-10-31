@@ -16,7 +16,6 @@ import (
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/model"
-	"github.com/valormarc/hackathon-agent/internal/money"
 )
 
 // clarifyLine drafts one short line asking the buyer what
@@ -31,24 +30,21 @@ func clarifyLine(from string, merchant *catalogue.Merchant, said string) string 
 		return ""
 	}
 	products := catalogue.ListProducts(merchant.ID)
-	var facts []string
 	var prices []float64
 	for _, p := range products {
 		if p.Stock <= 0 {
 			continue
 		}
-		facts = append(facts, p.Name+" at "+money.GHS(p.ListPrice))
 		prices = append(prices, p.ListPrice)
 	}
-	if len(facts) == 0 {
+	if len(prices) == 0 {
 		return ""
 	}
 	sys := "You are Stall, the assistant selling for " + merchant.Name + " inside a chat. " +
 		"The buyer just wrote something that does not clearly ask for anything on the shelf. " +
 		"Reply with ONE short, polite sentence asking what they are looking for. " +
-		"You may name up to two of the shop's goods as examples, with their prices exactly as given. " +
-		"Use no other figures. Plain, correct English, no greeting, no exclamation marks.\n\n" +
-		"On the shelf: " + strings.Join(facts, "; ") + "."
+		"Do not name any of the shop's goods or any price: goods are listed by the platform itself when they are asked for, never strung into a sentence as examples. " +
+		"Plain, correct English, no greeting, no exclamation marks."
 	reply := model.Chat([]model.Message{{Role: "user", Content: said}}, model.Options{System: &sys, Kind: model.KindDraft, Turn: turnTokenFor(from)})
 	if reply == nil {
 		return ""
@@ -59,6 +55,15 @@ func clarifyLine(from string, merchant *catalogue.Merchant, said string) string 
 	}
 	if !figuresClean(line, prices...) {
 		return ""
+	}
+	// The clarifier only asks; a draft that names a good
+	// anyway is a list pretending to be talk, and the
+	// caller's plain template stands in for it.
+	lowerLine := strings.ToLower(line)
+	for _, p := range products {
+		if strings.Contains(lowerLine, strings.ToLower(p.Name)) {
+			return ""
+		}
 	}
 	return line
 }

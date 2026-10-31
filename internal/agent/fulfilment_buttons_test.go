@@ -74,7 +74,7 @@ func TestTapDeliveryThenDetailsThenSale(t *testing.T) {
 	c.say(t, buyer, "yes")
 	got := strings.Join(c.replies(t, buyer), "\n")
 	if !strings.Contains(got, "The package will carry the name Akosua Mensah.") ||
-		!strings.Contains(got, "Your message for the seller is on the order.") ||
+		!strings.Contains(got, "Your message for the seller: Please call when the rider leaves.") ||
 		!strings.Contains(got, "Pay here") {
 		t.Fatalf("completion = %q", got)
 	}

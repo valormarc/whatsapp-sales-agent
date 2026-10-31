@@ -136,13 +136,13 @@ func inHandGrounds(merchant *catalogue.Merchant, s *Session, price float64) stri
 	case flaggedNumber(owner):
 		return merchant.Name + " has strikes on its record here, so on every sale the shop confirms the goods are in hand before payment."
 	case s.Product != nil && s.Product.Stock == 1:
-		return "This is the only one the shop has, so the shop confirms it is in hand before you pay."
+		return "The " + s.Product.Name + " is the only one the shop has, so the shop confirms it is in hand before you pay."
 	case basketGoods(s)+price >= expensiveGoods:
 		return "For an order of this size, the shop confirms the goods are in hand before you pay."
 	}
 	for _, it := range s.Basket {
 		if it.Product.Stock == 1 {
-			return "One of these is the only one the shop has, so the shop confirms the goods are in hand before you pay."
+			return "The " + it.Product.Name + " is the only one the shop has, so the shop confirms the goods are in hand before you pay."
 		}
 	}
 	return ""
@@ -166,9 +166,39 @@ func merchantSessionFor(merchantID, phone string) *Session {
 	return s
 }
 
+// inHandFocus names the item the gate turns on and the
+// figure that belongs to IT: the front product when its
+// last unit gates the sale, at its agreed share; a basket
+// item when its last unit does; and the whole order only
+// when the ground is the order itself (its size, or the
+// shop's record). Asking the seller to confirm one named
+// item at the whole order's total — she was asked about
+// heels at GH₵195 that were hers for GH₵116 — sends her
+// checking the wrong figure.
+func inHandFocus(merchant *catalogue.Merchant, s *Session) (string, float64) {
+	if merchant != nil && !flaggedNumber(merchant.OwnerWhatsApp) {
+		if s.Product != nil && s.Product.Stock == 1 && s.AgreedPrice > 0 {
+			return s.itemLabel(), s.AgreedPrice
+		}
+		if basketGoods(s)+s.AgreedPrice < expensiveGoods {
+			for _, it := range s.Basket {
+				if it.Product != nil && it.Product.Stock == 1 {
+					label := it.Product.Name
+					if it.Size != "" {
+						label += ", size " + it.Size
+					}
+					return label, it.AgreedPrice
+				}
+			}
+		}
+	}
+	return s.itemLabel(), basketGoods(s) + s.AgreedPrice
+}
+
 func beginInHandWait(from string, s *Session, merchant *catalogue.Merchant, f fulfilment, grounds string) {
 	shopID := s.MerchantID
-	openInHand(inHandRequest{ShopID: shopID, Buyer: from, Item: s.itemLabel(), Price: basketGoods(s) + s.AgreedPrice})
+	focusItem, focusPrice := inHandFocus(merchant, s)
+	openInHand(inHandRequest{ShopID: shopID, Buyer: from, Item: focusItem, Price: focusPrice})
 	s.PendingFulfil = f
 	s.FulfilStep = "inhandwait"
 	sessions.put(sessionKey(shopID, from), s)
@@ -181,7 +211,7 @@ func beginInHandWait(from string, s *Session, merchant *catalogue.Merchant, f fu
 		// merchant's turn lock, the reverse of the usual
 		// direction and the same discipline.
 		withCrossLock(from, phone, func() {
-			askYesNo(phone, merchantSessionFor(merchant.ID, phone), "inhand", from, "One moment before your buyer pays: she is buying the "+s.itemLabel()+" ("+money.GHS(basketGoods(s)+s.AgreedPrice)+").\nDo you have it in hand now?", "Yes, in hand", "Not in hand")
+			askYesNo(phone, merchantSessionFor(merchant.ID, phone), "inhand", from, "One moment before your buyer pays: she is buying the "+focusItem+" ("+money.GHS(focusPrice)+").\nDo you have it in hand now?", "Yes, in hand", "Not in hand")
 		})
 	}
 }
@@ -191,13 +221,14 @@ func beginInHandWait(from string, s *Session, merchant *catalogue.Merchant, f fu
 // the sale's settled fulfilment still parked on her
 // session.
 func reopenInHand(from string, s *Session, merchant *catalogue.Merchant) {
-	openInHand(inHandRequest{ShopID: s.MerchantID, Buyer: from, Item: s.itemLabel(), Price: basketGoods(s) + s.AgreedPrice})
+	focusItem, focusPrice := inHandFocus(merchant, s)
+	openInHand(inHandRequest{ShopID: s.MerchantID, Buyer: from, Item: focusItem, Price: focusPrice})
 	s.FulfilStep = "inhandwait"
 	sessions.put(sessionKey(s.MerchantID, from), s)
-	whatsapp.SendText(from, "I have asked "+merchant.Name+" again to confirm the "+s.itemLabel()+" is in hand.")
+	whatsapp.SendText(from, "I have asked "+merchant.Name+" again to confirm the "+focusItem+" is in hand.")
 	if phone := merchantNotifyPhone(merchant); phone != "" {
 		withCrossLock(from, phone, func() {
-			askYesNo(phone, merchantSessionFor(merchant.ID, phone), "inhand", from, "Your buyer is still waiting: do you have the "+s.itemLabel()+" ("+money.GHS(basketGoods(s)+s.AgreedPrice)+") in hand now?", "Yes, in hand", "Not in hand")
+			askYesNo(phone, merchantSessionFor(merchant.ID, phone), "inhand", from, "Your buyer is still waiting: do you have the "+focusItem+" ("+money.GHS(focusPrice)+") in hand now?", "Yes, in hand", "Not in hand")
 		})
 	}
 }
