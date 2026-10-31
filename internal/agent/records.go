@@ -110,6 +110,25 @@ func totalRecord(items []orders.OrderItem, deliveryFee, chargedFee float64, mode
 	return strings.Join(lines, "\n")
 }
 
+// orderItemLines lists an order's goods the way a receipt
+// does: one line per item, the name and its price, the size
+// folded into the name when she chose one. Every surface
+// that names several items with their prices prints these
+// lines instead of stringing the items into a sentence, so
+// a buyer scans the list instead of reading through prose
+// to find what is in her deal.
+func orderItemLines(items []orders.OrderItem) []string {
+	lines := make([]string, 0, len(items))
+	for _, it := range items {
+		name := it.Name
+		if it.Size != "" {
+			name += " (size " + it.Size + ")"
+		}
+		lines = append(lines, name+": "+money.GHS(it.Price))
+	}
+	return lines
+}
+
 // orderItemLabel names an order's goods the way the buyer
 // thinks of them: a measured order by its cut, a basket by
 // its joined label (already the order's ProductName), a

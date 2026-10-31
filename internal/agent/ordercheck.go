@@ -80,7 +80,13 @@ func orderReadback(merchant *catalogue.Merchant, o *orders.Order) string {
 	}
 	var pieces []string
 	if len(o.Items) > 1 {
-		pieces = append(pieces, "Order "+o.Reference+": "+basketBreakdown(o.Items)+". That is "+money.GHS(o.Price)+" in all.")
+		// Several items are listed, one line each at their
+		// prices, under the reference, with the total at
+		// the foot: a receipt, not a sentence.
+		block := []string{"Order " + o.Reference + ":"}
+		block = append(block, orderItemLines(o.Items)...)
+		block = append(block, "That is "+money.GHS(o.Price)+" in all.")
+		pieces = append(pieces, strings.Join(block, "\n"))
 	} else {
 		pieces = append(pieces, "Order "+o.Reference+": "+item+" at "+money.GHS(o.Price)+".")
 	}

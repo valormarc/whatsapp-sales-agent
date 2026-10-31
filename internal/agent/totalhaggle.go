@@ -36,6 +36,7 @@ import (
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/money"
+	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
@@ -157,7 +158,17 @@ func startTotalHaggle(from string, s *Session, merchant *catalogue.Merchant, han
 	ns.LastViewed = s.LastViewed
 	ns.TotalHand = hand
 	sessions.put(sessionKey(shopID, from), ns)
-	whatsapp.SendText(from, "For all of them together, then. "+handLabel(hand)+" come to "+money.GHS(totalList)+" in all.")
+	// The hand is listed, not sentenced: one line per item
+	// at its shelf price, then the total, so she scans the
+	// deal instead of reading it out of a sentence.
+	items := make([]orders.OrderItem, 0, len(hand))
+	for _, p := range hand {
+		items = append(items, orders.OrderItem{Name: p.Name, Price: p.ListPrice})
+	}
+	lines := []string{"For all of them together, then:"}
+	lines = append(lines, orderItemLines(items)...)
+	lines = append(lines, "That is "+money.GHS(totalList)+" in all.")
+	whatsapp.SendText(from, strings.Join(lines, "\n"))
 	processOffer(from, ns, merchant, offer, msg)
 }
 
@@ -355,18 +366,20 @@ func serveSettlingHandOffer(from string, s *Session, merchant *catalogue.Merchan
 	// one question and hold the figure meanwhile.
 	s.PendingHandOffer = offer
 	sessions.put(sessionKey(shopID, from), s)
-	settled := basketGoods(s)
-	parked := make([]catalogue.Product, 0, len(s.Basket))
+	// The settled items are listed, one line each at the
+	// price they settled at, and the one question follows:
+	// she scans what stands instead of reading it out of a
+	// sentence.
+	settledItems := make([]orders.OrderItem, 0, len(s.Basket))
 	for _, b := range s.Basket {
 		if b.Product != nil {
-			parked = append(parked, *b.Product)
+			settledItems = append(settledItems, orders.OrderItem{Name: b.Product.Name, Price: b.AgreedPrice, Size: b.Size})
 		}
 	}
-	line := "The " + handLabel(parked) + " is already settled at " + money.GHS(settled) + "."
-	if len(parked) > 1 {
-		line = "The " + handLabel(parked) + " are already settled at " + money.GHS(settled) + " in all."
-	}
-	whatsapp.SendText(from, line+" Is the "+money.GHS(offer)+" for everything, those included, or for the rest of them?")
+	lines := []string{"These are already settled:"}
+	lines = append(lines, orderItemLines(settledItems)...)
+	lines = append(lines, "Is the "+money.GHS(offer)+" for everything, those included, or for the rest of them?")
+	whatsapp.SendText(from, strings.Join(lines, "\n"))
 	return true
 }
 

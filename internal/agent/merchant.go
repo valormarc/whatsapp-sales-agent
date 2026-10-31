@@ -1305,11 +1305,11 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			}
 			lines = append(lines, line)
 			if len(merchant.DeliveryAreas) > 0 {
-				parts := make([]string, 0, len(merchant.DeliveryAreas))
+				lines = append(lines, "Area fees:")
 				for _, a := range merchant.DeliveryAreas {
-					parts = append(parts, a.Area+" "+money.GHS(a.Fee))
+					lines = append(lines, a.Area+": "+money.GHS(a.Fee))
 				}
-				lines = append(lines, "Area fees: "+strings.Join(parts, ", ")+". Everywhere else pays the standard fee.")
+				lines = append(lines, "Everywhere else pays the standard fee.")
 			}
 			if deliveryPaidToOf(merchant) == "merchant" {
 				lines = append(lines, "The delivery money comes to you, inside the total your buyers pay here.")

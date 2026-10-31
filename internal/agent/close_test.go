@@ -26,7 +26,7 @@ func TestRecapConfirmsAndCorrectionsGoBack(t *testing.T) {
 
 	// The recap reads the order back and asks for her word.
 	if got := c.last(t, buyer); !strings.Contains(got, "Please confirm your order") ||
-		!strings.Contains(got, "Handmade Beaded Bag for GH₵850") ||
+		!strings.Contains(got, "Handmade Beaded Bag: GH₵850") ||
 		!strings.Contains(got, "Delivery to Osu") {
 		t.Fatalf("recap = %q", got)
 	}

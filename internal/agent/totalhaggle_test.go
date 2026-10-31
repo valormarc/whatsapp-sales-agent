@@ -75,14 +75,14 @@ func TestTotalOfferSettlesTheWholeHand(t *testing.T) {
 	if !strings.Contains(got, "For all of them together") || !strings.Contains(got, "GH₵550") {
 		t.Fatalf("the offer should be taken on the whole hand at its 550 total, got %q", got)
 	}
-	if !strings.Contains(got, "yours for") {
+	if !strings.Contains(got, "That makes your order") {
 		figs := figuresIn(got)
 		if len(figs) == 0 {
 			t.Fatalf("the counter should name a figure, got %q", got)
 		}
 		c.say(t, buyer, moneyFigure(figs[len(figs)-1]))
 		got = strings.Join(c.replies(t, buyer), "\n")
-		if !strings.Contains(got, "yours for") {
+		if !strings.Contains(got, "That makes your order") {
 			t.Fatalf("meeting the counter should agree the total, got %q", got)
 		}
 	}

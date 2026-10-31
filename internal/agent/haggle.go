@@ -156,7 +156,14 @@ func negotiateStep(from string, s *Session, offer float64, merchant *catalogue.M
 	if s.Qty > 0 {
 		promptProduct.Name = s.itemLabel()
 	}
-	userContent := "The customer offers " + money.GHS(offer) + " for the " + promptProduct.Name + ". Decide the next step and answer with ONE JSON object only, no other text: " +
+	handNote := ""
+	if len(s.TotalHand) > 0 {
+		// A whole hand is haggled as one lot: the drafting
+		// speaks of all of them together and never strings
+		// the item names into the sentence.
+		handNote = " The product here is a whole hand of items being bought together: in the message, speak of them as 'all of them' and never list the item names."
+	}
+	userContent := "The customer offers " + money.GHS(offer) + " for the " + promptProduct.Name + "." + handNote + " Decide the next step and answer with ONE JSON object only, no other text: " +
 		`{"action":"accept"|"counter"|"final","price":<number>,"message":"<the exact short WhatsApp message to send the customer>"}. ` +
 		`"accept" settles at the customer's offer. "counter" names your new price. "final" is your last price. ` +
 		"Frame the message as movement from the list price. Never propose below your private stop."
@@ -199,6 +206,20 @@ func openHaggle(shopID string, merchant *catalogue.Merchant, product *catalogue.
 		Floor:      ctx.Floor,
 		StepScale:  ctx.StepScale * variation,
 	}
+}
+
+// counterFrame frames a counter figure. A whole hand is
+// spoken of as all of them together, the items themselves
+// having been listed when the haggle opened; a single item
+// is framed on its own name.
+func counterFrame(s *Session, listPrice, price float64) string {
+	if len(s.TotalHand) > 0 {
+		if price >= listPrice {
+			return "I can do " + money.GHS(price) + " for all of them."
+		}
+		return "From " + money.GHS(listPrice) + ", I have come down to " + money.GHS(price) + " for all of them."
+	}
+	return persona.FrameCounter(listPrice, price, s.itemLabel())
 }
 
 // correctOverOffer speaks the correction when a buyer's
@@ -276,7 +297,11 @@ func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer f
 		// piece: the total with delivery, and the link ready now.
 		// A bare "that is my final price" is exactly where real
 		// chats end in silence.
-		stand := "I have come down as far as I can today. My last price for the " + p.Name + " is " + money.GHS(s.Ask) + ". Say the word and I will send the payment link, no pressure at all."
+		standFor := "for the " + p.Name
+		if len(s.TotalHand) > 0 {
+			standFor = "for all of them"
+		}
+		stand := "I have come down as far as I can today. My last price " + standFor + " is " + money.GHS(s.Ask) + ". Say the word and I will send the payment link, no pressure at all."
 		if fee := deliveryFeeOf(merchant); fee > 0 {
 			next := "With delivery, the total is " + money.GHS(s.Ask+fee) + ". I can send the payment link now, whenever you say."
 			if deliveryPaidToOf(merchant) == "carrier" {
@@ -292,7 +317,7 @@ func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer f
 	if result.Message != nil {
 		text = *result.Message
 	} else {
-		text = persona.FrameCounter(p.ListPrice, result.Price, s.itemLabel()) + " What do you say?"
+		text = counterFrame(s, p.ListPrice, result.Price) + " What do you say?"
 	}
 	s.History = lastN(append(append([]model.Message{}, s.History...), model.Message{Role: "assistant", Content: text}), 12)
 	sessions.put(key, s)

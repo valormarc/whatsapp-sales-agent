@@ -64,22 +64,6 @@ func itemsLabel(items []orders.OrderItem) string {
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
-// basketBreakdown is the buyer's one-line account of a
-// multi-item order so far: every line with its price and
-// its size when she chose one.
-func basketBreakdown(items []orders.OrderItem) string {
-	parts := make([]string, 0, len(items))
-	for _, it := range items {
-		part := it.Name
-		if it.Size != "" {
-			part += " (size " + it.Size + ")"
-		}
-		part += " " + money.GHS(it.Price)
-		parts = append(parts, part)
-	}
-	return strings.Join(parts, ", ")
-}
-
 // basketNames joins the parked items' names for a spoken
 // line: "Ankle Strap Heels and Leather Bag".
 func basketNames(s *Session) string {

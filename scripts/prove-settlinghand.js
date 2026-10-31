@@ -174,7 +174,7 @@ function readOrders() {
     check(texts(recs).includes("For all of them together") && texts(recs).includes("GH₵350"),
       "leg 1b: the offer opens the haggle on the whole 350 hand", texts(recs));
 
-    if (!texts(recs).includes("yours for")) {
+    if (!texts(recs).includes("That makes your order")) {
       const figs = figures(texts(recs)).filter((f) => f >= 310 && f < 350);
       const counter = figs[figs.length - 1];
       check(counter !== undefined, "leg 2 setup: the counter names a figure inside the hand's bounds", texts(recs));
@@ -185,7 +185,7 @@ function readOrders() {
     }
     const mA = texts(recs).match(/That makes your order GH₵([\d,]+(?:\.\d+)?) in all/);
     const totalA = mA ? parseFloat(mA[1].replace(/,/g, "")) : NaN;
-    check(texts(recs).includes("yours for") && totalA >= 310 && totalA <= 350,
+    check(texts(recs).includes("Deal. That makes your order") && totalA >= 310 && totalA <= 350,
       "leg 2a: the talk agrees one total between the summed last prices (310) and the hand (350)", texts(recs));
     await finishOrder(BUYER_A);
     let all = readOrders().filter((o) => o.from === BUYER_A);

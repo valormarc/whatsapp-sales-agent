@@ -5,12 +5,10 @@ package agent
 
 import (
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
-	"github.com/valormarc/hackathon-agent/internal/model"
 	"github.com/valormarc/hackathon-agent/internal/money"
 	"github.com/valormarc/hackathon-agent/internal/orders"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -137,10 +135,16 @@ func beginFulfilment(from string, s *Session, price float64) {
 	// its own share — and from there the ordinary road
 	// runs, one fulfilment for the whole order, its deal
 	// line naming the total she agreed.
+	var handDeal []orders.OrderItem
+	handTotal := 0.0
 	if len(s.TotalHand) > 0 {
 		hand := s.TotalHand
 		s.TotalHand = nil
 		prices := apportionTotal(hand, price)
+		for i, p := range hand {
+			handDeal = append(handDeal, orders.OrderItem{Name: p.Name, Price: prices[i]})
+			handTotal += prices[i]
+		}
 		for i := 0; i+1 < len(hand); i++ {
 			p := hand[i]
 			s.Basket = append(s.Basket, BasketItem{Product: &p, AgreedPrice: prices[i]})
@@ -200,7 +204,15 @@ func beginFulfilment(from string, s *Session, price float64) {
 	}
 
 	deal := "Deal. " + s.itemLabel() + " is yours for " + money.GHS(price) + "."
-	if len(s.Basket) > 0 {
+	if handDeal != nil {
+		// A whole hand agreed at one total: the deal is
+		// printed as the receipt reads, every item at the
+		// share the total gave it, then the total itself,
+		// so she sees what each item came to instead of
+		// one item named at a share she cannot place.
+		lines := append(orderItemLines(handDeal), "Deal. That makes your order "+money.GHS(handTotal)+" in all.")
+		deal = strings.Join(lines, "\n")
+	} else if len(s.Basket) > 0 {
 		deal += " That makes your order " + money.GHS(basketGoods(s)+price) + " in all."
 	}
 
@@ -1236,15 +1248,12 @@ var (
 )
 
 // sendOrderRecap reads the whole order back to the buyer
-// before the payment link exists, in the agent's own words:
-// the seller's format is a shape (the item and its price, the
-// name for the package, how the goods reach her and where,
-// the size when the product carries one, then the ask to
-// confirm), never a script. The model drafts it from the
-// settled facts and the draft is checked the way a price is
-// checked: the item and the exact agreed figure must be in
-// it, and the voice laws hold. Without a sound draft, the
-// facts are read back plainly.
+// before the payment link exists. The recap states money
+// as a settled fact, so it is a record on the fixed paper
+// (see composeOrderRecap): the items listed one per line,
+// the name for the package, how the goods reach her and
+// where, the size when the product carries one, then the
+// ask to confirm.
 func sendOrderRecap(from string, s *Session, f fulfilment) {
 	// The recap carries its answer on buttons, the way the
 	// fulfilment choice does: Yes closes, Change opens the
@@ -1258,107 +1267,24 @@ func sendOrderRecap(from string, s *Session, f fulfilment) {
 }
 
 func composeOrderRecap(s *Session, f fulfilment, turn string) string {
-	price := money.GHS(s.AgreedPrice)
-	multi := len(s.Basket) > 0
-	if model.Enabled() {
-		var b strings.Builder
-		for _, it := range s.Basket {
-			b.WriteString("Also in this order: " + it.Product.Name + "\n")
-			b.WriteString("Its agreed price: " + money.GHS(it.AgreedPrice) + "\n")
-			if it.Size != "" {
-				b.WriteString("Its size: " + it.Size + "\n")
-			}
-		}
-		b.WriteString("Item: " + s.Product.Name + "\n")
-		b.WriteString("Agreed price: " + price + "\n")
-		if multi {
-			b.WriteString("The items come to " + money.GHS(basketGoods(s)+s.AgreedPrice) + " in all.\n")
-		}
-		if f.Size != "" {
-			b.WriteString("Size: " + f.Size + "\n")
-		} else if m := sizePhraseRe.FindStringSubmatch(s.Product.Description); m != nil {
-			b.WriteString("Size: " + strings.ToUpper(m[1]) + "\n")
-		}
-		if f.PackageName != "" {
-			b.WriteString("Name for the package: " + f.PackageName + "\n")
-		}
-		switch f.Mode {
-		case "delivery":
-			b.WriteString("Delivery to: " + f.Location + "\n")
-		case "pickup":
-			if f.Collector != "" {
-				b.WriteString("Collection: " + f.Collector + " collects it from the shop\n")
-			} else {
-				b.WriteString("Collection: she collects it from the shop herself\n")
-			}
-		case "meet":
-			b.WriteString("Meeting place: " + f.Location + "\n")
-		default:
-			b.WriteString("Delivery: arranged with the seller\n")
-			if f.Location != "" {
-				b.WriteString("Place she gave: " + f.Location + "\n")
-			}
-		}
-		if f.Note != "" {
-			b.WriteString("Her message for the seller is on the order.\n")
-		}
-		needFigure := price
-		if multi {
-			// The figure the draft must carry is the order's
-			// whole, not one line of it.
-			needFigure = money.GHS(basketGoods(s) + s.AgreedPrice)
-		}
-		// Presence is not verification: the second audit
-		// showed a recap carrying the agreed figure AND an
-		// invented delivery figure passing on the Contains
-		// checks alone, at the very step where the buyer
-		// confirms before money moves. Every figure in the
-		// draft — digits and words — must be one of this
-		// order's own figures.
-		// Money and non-money values are verified in
-		// separate pools (see recapFiguresClean): the
-		// third audit showed the pooled form licensing
-		// an invented fee at a size's value.
-		moneyAllowed := []float64{s.AgreedPrice, basketGoods(s) + s.AgreedPrice}
-		for _, it := range s.Basket {
-			moneyAllowed = append(moneyAllowed, it.AgreedPrice)
-		}
-		var bareAllowed []float64
-		for _, it := range s.Basket {
-			if it.Qty > 0 {
-				bareAllowed = append(bareAllowed, it.Qty)
-			}
-		}
-		if s.Qty > 0 {
-			bareAllowed = append(bareAllowed, s.Qty)
-		}
-		if v, err := strconv.ParseFloat(strings.TrimSpace(f.Size), 64); err == nil {
-			bareAllowed = append(bareAllowed, v)
-		}
-		if draft := draftWithBudget(turn, recapCharter, "The settled facts of the order:\n"+b.String()+"\nWrite the read-back now, following the format, in your own words."); draft != "" &&
-			strings.Contains(draft, s.Product.Name) && strings.Contains(draft, needFigure) && voiceClean(draft) && recapFiguresClean(draft, moneyAllowed, bareAllowed) {
-			return draft
-		}
-	}
-	// The bare factual read-back.
+	// The recap is a record, printed on the fixed paper
+	// like every message that states money as a settled
+	// fact: the items one per line at their agreed prices,
+	// the total when there is more than one, then how the
+	// goods reach her and the name on the package, each on
+	// its own line, and the ask to confirm. It was drafted
+	// prose once, which strung the items into one sentence
+	// ("your order is X for GH₵250 and Y for GH₵80");
+	// a listing is scanned, not read out of a sentence.
 	lines := []string{"Please confirm your order:"}
-	if multi {
-		items := orderItemsOf(s, f, s.AgreedPrice)
-		for _, it := range items {
-			line := it.Name + " for " + money.GHS(it.Price)
-			if it.Size != "" {
-				line += ", size " + it.Size
-			}
-			lines = append(lines, line+".")
-		}
+	items := orderItemsOf(s, f, s.AgreedPrice)
+	lines = append(lines, orderItemLines(items)...)
+	if len(s.Basket) > 0 {
 		lines = append(lines, "Your items come to "+money.GHS(basketGoods(s)+s.AgreedPrice)+" in all.")
-	} else {
-		lines = append(lines, s.Product.Name+" for "+price+".")
-		if f.Size != "" {
-			lines = append(lines, "Size: "+f.Size+".")
-		} else if m := sizePhraseRe.FindStringSubmatch(s.Product.Description); m != nil {
-			lines = append(lines, "Size: "+strings.ToUpper(m[1])+".")
-		}
+	} else if f.Size != "" {
+		lines = append(lines, "Size: "+f.Size+".")
+	} else if m := sizePhraseRe.FindStringSubmatch(s.Product.Description); m != nil {
+		lines = append(lines, "Size: "+strings.ToUpper(m[1])+".")
 	}
 	if f.PackageName != "" {
 		lines = append(lines, "The package will carry the name "+f.PackageName+".")
@@ -1387,20 +1313,6 @@ func composeOrderRecap(s *Session, f fulfilment, turn string) string {
 	lines = append(lines, "Reply yes and I will send your payment link, or tell me what to change.")
 	return strings.Join(lines, "\n")
 }
-
-// recapCharter is the seller's format for the moment before
-// money moves, stated as a shape to follow in the agent's own
-// words: nothing here is wording to recite.
-const recapCharter = `You are the sales agent for a small shop on WhatsApp. A buyer has agreed a price and given her fulfilment details. Before any payment link is sent, read the order back to her so she can confirm it, in your own words, following this format:
-
-- Name the item and the exact agreed price.
-- State the size, when the facts give one.
-- State the name the package will carry, when the facts give one.
-- State how the goods reach her: the delivery place, the meeting place, or who collects, exactly as the facts give it.
-- Note that her message for the seller is on the order, when the facts say so.
-- Close by asking her to confirm, or to say what should change, before the payment link is sent.
-
-Rules: use only the facts given; invent nothing and promise nothing about times or arrangements. Plain correct English, complete sentences, no titles for anyone, no Pidgin. The item name and the price must appear exactly as given.`
 
 // cleanPackageName reads the name for the package out of a short
 // answer: one to five plain words, letters with the marks real
