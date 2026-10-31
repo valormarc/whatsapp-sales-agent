@@ -157,7 +157,17 @@ func orderItemLabel(o *orders.Order) string {
 // agent's own read-back, the unpaid watch — because the
 // facts it prints are the order's own.
 func paymentConfirmedRecord(o *orders.Order) string {
-	lines := []string{"Payment confirmed", "Item: " + orderItemLabel(o), "Amount: " + money.GHS(o.Charged())}
+	lines := []string{"Payment confirmed"}
+	if len(o.Items) > 1 {
+		// Several items are listed, one per line at their
+		// prices, the way the total record listed them:
+		// a receipt names its goods line by line, never
+		// by a joined label.
+		lines = append(lines, orderItemLines(o.Items)...)
+	} else {
+		lines = append(lines, "Item: "+orderItemLabel(o))
+	}
+	lines = append(lines, "Amount: "+money.GHS(o.Charged()))
 	switch o.Fulfilment {
 	case "delivery":
 		if o.Location != "" {

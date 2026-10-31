@@ -339,7 +339,12 @@ func presentBurstBatch(from string, s *Session) {
 	if len(s.BurstBatch) == 0 {
 		s.BurstAwaiting = false
 		if len(excluded) > 0 {
-			whatsapp.SendText(from, "The rest of your photos are already on your shelf: "+strings.Join(excluded, ", ")+". Nothing new to add.")
+			// The ones already on her shelf are listed, one
+			// per line, not strung into the sentence.
+			lines := []string{"The rest of your photos are already on your shelf:"}
+			lines = append(lines, excluded...)
+			lines = append(lines, "Nothing new to add.")
+			whatsapp.SendText(from, strings.Join(lines, "\n"))
 		}
 		if len(s.BurstHeld) > 0 {
 			openHeldBurstItem(from, s)

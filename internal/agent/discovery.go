@@ -777,17 +777,23 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 			presentSingleDiscoveryMatch(from, &matches[0].Shop, &matches[0].Product)
 			return true
 		}
+		// Each shop's matches are listed under the shop,
+		// one product per line at its price, never strung
+		// along one line: she scans the results the way
+		// she scans a shelf.
 		var lines []string
-		byShop := map[string][]string{}
+		byShop := map[string][]orders.OrderItem{}
 		var order []string
 		for _, v := range matches {
 			if _, ok := byShop[v.Shop.ShopCode]; !ok {
 				order = append(order, v.Shop.ShopCode)
 			}
-			byShop[v.Shop.ShopCode] = append(byShop[v.Shop.ShopCode], v.Product.Name+" - "+money.GHS(v.Product.ListPrice))
+			byShop[v.Shop.ShopCode] = append(byShop[v.Shop.ShopCode], orders.OrderItem{Name: v.Product.Name, Price: v.Product.ListPrice})
 		}
 		for _, code := range order {
-			lines = append(lines, code+" has: "+strings.Join(byShop[code], " | "))
+			block := []string{code + " has:"}
+			block = append(block, orderItemLines(byShop[code])...)
+			lines = append(lines, strings.Join(block, "\n"))
 		}
 		lines = append(lines, "Which one do you want to look at?")
 		sendPieces(from, lines...)
@@ -816,14 +822,17 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 			if len(products) == 0 {
 				continue
 			}
-			names := make([]string, 0, 3)
+			// The directory lists, one product per line
+			// under the shop's heading, never a row of
+			// names strung along one line.
+			block := []string{m.Name + " (SHOP-" + m.ShopCode + "):"}
 			for i, p := range products {
 				if i >= 3 {
 					break
 				}
-				names = append(names, p.Name)
+				block = append(block, p.Name)
 			}
-			lines = append(lines, m.Name+" (SHOP-"+m.ShopCode+"): "+strings.Join(names, ", "))
+			lines = append(lines, strings.Join(block, "\n"))
 		}
 		if len(lines) == 0 {
 			return false
@@ -869,7 +878,9 @@ func discoveryTaste() (string, []ShownProduct) {
 	if len(bits) == 0 {
 		return "", nil
 	}
-	return "Here is some of what the shops have: " + strings.Join(bits, "; ") + ". What else are you looking for?", shown
+	// The taste is a list, not a sentence: one offering
+	// per line under its heading.
+	return "Here is some of what the shops have:\n" + strings.Join(bits, "\n") + "\nWhat else are you looking for?", shown
 }
 
 // discoveryNet is the no-model net for the unbound buyer: a

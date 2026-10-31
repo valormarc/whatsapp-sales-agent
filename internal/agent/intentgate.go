@@ -127,11 +127,14 @@ func thinkStageIntentQ(from string, s *Session, merchant *catalogue.Merchant, ms
 		b.WriteString("Also on this shop's shelf: " + shelf + ".\n")
 	}
 	if len(s.Basket) > 0 {
-		var names []string
+		// Her agreed items reach the reading as a list,
+		// one per line at their prices, the shape they
+		// are answered in: facts handed over strung in a
+		// sentence come back strung in a sentence.
+		b.WriteString("She already has these agreed in this same order:\n")
 		for _, it := range s.Basket {
-			names = append(names, it.Product.Name)
+			b.WriteString(it.Product.Name + ": " + money.GHS(it.AgreedPrice) + "\n")
 		}
-		b.WriteString("She already has these agreed in this same order: " + strings.Join(names, ", ") + ".\n")
 	}
 	b.WriteString("The open question she was just asked: \"" + question + "\"\n")
 	if extra != "" {

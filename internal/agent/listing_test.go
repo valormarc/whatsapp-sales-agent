@@ -105,6 +105,62 @@ func TestBasketViewEmptyBasket(t *testing.T) {
 	}
 }
 
+func TestDiscoverySearchResultsListedByShop(t *testing.T) {
+	dir := setupChat(t, "233265993567", discoveryCatalogue)
+	c := &chat{dir: dir}
+	buyer := "233550009607"
+
+	acted := inTurn(buyer, func() bool {
+		return actOnDiscovery(buyer, "beaded", &discoveryUnderstanding{
+			Intent: "search", Item: "beaded",
+			Matches: []discoveryMatch{
+				{Shop: "LUXE", Product: "Beaded Sandals"},
+				{Shop: "LUXE", Product: "HP EliteBook 1030 G8 x360"},
+				{Shop: "EFUA", Product: "Handmade Beaded Bag"},
+			},
+		})
+	})
+	if !acted {
+		t.Fatalf("the search should be served")
+	}
+	got := strings.Join(c.replies(t, buyer), "\n")
+	if !strings.Contains(got, "LUXE has:\nBeaded Sandals: GH₵80\nHP EliteBook 1030 G8 x360: GH₵6,800") ||
+		!strings.Contains(got, "EFUA has:\nHandmade Beaded Bag: GH₵850") {
+		t.Fatalf("each shop's matches should be listed under the shop, got %q", got)
+	}
+	if strings.Contains(got, " | ") {
+		t.Fatalf("the strung line must not return, got %q", got)
+	}
+}
+
+func TestDiscoveryTasteIsAList(t *testing.T) {
+	setupChat(t, "233265993567", discoveryCatalogue)
+	taste, _ := discoveryTaste()
+	if !strings.HasPrefix(taste, "Here is some of what the shops have:\n") ||
+		!strings.Contains(taste, "\nWhat else are you looking for?") ||
+		strings.Contains(taste, "; ") {
+		t.Fatalf("the taste should be a list, got %q", taste)
+	}
+}
+
+func TestPaymentRecordListsSeveralItems(t *testing.T) {
+	setupChat(t, totalHandOwner, totalHandCatalogue)
+	rec := paymentConfirmedRecord(&orders.Order{
+		Reference: "HAND-6008", MerchantID: MerchantID, Price: 330, Total: 330,
+		ProductName: "Thong Sandals and Double Clothes Rack",
+		Items: []orders.OrderItem{
+			{Name: "Thong Sandals", Price: 80},
+			{Name: "Double Clothes Rack", Price: 250},
+		},
+	})
+	if !strings.Contains(rec, "Payment confirmed\nThong Sandals: GH₵80\nDouble Clothes Rack: GH₵250\nAmount: GH₵330") {
+		t.Fatalf("the payment record should list the items, got %q", rec)
+	}
+	if strings.Contains(rec, "Item: Thong Sandals and Double Clothes Rack") {
+		t.Fatalf("the joined label must not return, got %q", rec)
+	}
+}
+
 func TestOrderReadbackListsItemsLineByLine(t *testing.T) {
 	setupChat(t, totalHandOwner, totalHandCatalogue)
 	shop := catalogue.GetMerchant(MerchantID)
