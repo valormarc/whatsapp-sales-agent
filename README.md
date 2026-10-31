@@ -36,6 +36,31 @@ The building period for this event runs from the kickoff on 26 October to 4 Nove
 
 I created this repository on the first day of the event. The build is published here as it is completed and tested.
 
+## Run it locally
+
+You need Go (1.27 or newer) and Node (for the simulation scripts). No accounts and no API keys are needed for the local run: without credentials the agent writes the messages it would send to `data/outbox.jsonl` instead of sending them, answers with its rule-based nets, and mints placeholder payment links. Copy `.env.example` to `.env` and add a Meta Model API key and the same code reasons with the model; add WhatsApp credentials and it talks to real phones.
+
+Build it and run the test suite:
+
+```sh
+go build -o agent ./cmd/agent
+go test ./...
+```
+
+Run the scripted end-to-end simulation. Two customers haggle over the same bag; one closes, one walks:
+
+```sh
+node scripts/simulate.js
+```
+
+Or run the server yourself in dry-run mode and talk to it the way WhatsApp would, by posting webhook payloads to it:
+
+```sh
+WHATSAPP_DRY_RUN=1 PORT=4000 ./agent
+```
+
+It serves on http://localhost:4000 with the demo shop seeded in `data/catalogue.json`. A message whose text is a shop code (for example `SHOP-EFUA`) opens that shop, and every reply lands in `data/outbox.jsonl`.
+
 ## Stack
 
 Go (standard library only), the Meta Model API (Muse Spark for conversation, negotiation, reading photos and adverts, and drafting), the WhatsApp Cloud API, and Seev for MoMo checkout.
