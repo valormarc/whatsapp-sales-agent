@@ -201,6 +201,31 @@ func openHaggle(shopID string, merchant *catalogue.Merchant, product *catalogue.
 	}
 }
 
+// correctOverOffer speaks the correction when a buyer's
+// figure stands above the price itself (the owner's
+// ruling, from his own phone test): the agent must tell her the
+// price she is calling is a wrong price — "the price is
+// GH₵80, you cannot offer GH₵100" — at the moment she
+// calls it, not silently take the offer and quietly
+// settle her at the price at the end, which reads as
+// having accepted the wrong figure. The sale then closes
+// at the true price as it always did; only the silence
+// is gone. An offer that merely meets a standing ask
+// below the list price is ordinary trading and draws no
+// correction: the figure she beat was a counter, not
+// the price.
+func correctOverOffer(from string, s *Session, offer float64) {
+	p := s.Product
+	if p == nil || offer <= p.ListPrice {
+		return
+	}
+	if len(s.TotalHand) > 0 {
+		whatsapp.SendText(from, "That comes to "+money.GHS(p.ListPrice)+" in all, not "+money.GHS(offer)+". You cannot offer above the price.")
+		return
+	}
+	whatsapp.SendText(from, "The "+s.itemLabel()+" is "+money.GHS(p.ListPrice)+", not "+money.GHS(offer)+". You cannot offer above the price.")
+}
+
 // processOffer runs one buyer offer through the negotiation: the
 // model proposes (or the rule engine decides), haggle verification
 // bounds the price, and the outcome is an acceptance, a counter, or
@@ -218,6 +243,7 @@ func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer f
 	// talk stays open at the price.
 	if p.Fixed {
 		if offer >= s.Ask {
+			correctOverOffer(from, s, offer)
 			beginFulfilment(from, s, s.Ask)
 			return
 		}
@@ -231,11 +257,13 @@ func processOffer(from string, s *Session, merchant *catalogue.Merchant, offer f
 	// full-price yes. It closes at the price here, by code,
 	// so no road that reaches this point can drag it out.
 	if s.Round == 0 && offer >= s.Ask {
+		correctOverOffer(from, s, offer)
 		beginFulfilment(from, s, s.Ask)
 		return
 	}
 	result := negotiateStep(from, s, offer, merchant)
 	if result.Type == "accept" {
+		correctOverOffer(from, s, offer)
 		beginFulfilment(from, s, result.Price)
 		return
 	}

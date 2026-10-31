@@ -116,21 +116,34 @@ func openTotalHaggle(from string, s *Session, merchant *catalogue.Merchant, offe
 	if len(hand) < 2 {
 		return false
 	}
-	var totalList, totalFloor, dearest float64
-	allFixed := true
+	var dearest float64
 	for _, p := range hand {
-		totalList += p.ListPrice
-		totalFloor += effFloor(p)
 		if p.ListPrice > dearest {
 			dearest = p.ListPrice
-		}
-		if !p.Fixed {
-			allFixed = false
 		}
 	}
 	if offer <= dearest && !totalFrameRe.MatchString(strings.ToLower(msg)) {
 		return false // this figure can belong to one item, and she
 		// did not declare it for the lot; it is read there
+	}
+	startTotalHaggle(from, s, merchant, hand, offer, msg)
+	return true
+}
+
+// startTotalHaggle opens the ordinary haggle over a
+// hand wearing one coat and puts the buyer's figure to
+// it. The hand rides on the new session so the agreement
+// can be shared back across the real items.
+func startTotalHaggle(from string, s *Session, merchant *catalogue.Merchant, hand []catalogue.Product, offer float64, msg string) {
+	shopID := s.MerchantID
+	var totalList, totalFloor float64
+	allFixed := true
+	for _, p := range hand {
+		totalList += p.ListPrice
+		totalFloor += effFloor(p)
+		if !p.Fixed {
+			allFixed = false
+		}
 	}
 	synth := &catalogue.Product{
 		Name:       handLabel(hand),
@@ -140,13 +153,22 @@ func openTotalHaggle(from string, s *Session, merchant *catalogue.Merchant, offe
 	}
 	ns := openHaggle(shopID, merchant, synth)
 	ns.Location, ns.History, ns.Basket = s.Location, s.History, s.Basket
-	ns.ShelfPicks = s.ShelfPicks
+	ns.ShelfPicks = handIDs(hand)
 	ns.LastViewed = s.LastViewed
 	ns.TotalHand = hand
 	sessions.put(sessionKey(shopID, from), ns)
 	whatsapp.SendText(from, "For all of them together, then. "+handLabel(hand)+" come to "+money.GHS(totalList)+" in all.")
 	processOffer(from, ns, merchant, offer, msg)
-	return true
+}
+
+// handIDs is a hand as pick ids, in the order she
+// picked them.
+func handIDs(hand []catalogue.Product) []string {
+	ids := make([]string, 0, len(hand))
+	for _, p := range hand {
+		ids = append(ids, p.ID)
+	}
+	return ids
 }
 
 // apportionTotal shares an agreed total back across the
@@ -254,4 +276,176 @@ func apportionTotal(hand []catalogue.Product, total float64) []float64 {
 		out[i] = float64(prices[i]) / 100
 	}
 	return out
+}
+
+// unsettledHand is the part of her hand still on the
+// table while the settling runs: the pick in front of
+// her first, then the picks still waiting, each re-read
+// from the shelf the way handPicks reads them, so a pick
+// the shop can no longer supply is not in the hand.
+func unsettledHand(s *Session, shopID string) []catalogue.Product {
+	var hand []catalogue.Product
+	seen := map[string]bool{}
+	if s.ShelfSettling && s.Product != nil {
+		for _, p := range catalogue.ListProducts(shopID) {
+			if p.ID == s.Product.ID && p.Stock > 0 {
+				hand = append(hand, p)
+				seen[p.ID] = true
+				break
+			}
+		}
+	}
+	for _, p := range handPicks(s, shopID) {
+		if !seen[p.ID] {
+			hand = append(hand, p)
+			seen[p.ID] = true
+		}
+	}
+	return hand
+}
+
+// serveSettlingHandOffer reads an offer made while the
+// one-by-one settling is under way. An offer shaped for
+// the whole hand must never close the item in front of
+// her at its own price: that misreading dealt a buyer
+// both her items at their full prices when she offered
+// 330 for a 350 hand, her figure never heard at all.
+// When nothing has settled yet the hand is still whole,
+// and the total haggle opens over it exactly as it would
+// have before Done. When some items already stand at
+// agreed prices, no road guesses what the figure covers:
+// one question asks, and the figure waits on the session
+// (see servePendingHandOffer).
+func serveSettlingHandOffer(from string, s *Session, merchant *catalogue.Merchant, offer float64, msg string) bool {
+	if !s.ShelfSettling || len(s.TotalHand) > 0 {
+		return false
+	}
+	shopID := s.MerchantID
+	lower := strings.ToLower(msg)
+	if catalogue.FindProduct(shopID, lower) != nil {
+		return false // she named an item: the offer is that item's
+	}
+	hand := unsettledHand(s, shopID)
+	if len(hand) == 0 {
+		return false
+	}
+	if len(s.Basket) == 0 && len(hand) < 2 {
+		return false // nothing settled and only the one item
+		// stands: the offer is that item's, as always
+	}
+	var dearest float64
+	for _, p := range hand {
+		if p.ListPrice > dearest {
+			dearest = p.ListPrice
+		}
+	}
+	if offer <= dearest && !totalFrameRe.MatchString(lower) {
+		return false // this figure can belong to the item in front of her
+	}
+	if len(s.Basket) == 0 {
+		// Nothing settled yet: the hand is whole. The pick
+		// in front of her goes back with the others and the
+		// total haggle opens over all of them.
+		s.ShelfPicks = handIDs(hand)
+		s.ShelfSettling = false
+		startTotalHaggle(from, s, merchant, hand, offer, msg)
+		return true
+	}
+	// Some items already stand at agreed prices. Ask the
+	// one question and hold the figure meanwhile.
+	s.PendingHandOffer = offer
+	sessions.put(sessionKey(shopID, from), s)
+	settled := basketGoods(s)
+	parked := make([]catalogue.Product, 0, len(s.Basket))
+	for _, b := range s.Basket {
+		if b.Product != nil {
+			parked = append(parked, *b.Product)
+		}
+	}
+	line := "The " + handLabel(parked) + " is already settled at " + money.GHS(settled) + "."
+	if len(parked) > 1 {
+		line = "The " + handLabel(parked) + " are already settled at " + money.GHS(settled) + " in all."
+	}
+	whatsapp.SendText(from, line+" Is the "+money.GHS(offer)+" for everything, those included, or for the rest of them?")
+	return true
+}
+
+// handAllRe and handRestRe are the two shapes of her
+// answer to the scope question: the figure covers
+// everything, settled items included, or it covers only
+// what is still on the table.
+var handAllRe = regexp.MustCompile(`^(yes|all|everything|all of them|for all|for everything|the lot)[.!]?$`)
+var handRestRe = regexp.MustCompile(`\b(the rest|the remaining|remaining ones|the others)\b`)
+
+// servePendingHandOffer reads her answer to the scope
+// question serveSettlingHandOffer asked. A fresh figure
+// is not an answer but a new offer: the waiting figure
+// is dropped and the new words take the ordinary roads.
+// Words that declare neither scope drop it too, and are
+// read fresh. Only a declared scope spends the figure:
+// "everything" reads it as covering the settled items
+// too, so what remains for the hand still on the table
+// is the figure less what already stands; "the rest"
+// reads the whole figure on that hand. Either way the
+// read goes through the ordinary haggle roads, so every
+// price in it is verified the same way as any offer.
+func servePendingHandOffer(from string, s *Session, merchant *catalogue.Merchant, msg string) bool {
+	if s.PendingHandOffer <= 0 {
+		return false
+	}
+	shopID := s.MerchantID
+	lower := strings.ToLower(msg)
+	offer := s.PendingHandOffer
+	if parseOffer(lower) != nil {
+		s.PendingHandOffer = 0
+		sessions.put(sessionKey(shopID, from), s)
+		return false
+	}
+	everything := totalFrameRe.MatchString(lower) || handAllRe.MatchString(strings.TrimSpace(lower))
+	rest := handRestRe.MatchString(lower)
+	if !everything && !rest {
+		s.PendingHandOffer = 0
+		sessions.put(sessionKey(shopID, from), s)
+		return false
+	}
+	s.PendingHandOffer = 0
+	settled := basketGoods(s)
+	target := offer
+	if everything {
+		target = offer - settled
+	}
+	hand := unsettledHand(s, shopID)
+	if len(hand) == 0 {
+		sessions.put(sessionKey(shopID, from), s)
+		whatsapp.SendText(from, "Everything you picked is already settled, at "+money.GHS(settled)+" in all.")
+		return true
+	}
+	var handTotal float64
+	for _, p := range hand {
+		handTotal += p.ListPrice
+	}
+	if target <= 0 {
+		sessions.put(sessionKey(shopID, from), s)
+		whatsapp.SendText(from, "The ones already settled come to "+money.GHS(settled)+" in all, so "+money.GHS(offer)+" does not cover everything. The rest comes to "+money.GHS(handTotal)+" in all. Settle the rest as they are, or make me an offer on the rest.")
+		return true
+	}
+	if len(hand) == 1 {
+		// One item still stands: the figure, read on her
+		// declared scope, is her offer on it, and the
+		// ordinary haggle hears it — including its rule
+		// that an offer above the price closes at the
+		// price, never above it.
+		p := hand[0]
+		loc, hist, basket := s.Location, s.History, s.Basket
+		ns := openHaggle(shopID, merchant, &p)
+		ns.Location, ns.History, ns.Basket = loc, hist, basket
+		ns.ShelfSettling = true
+		sessions.put(sessionKey(shopID, from), ns)
+		processOffer(from, ns, merchant, target, msg)
+		return true
+	}
+	s.ShelfPicks = handIDs(hand)
+	s.ShelfSettling = false
+	startTotalHaggle(from, s, merchant, hand, target, msg)
+	return true
 }

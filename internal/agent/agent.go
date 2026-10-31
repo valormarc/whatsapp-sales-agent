@@ -212,6 +212,15 @@ type Session struct {
 	// and never outlives it.
 	TotalHand []catalogue.Product
 
+	// PendingHandOffer is a whole-hand figure she named
+	// while the settling was already under way and some
+	// items were already settled at agreed prices (see
+	// totalhaggle.go): the agent has asked whether the
+	// figure covers everything or only the rest, and the
+	// figure waits here for her answer. It binds nothing
+	// until she declares the scope herself.
+	PendingHandOffer float64
+
 	// RememberedFulfil is how a returning buyer's goods
 	// reached her last time, held up at the fulfilment
 	// step for her to confirm or change (see returning.go).

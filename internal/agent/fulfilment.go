@@ -125,6 +125,10 @@ func beginFulfilment(from string, s *Session, price float64) {
 	shopID := s.MerchantID
 	key := sessionKey(shopID, from)
 	merchant := catalogue.GetMerchant(shopID)
+	// An agreement spends any whole-hand figure still
+	// waiting on its scope question: the question was
+	// about a hand that has now moved on.
+	s.PendingHandOffer = 0
 
 	// An agreement on the whole hand lands here wearing
 	// one coat: the total is shared back across the picks

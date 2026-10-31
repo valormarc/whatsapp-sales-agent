@@ -147,6 +147,18 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		return
 	}
 
+	// A whole-hand figure is waiting on her answer to the
+	// one scope question (see totalhaggle.go): her reply
+	// is read structurally, ahead of the thinking, the way
+	// the Done word is, so neither a bare "everything" nor
+	// "the rest" can be bound to the item in front of her
+	// or wander off as chat.
+	if s.PendingHandOffer > 0 && s.FulfilStep == "" && (s.Stage == "browsing" || s.Stage == "haggling") {
+		if servePendingHandOffer(from, s, merchant, msg) {
+			return
+		}
+	}
+
 	// Thinking first. On an open turn (not inside a guided
 	// flow: no haggle running, no fulfilment, no pending close,
 	// no onboarding), the agent thinks before it answers: the
@@ -388,6 +400,19 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		if handleQuantity(from, s, merchant, msg, lower) {
 			return
 		}
+		// An offer shaped for the whole hand, made while
+		// the settling runs, is read on the hand before it
+		// can bind to the item in front of her — unless she
+		// is quoting another product's bubble, which makes
+		// the offer that product's, as below.
+		if offer := parseOffer(lower); offer != nil && !howMuchRe.MatchString(lower) && s.ShelfSettling && len(s.TotalHand) == 0 {
+			qp := quotedProductIn(shopID, from)
+			if qp == nil || (s.Product != nil && qp.ID == s.Product.ID) {
+				if serveSettlingHandOffer(from, s, merchant, *offer, msg) {
+					return
+				}
+			}
+		}
 		// An offer made while quoting ANOTHER product's bubble
 		// is an offer on that product: the haggle reopens on
 		// the quoted goods, carrying what this order has
@@ -559,7 +584,12 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			// hand she is holding opens the haggle on the
 			// total instead of binding to one item (see
 			// totalhaggle.go). While the settling runs,
-			// offers belong to the item in front of her.
+			// offers belong to the item in front of her —
+			// except one shaped for the whole hand, which
+			// is read on the hand even mid-settling.
+			if s.ShelfSettling && serveSettlingHandOffer(from, s, merchant, *offer, msg) {
+				return
+			}
 			if !s.ShelfSettling && openTotalHaggle(from, s, merchant, *offer, msg) {
 				return
 			}

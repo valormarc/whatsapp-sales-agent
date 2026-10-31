@@ -319,6 +319,7 @@ func takeNextShelfPick(s *Session, shopID string) *catalogue.Product {
 		s.Qty, s.Unit = 0, ""
 		s.Round, s.Floor, s.StepScale = 0, 0, 0
 		s.PendingClose = false
+		s.PendingHandOffer = 0
 		s.FulfilStep = ""
 		s.PendingFulfil = fulfilment{}
 		s.Stage = "browsing"
