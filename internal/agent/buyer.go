@@ -164,8 +164,8 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			// A budget the thinking read off her words is
 			// carried once the figure is verified against
 			// the words themselves.
-			if u.Budget > 0 && budgetFigureIn(msg, u.Budget) {
-				carryBudget(from, s, u.Budget)
+			if u.Budget > 0 && budgetFigureIn(msg, float64(u.Budget)) {
+				carryBudget(from, s, float64(u.Budget))
 			}
 			if actOnBuyerUnderstanding(from, s, merchant, shopID, u) {
 				return

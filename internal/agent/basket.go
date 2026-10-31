@@ -16,6 +16,7 @@ package agent
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/money"
@@ -131,6 +132,77 @@ func namedBasketCandidate(s *Session, msg string) *catalogue.Product {
 		}
 	}
 	return best
+}
+
+// addNameTokens splits a product name or a buyer's words
+// into the small set of comparable tokens used to verify
+// an add's referent. A trailing plural s is folded away,
+// as in the want book's matching.
+func addNameTokens(text string) map[string]bool {
+	out := map[string]bool{}
+	for _, w := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if len(w) < 3 {
+			continue
+		}
+		out[strings.TrimSuffix(w, "s")] = true
+	}
+	return out
+}
+
+// verifiedStageAddCandidate verifies the product behind a
+// judged add against the buyer's own words. The thinking
+// names the act and proposes the item, but a live real-shop
+// run showed it can substitute a different shelf product
+// for the one she actually named ("add the headwrap" came
+// back as the dress). A name word that belongs to exactly
+// one product on this shelf is therefore decisive: when her
+// words identify exactly one addable product that way, that
+// product is the candidate, even when the model's item
+// names another. When her words identify several, the
+// model's candidate stands only if it is one of them; when
+// they identify none, the model's reading is left to carry
+// the referent from context, as it did before.
+func verifiedStageAddCandidate(s *Session, msg, item string) *catalogue.Product {
+	modelCandidate := catalogue.FindProduct(s.MerchantID, strings.ToLower(item))
+
+	products := catalogue.ListProducts(s.MerchantID)
+	tokenOwners := map[string]int{}
+	for _, p := range products {
+		for token := range addNameTokens(p.Name) {
+			tokenOwners[token]++
+		}
+	}
+	words := addNameTokens(msg)
+	var matched []*catalogue.Product
+	for i := range products {
+		p := products[i]
+		if inBasket(s, &p) {
+			continue
+		}
+		for token := range addNameTokens(p.Name) {
+			if tokenOwners[token] == 1 && words[token] {
+				matched = append(matched, &p)
+				break
+			}
+		}
+	}
+	switch {
+	case len(matched) == 1:
+		return matched[0]
+	case len(matched) > 1:
+		if modelCandidate != nil {
+			for _, p := range matched {
+				if p.ID == modelCandidate.ID {
+					return modelCandidate
+				}
+			}
+		}
+		return nil
+	default:
+		return modelCandidate
+	}
 }
 
 // addQuestionText is the one confirming question an add

@@ -513,13 +513,44 @@ func handleFulfilment(from string, s *Session, merchant *catalogue.Merchant, msg
 		}
 	}
 
-	detailsStep := s.FulfilStep == "size" || s.FulfilStep == "pkgname" || s.FulfilStep == "pkgmessage" || s.FulfilStep == "confirm"
-	if !detailsStep {
-		if stageIntent == stageIntentAdd && reading.Item != "" {
-			if offerAdd(from, s, merchant, catalogue.FindProduct(shopID, strings.ToLower(reading.Item))) {
+	// A judged add outranks even the free-text steps (the
+	// real-shop test): the walk ate "please add the
+	// headwrap too" as the name for the package, because
+	// the add interception stood below the details gate
+	// that protects names and notes. That gate exists for
+	// the STRUCTURAL read, which cannot tell a name from
+	// an instruction; the judged read can — the charter
+	// names an add as never an answer to the open
+	// question — and its item is verified against the
+	// shelf while the add itself still asks its own
+	// confirming question before anything joins the
+	// order. Honouring a judged add at a details step
+	// costs one question when the reading is wrong;
+	// eating it costs the buyer's instruction printed on
+	// her package when the reading is right.
+	if stageIntent == stageIntentAdd && reading.Item != "" {
+		if candidate := verifiedStageAddCandidate(s, msg, reading.Item); candidate != nil {
+			if offerAdd(from, s, merchant, candidate) {
 				return
 			}
-		} else if candidate := namedBasketCandidate(s, msg); candidate != nil &&
+		}
+		if candidate := namedBasketCandidate(s, msg); candidate != nil {
+			if offerAdd(from, s, merchant, candidate) {
+				return
+			}
+		}
+		// The wish was read as an add, but no shelf product
+		// could be verified behind it against her own words:
+		// hold the open question up rather than let a
+		// free-text step eat an instruction as a name or a
+		// note, or offer a product she did not name.
+		reaskFulfilStep(from, s)
+		return
+	}
+
+	detailsStep := s.FulfilStep == "size" || s.FulfilStep == "pkgname" || s.FulfilStep == "pkgmessage" || s.FulfilStep == "confirm"
+	if !detailsStep {
+		if candidate := namedBasketCandidate(s, msg); candidate != nil &&
 			(stageIntent == "" || strings.Contains(lower, "add") || strings.Contains(lower, "plus") || strings.Contains(lower, "also")) {
 			// No thinking to read her, or the thinking called
 			// it an answer while her words carry an add and a

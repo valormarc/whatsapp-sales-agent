@@ -81,11 +81,53 @@ const (
 	intentUnclear        = "unclear"         // a person would still ask what she means
 )
 
+// modelFigure is a figure in a model's JSON reading. The
+// charters ask for a bare number, but a live run showed the
+// model sometimes handing a budget back in words —
+// "600 cedis" — and a strict float64 field then rejected
+// the WHOLE reading, intent, matches and all, for the sake
+// of one auxiliary figure. The figure is read tolerantly
+// here instead: a JSON number as itself, or the first
+// figure token in a JSON string, valued by the platform's
+// own figure grammar (commas and the k included). A string
+// with no figure in it reads as no figure, and the caller
+// still verifies any budget against the person's own words
+// before carrying it, so tolerance can never invent money.
+type modelFigure float64
+
+func (f *modelFigure) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*f = 0
+		return nil
+	}
+	var n float64
+	if err := json.Unmarshal(data, &n); err == nil {
+		*f = modelFigure(n)
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		*f = 0
+		return nil
+	}
+	token := figureTokenRe.FindString(s)
+	if token == "" {
+		*f = 0
+		return nil
+	}
+	if v, err := parseFigure(token); err == nil {
+		*f = modelFigure(v)
+	} else {
+		*f = 0
+	}
+	return nil
+}
+
 type understood struct {
-	Intent string  `json:"intent"`
-	Item   string  `json:"item"`
-	Reply  string  `json:"reply"`
-	Budget float64 `json:"budget"`
+	Intent string      `json:"intent"`
+	Item   string      `json:"item"`
+	Reply  string      `json:"reply"`
+	Budget modelFigure `json:"budget"`
 
 	// DirectRoute is read by code from her words: she said the
 	// money went somewhere other than the payment link, so it
@@ -495,7 +537,27 @@ func shelfFacts(shopID string) (string, []float64) {
 	var parts []string
 	var figures []float64
 	for _, p := range catalogue.ListProducts(shopID) {
-		parts = append(parts, p.Name+" at "+money.GHS(p.ListPrice))
+		// The facts carry the shelf's stock as well as its
+		// prices (the failure-cases pass): a merchant
+		// asking "how much is left" — or a buyer asking
+		// after a nearly-gone good — is owed the book's
+		// own figure, and a model reasoning over
+		// price-only facts can only decline. The stock
+		// figure joins the verifiable figures, so a
+		// drafted reply may state it and code can check
+		// it like any price.
+		stock := ""
+		switch units := p.AvailableUnits(); {
+		case units <= 0:
+			stock = ", sold out"
+		case p.ByMeasure():
+			stock = ", " + formatQty(units) + " " + unitWord(p.Unit, units) + " in stock"
+			figures = append(figures, units)
+		default:
+			stock = ", " + formatQty(units) + " in stock"
+			figures = append(figures, units)
+		}
+		parts = append(parts, p.Name+" at "+money.GHS(p.ListPrice)+stock)
 		figures = append(figures, p.ListPrice)
 	}
 	if len(parts) == 0 {
@@ -807,6 +869,21 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 			// no priced view and no place in her view.
 			whatsapp.SendText(from, "That one has sold out just now.")
 			return true
+		}
+		if p.ByMeasure() {
+			// A quantity stated in her own words is a
+			// structural fact, not a reading (the
+			// failure-cases pass): "I need 3 yards of the
+			// ankara" read as a plain item answers "Still
+			// available." and the measure she stated is
+			// lost. When her words carry a quantity in
+			// the product's own unit, the item act
+			// declines and the measure road below owns
+			// the turn: it quotes the cut, haggles the
+			// cut, refuses what is not there.
+			if q, ok := parseQuantity(strings.ToLower(u.Words)); ok && q.Unit == p.Unit {
+				return false
+			}
 		}
 		s.LastViewed = p
 		if s.Stage == "agreed" {

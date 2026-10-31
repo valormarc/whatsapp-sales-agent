@@ -69,7 +69,7 @@ type discoveryUnderstanding struct {
 	Item      string           `json:"item"`
 	Matches   []discoveryMatch `json:"matches"`
 	Reply     string           `json:"reply"`
-	Budget    float64          `json:"budget"`
+	Budget    modelFigure      `json:"budget"`
 	Recommend bool             `json:"recommend"`
 }
 
@@ -387,8 +387,8 @@ func handleUnboundBuyer(from, text string) {
 	// word net below speaks only when no model can be read,
 	// the standing rule for every fallback in the agent.
 	if u := understandDiscovery(from, text); u != nil {
-		if u.Budget > 0 && budgetFigureIn(text, u.Budget) {
-			pre.Budget = u.Budget
+		if u.Budget > 0 && budgetFigureIn(text, float64(u.Budget)) {
+			pre.Budget = float64(u.Budget)
 		}
 		if actOnDiscovery(from, strings.ToLower(text), u) {
 			return
@@ -435,7 +435,29 @@ func handleUnboundBuyer(from, text string) {
 			return
 		}
 	}
+	// The directory question in plain words ("what shops
+	// do you have?") names no product, so the search net
+	// below can only steer her onward; with no model read
+	// to take it as a browse, the net answers it with the
+	// directory itself (the failure-cases pass: a
+	// model-erroring discovery turn still owes her the
+	// shops, not just a steering line).
+	if browseShaped(strings.ToLower(text)) {
+		if actOnDiscovery(from, strings.ToLower(text), &discoveryUnderstanding{Intent: "browse"}) {
+			return
+		}
+	}
 	discoveryNet(from, text)
+}
+
+// browseShapeRe matches the exact directory framings: a
+// question about the shops themselves, never about a
+// product. Anything looser belongs to the search net or
+// the thinking.
+var browseShapeRe = regexp.MustCompile(`(?i)\b(what|which|any) shops?\b|\blist (of )?shops?\b|\bshow me the shops?\b|\bshops? (do you have|are there|you have)\b`)
+
+func browseShaped(lower string) bool {
+	return browseShapeRe.MatchString(lower)
 }
 
 // quotedPick is the no-model net for a quoted reply from an
