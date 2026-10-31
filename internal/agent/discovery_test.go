@@ -79,7 +79,7 @@ func TestDiscoveryFindsTheLaptopAcrossShops(t *testing.T) {
 
 	c.say(t, buyer, "Do you have any shop that sells laptop?")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "HP EliteBook 1030 G8 x360") || !strings.Contains(got, "Price: GH₵6,800") {
+	if !strings.Contains(got, "HP EliteBook 1030 G8 x360") || !strings.Contains(got, "HP EliteBook 1030 G8 x360 - GH₵6,800") {
 		t.Fatalf("the one laptop anywhere should be presented directly, got %q", got)
 	}
 	if strings.Contains(got, "Which one do you want to look at?") {
@@ -127,7 +127,7 @@ func TestDiscoveryPickBindsHerToThatShop(t *testing.T) {
 	got := strings.Join(c.replies(t, buyer), "\n")
 	c.say(t, buyer, "The EliteBook")
 	got += "\n" + strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Welcome to LUXE.") || !strings.Contains(got, "Price: GH₵6,800") {
+	if !strings.Contains(got, "Welcome to LUXE.") || !strings.Contains(got, "HP EliteBook 1030 G8 x360 - GH₵6,800") {
 		t.Fatalf("she should land in LUXE with the laptop in focus, got %q", got)
 	}
 	if bindings.get(buyer) != "luxe" {
@@ -157,7 +157,7 @@ func TestDiscoveryNetSearchesWithoutTheModel(t *testing.T) {
 
 	c.say(t, buyer, "I am looking for sandals")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Beaded Sandals") || !strings.Contains(got, "Price: GH₵80") {
+	if !strings.Contains(got, "Beaded Sandals") || !strings.Contains(got, "Beaded Sandals - GH₵80") {
 		t.Fatalf("the net's one match should be presented directly, got %q", got)
 	}
 	if strings.Contains(got, "Which one do you want to look at?") {
@@ -178,7 +178,7 @@ func TestDiscoverySingleMatchPresentsDirectly(t *testing.T) {
 	if strings.Contains(got, "Which one do you want to look at?") {
 		t.Fatalf("one match anywhere is not a choice, got %q", got)
 	}
-	if !strings.Contains(got, "LUXE has it:") || !strings.Contains(got, "Price: GH₵80") {
+	if !strings.Contains(got, "LUXE has it:") || !strings.Contains(got, "Beaded Sandals - GH₵80") {
 		t.Fatalf("the one match should be put in front of her, got %q", got)
 	}
 	if bindings.get(buyer) == "luxe" {

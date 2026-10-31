@@ -109,7 +109,7 @@ func serveBasketView(from string, s *Session, shopID string) bool {
 	}
 	if len(unsettled) > 0 {
 		if len(agreed) > 0 {
-			lines = append(lines, "Picked, not settled yet:")
+			lines = append(lines, "", "Picked, not settled yet:")
 		}
 		lines = append(lines, orderItemLines(unsettled)...)
 		if len(agreed) == 0 {

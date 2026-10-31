@@ -43,7 +43,7 @@ func TestCarrierDeliveryCloseNamesBothPurses(t *testing.T) {
 	c.say(t, buyer, "Send it to Koforidua")
 	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Handmade Beaded Bag: GH₵850") ||
+	if !strings.Contains(got, "Handmade Beaded Bag - GH₵850") ||
 		!strings.Contains(got, "Delivery to Koforidua: GH₵25 (paid to the station on arrival)") ||
 		!strings.Contains(got, "Total: GH₵850") ||
 		!strings.Contains(got, "That is GH₵875 in all, with the delivery.") ||
@@ -86,7 +86,7 @@ func TestCarrierDeliveryCloseAmaPaysTheRider(t *testing.T) {
 	c.say(t, buyer, "Deliver it to Madina")
 	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Smoked Tilapia: GH₵180") || !strings.Contains(got, "Delivery to Madina: GH₵15 (paid to the rider on arrival)") || !strings.Contains(got, "Total: GH₵180") || !strings.Contains(got, "That is GH₵195 in all, with the delivery.") {
+	if !strings.Contains(got, "Smoked Tilapia - GH₵180") || !strings.Contains(got, "Delivery to Madina: GH₵15 (paid to the rider on arrival)") || !strings.Contains(got, "Total: GH₵180") || !strings.Contains(got, "That is GH₵195 in all, with the delivery.") {
 		t.Fatalf("carrier close = %q", got)
 	}
 	o := ordersOnDisk(t, dir)[0]
@@ -112,7 +112,7 @@ func TestMerchantModeDeliveryStillChargesOneTotal(t *testing.T) {
 	c.say(t, buyer, "Send it to Koforidua")
 	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Raw Shea Butter (500g): GH₵120") || !strings.Contains(got, "Delivery to Koforidua: GH₵25") || !strings.Contains(got, "Total: GH₵145") {
+	if !strings.Contains(got, "Raw Shea Butter (500g) - GH₵120") || !strings.Contains(got, "Delivery to Koforidua: GH₵25") || !strings.Contains(got, "Total: GH₵145") {
 		t.Fatalf("merchant-mode close = %q, want the fee inside one total", got)
 	}
 	o := ordersOnDisk(t, dir)[0]
@@ -206,7 +206,7 @@ func TestTotalQuestionMidHaggleNamesBothPurses(t *testing.T) {
 	// Both purses, and the two together: she never has to add
 	// anything up herself, and never mistakes the fee for part
 	// of what she pays here.
-	if !strings.Contains(got, "Smoked Tilapia: GH₵") ||
+	if !strings.Contains(got, "Smoked Tilapia - GH₵") ||
 		!strings.Contains(got, "Delivery: GH₵15 (paid to the rider on arrival)") ||
 		!strings.Contains(got, " in all, with the delivery.") {
 		t.Fatalf("total answer = %q, want both purses and the sum of the two", got)

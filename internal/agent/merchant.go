@@ -1264,7 +1264,7 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 	if myCatalogueRe.MatchString(lower) {
 		lines := []string{"Here is your catalogue:"}
 		for _, p := range merchant.Products {
-			line := "- " + p.Name + ": list " + money.GHS(p.ListPrice)
+			line := "- " + p.Name + " - " + money.GHS(p.ListPrice)
 			if p.ByMeasure() {
 				line += " (" + money.GHS(p.UnitPrice()) + " per " + p.Unit + ", sold by the " + p.Unit + ")"
 			}
@@ -1307,7 +1307,7 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			if len(merchant.DeliveryAreas) > 0 {
 				lines = append(lines, "Area fees:")
 				for _, a := range merchant.DeliveryAreas {
-					lines = append(lines, a.Area+": "+money.GHS(a.Fee))
+					lines = append(lines, a.Area+" - "+money.GHS(a.Fee))
 				}
 				lines = append(lines, "Everywhere else pays the standard fee.")
 			}
@@ -1720,7 +1720,7 @@ func savePhotoCompactListing(from string, flow *OnboardingFlow) {
 	if unit == "" {
 		unit = "piece"
 	}
-	whatsapp.SendText(from, "Saved ✅ "+product.Name+" | List: "+money.GHS(product.ListPrice)+" | Last: "+money.GHS(product.FloorPrice)+" | Unit: "+unit)
+	whatsapp.SendText(from, "Saved ✅ "+product.Name+" - "+money.GHS(product.ListPrice)+", last price "+money.GHS(product.FloorPrice)+", unit "+unit)
 	alertWaitingBuyers(s.MerchantID, product)
 	announceListing(from, s.MerchantID, product)
 }

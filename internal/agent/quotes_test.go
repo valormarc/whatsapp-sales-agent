@@ -83,7 +83,7 @@ func TestQuoteBookKnowsBothAuthors(t *testing.T) {
 
 	// The agent's price quote is in the book, under the id it
 	// was sent with, authored by the agent, in her chat.
-	quoteID := agentMsgID(t, dir, buyer, "Price: GH₵120")
+	quoteID := agentMsgID(t, dir, buyer, "Ankle Strap Heels - GH₵120")
 	rq := resolveQuote(Inbound{From: buyer, ContextID: quoteID, ContextFrom: "233209450786"})
 	if rq == nil || !rq.Known || rq.Author != "agent" || rq.Product == nil || rq.Product.Name != "Ankle Strap Heels" {
 		t.Fatalf("agent quote resolution = %+v, want known, agent-authored, about the heels", rq)
@@ -107,7 +107,7 @@ func TestQuoteResolvesOnlyInsideItsOwnChat(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "Ankle Strap Heels")
 	c.replies(t, buyer)
-	quoteID := agentMsgID(t, dir, buyer, "Price: GH₵120")
+	quoteID := agentMsgID(t, dir, buyer, "Ankle Strap Heels - GH₵120")
 
 	// The same id quoted by a different person resolves to
 	// nothing: her book is not his to point at.
@@ -150,7 +150,7 @@ func TestQuotedOfferLandsOnTheQuotedProduct(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "Ankle Strap Heels")
 	c.replies(t, buyer)
-	heelsQuote := agentMsgID(t, dir, buyer, "Price: GH₵120")
+	heelsQuote := agentMsgID(t, dir, buyer, "Ankle Strap Heels - GH₵120")
 
 	// The conversation wanders: she looks at the bag, and the
 	// bag is what she was last viewing.
@@ -180,7 +180,7 @@ func TestQuotedOfferRetargetsAnOpenHaggle(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "Ankle Strap Heels")
 	c.replies(t, buyer)
-	heelsQuote := agentMsgID(t, dir, buyer, "Price: GH₵120")
+	heelsQuote := agentMsgID(t, dir, buyer, "Ankle Strap Heels - GH₵120")
 
 	// A haggle opens on the bag.
 	c.say(t, buyer, "How much is the Handmade Beaded Bag?")
@@ -232,7 +232,7 @@ func TestUnboundQuotedPickBindsTheQuotedShop(t *testing.T) {
 	// Discovery shows her the heels, one match, unbound.
 	c.say(t, buyer, "Do you have heels?")
 	c.replies(t, buyer)
-	heelsQuote := agentMsgID(t, dir, buyer, "Price: GH₵120")
+	heelsQuote := agentMsgID(t, dir, buyer, "Ankle Strap Heels - GH₵120")
 	if bindings.get(buyer) != "" {
 		t.Fatalf("a shown result bound her before any pick: %q", bindings.get(buyer))
 	}

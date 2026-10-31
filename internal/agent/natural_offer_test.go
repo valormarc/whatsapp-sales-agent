@@ -26,7 +26,7 @@ func TestPlainSentenceOfferAfterViewingItem(t *testing.T) {
 	buyer := "233550004201"
 	c.say(t, buyer, "SHOP-AMA")
 	c.say(t, buyer, "Tilapia smoked")
-	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Price: GH₵180") {
+	if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "Smoked Tilapia - GH₵180") {
 		t.Fatalf("product view = %q", got)
 	}
 

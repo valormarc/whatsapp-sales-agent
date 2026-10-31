@@ -137,9 +137,9 @@ async function pickBoth(buyer) {
     await say(BUYER_A, "show me what's in my basket");
     recs = await fresh(BUYER_A);
     console.log("LEG A BASKET REPLY:\n" + texts(recs));
-    check(texts(recs).includes("Thong Sandals: GH₵80"),
+    check(texts(recs).includes("Thong Sandals - GH₵80"),
       "leg A: the settled sandals are listed at their agreed price", texts(recs));
-    check(texts(recs).includes("Double Clothes Rack: GH₵270"),
+    check(texts(recs).includes("Double Clothes Rack - GH₵270"),
       "leg A: the rack in front of her is listed at its shelf price", texts(recs));
 
     // Leg B: picks only, nothing settled yet.
@@ -147,7 +147,7 @@ async function pickBoth(buyer) {
     await say(BUYER_B, "show me my basket");
     recs = await fresh(BUYER_B);
     console.log("LEG B BASKET REPLY:\n" + texts(recs));
-    check(texts(recs).includes("Thong Sandals: GH₵80") && texts(recs).includes("Double Clothes Rack: GH₵270"),
+    check(texts(recs).includes("Thong Sandals - GH₵80") && texts(recs).includes("Double Clothes Rack - GH₵270"),
       "leg B: the picks are listed one per line at their shelf prices", texts(recs));
 
     // Leg C: a whole hand agreed at one total — the
@@ -170,7 +170,7 @@ async function pickBoth(buyer) {
     await say(BUYER_C, "show me what's in my basket");
     recs = await fresh(BUYER_C);
     console.log("LEG C BASKET REPLY:\n" + texts(recs));
-    check(texts(recs).includes("Thong Sandals: GH₵") && texts(recs).includes("Double Clothes Rack: GH₵"),
+    check(texts(recs).includes("Thong Sandals - GH₵") && texts(recs).includes("Double Clothes Rack - GH₵"),
       "leg C: the agreed hand is listed item by item at its shares", texts(recs));
   } finally {
     child.kill();

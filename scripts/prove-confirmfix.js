@@ -127,7 +127,7 @@ async function walkToConfirm(buyer, name) {
     // S4: pointing at the one shown result is a pick.
     await turn(B4, "Do you sell handbags?");
     const pick = await turn(B4, "I will take this");
-    check("pointing at the shown bag takes her to it", bodies(pick).includes("Price: GH₵850"));
+    check("pointing at the shown bag takes her to it", bodies(pick).includes("Handmade Beaded Bag - GH₵850"));
   } catch (e) {
     console.log("ERROR " + e.message); fail++;
   } finally {

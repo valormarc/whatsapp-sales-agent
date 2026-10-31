@@ -28,8 +28,7 @@ import (
 
 // quoteRecord is the price quote, on its paper:
 //
-//	Ankara fabric, 6 yards
-//	Price: GH₵450
+//	Ankara fabric, 6 yards - GH₵450
 //
 // The item line carries the measure when the goods are
 // sold by one (the listing's own base quantity and unit).
@@ -38,7 +37,7 @@ func quoteRecord(p *catalogue.Product) string {
 	if p.Unit != "" && p.BaseQty > 0 {
 		item += ", " + formatQty(p.BaseQty) + " " + unitWord(p.Unit, p.BaseQty)
 	}
-	return item + "\nPrice: " + money.GHS(p.ListPrice)
+	return item + " - " + money.GHS(p.ListPrice)
 }
 
 // sendProductView presents one product the clean way: the
@@ -71,7 +70,7 @@ func sendProductViewLead(from, lead string, p *catalogue.Product, invite string)
 
 // totalRecord is the final total, on its paper:
 //
-//	Ankle Strap Heels: GH₵110
+//	Ankle Strap Heels - GH₵110
 //	Delivery to Osu: GH₵25
 //	Total: GH₵135
 //
@@ -86,7 +85,7 @@ func totalRecord(items []orders.OrderItem, deliveryFee, chargedFee float64, mode
 	var lines []string
 	goods := 0.0
 	for _, it := range items {
-		lines = append(lines, it.Name+": "+money.GHS(it.Price))
+		lines = append(lines, it.Name+" - "+money.GHS(it.Price))
 		goods += it.Price
 	}
 	if mode == "delivery" && deliveryFee > 0 {
@@ -124,7 +123,7 @@ func orderItemLines(items []orders.OrderItem) []string {
 		if it.Size != "" {
 			name += " (size " + it.Size + ")"
 		}
-		lines = append(lines, name+": "+money.GHS(it.Price))
+		lines = append(lines, name+" - "+money.GHS(it.Price))
 	}
 	return lines
 }
@@ -260,7 +259,7 @@ func orderNoticeLines(o *orders.Order, merchant *catalogue.Merchant) []string {
 		}
 		line := "Item: " + label
 		if multi {
-			line += ": " + money.GHS(it.Price)
+			line += " - " + money.GHS(it.Price)
 		}
 		lines = append(lines, line)
 	}

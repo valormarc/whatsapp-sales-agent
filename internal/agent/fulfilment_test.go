@@ -71,7 +71,7 @@ func TestFulfilmentSheaShapeDeliveryWithPlaceInOneMessage(t *testing.T) {
 	c.say(t, buyer, "Send it to Koforidua")
 	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
-	wantBreakdown := "Raw Shea Butter (500g): " + money.GHS(price) + "\nDelivery to Koforidua: GH₵25\nTotal: " + money.GHS(price+25)
+	wantBreakdown := "Raw Shea Butter (500g) - " + money.GHS(price) + "\nDelivery to Koforidua: GH₵25\nTotal: " + money.GHS(price+25)
 	if !strings.Contains(got, wantBreakdown) || !strings.Contains(got, "Pay here") {
 		t.Fatalf("delivery completion = %q, want %q and the link", got, wantBreakdown)
 	}
@@ -120,7 +120,7 @@ func TestFulfilmentDeliveryThenBarePlaceFollowUp(t *testing.T) {
 	c.say(t, buyer, "Kumasi")
 	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Smoked Tilapia: GH₵180\nDelivery to Kumasi: GH₵15\nTotal: GH₵195") || !strings.Contains(got, "Pay here") {
+	if !strings.Contains(got, "Smoked Tilapia - GH₵180\nDelivery to Kumasi: GH₵15\nTotal: GH₵195") || !strings.Contains(got, "Pay here") {
 		t.Fatalf("delivery completion = %q", got)
 	}
 	orders := ordersOnDisk(t, dir)
@@ -142,7 +142,7 @@ func TestFulfilmentPickupPaysNoFee(t *testing.T) {
 	c.say(t, buyer, "I will come and pick it up myself")
 	c.finishDetails(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Handmade Beaded Bag: GH₵850\nTotal: GH₵850") || !strings.Contains(got, "Pay here") {
+	if !strings.Contains(got, "Handmade Beaded Bag - GH₵850\nTotal: GH₵850") || !strings.Contains(got, "Pay here") {
 		t.Fatalf("pickup completion = %q", got)
 	}
 	orders := ordersOnDisk(t, dir)
@@ -173,7 +173,7 @@ func TestFulfilmentMeetUpWithPlaceInTheMessage(t *testing.T) {
 	got := strings.Join(c.replies(t, buyer), "\n")
 	// The agent promises nothing about the seller coming: she has
 	// been told, and the place is on the order. That is all.
-	if !strings.Contains(got, "I have told the seller you want to meet at Circle to collect it. The place is on your order.") || !strings.Contains(got, "Smoked Tilapia: GH₵180\nTotal: GH₵180") {
+	if !strings.Contains(got, "I have told the seller you want to meet at Circle to collect it. The place is on your order.") || !strings.Contains(got, "Smoked Tilapia - GH₵180\nTotal: GH₵180") {
 		t.Fatalf("meet-up completion = %q", got)
 	}
 	orders := ordersOnDisk(t, dir)
@@ -231,7 +231,7 @@ func TestFulfilmentCollectorNamedInTheMessage(t *testing.T) {
 	c.say(t, buyer, "I will send my brother Kwame to pick it up")
 	c.finishNote(t, buyer)
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "my brother Kwame is coming for it") || !strings.Contains(got, "Raw Shea Butter (500g): GH₵120\nTotal: GH₵120") {
+	if !strings.Contains(got, "my brother Kwame is coming for it") || !strings.Contains(got, "Raw Shea Butter (500g) - GH₵120\nTotal: GH₵120") {
 		t.Fatalf("collector completion = %q", got)
 	}
 	orders := ordersOnDisk(t, dir)

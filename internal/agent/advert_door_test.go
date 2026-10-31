@@ -64,7 +64,7 @@ func TestAPhotoAfterHerAdvertKeepsTheAdvertPrice(t *testing.T) {
 	}
 	c.say(t, owner, "whole")
 	got = strings.Join(c.replies(t, owner), "\n")
-	if !strings.Contains(got, "Saved ✅ So pretty | List: GH₵120 | Last: GH₵100 | Unit: piece") {
+	if !strings.Contains(got, "Saved ✅ So pretty - GH₵120, last price GH₵100, unit piece") {
 		t.Fatalf("the photo listing did not save with the one saved line: %q", got)
 	}
 }
@@ -124,7 +124,7 @@ func TestPhotoCompactFlow(t *testing.T) {
 		c.say(t, owner, "whole")
 		got = strings.Join(c.replies(t, owner), "\n")
 	}
-	if !strings.Contains(got, "Saved ✅ So pretty | List: GH₵80 | Last: GH₵75 | Unit: piece") {
+	if !strings.Contains(got, "Saved ✅ So pretty - GH₵80, last price GH₵75, unit piece") {
 		t.Fatalf("the compact saved line did not land: %q", got)
 	}
 	if strings.Contains(got, "Shall I add") || strings.Contains(got, "Nothing is saved until you say yes") {

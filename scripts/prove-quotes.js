@@ -99,7 +99,7 @@ async function turn(from, text, context) {
 }
 const bodies = (recs) => recs.map((r) => r.body || "").join("\n");
 const quoteRecID = (who, price) => {
-  const rec = outboxTo(who).filter((r) => (r.body || "").includes("Price: GH₵" + price)).pop();
+  const rec = outboxTo(who).filter((r) => (r.body || "").includes(" - GH₵" + price)).pop();
   return rec && rec.id;
 };
 

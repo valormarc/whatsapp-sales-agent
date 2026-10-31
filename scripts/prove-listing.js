@@ -119,23 +119,23 @@ async function waitHealth() {
     await say(BUYER_1, "I am looking for sandals");
     let recs = await fresh(BUYER_1);
     console.log("SEARCH REPLY:\n" + texts(recs));
-    check(texts(recs).includes("Thong Sandals: GH₵80") && texts(recs).includes("Beaded Sandals: GH₵120"),
+    check(texts(recs).includes("Thong Sandals - GH₵80") && texts(recs).includes("Beaded Sandals - GH₵120"),
       "search: both shops' sandals are listed at their prices", texts(recs));
-    check(!texts(recs).includes(" | ") && !/has: [^\n]* - GH₵/.test(texts(recs)),
+    check(!texts(recs).includes(" | ") && !/ - GH₵[^\n]* - GH₵/.test(texts(recs)),
       "search: nothing is strung along one line", texts(recs));
 
     // The directory: which shops are here at all.
     await say(BUYER_2, "What shops do you have?");
     recs = await fresh(BUYER_2);
     console.log("DIRECTORY REPLY:\n" + texts(recs));
-    check(!/\(SHOP-[A-Z]+\): [^\n]*,/.test(texts(recs)),
+    check(!/ - GH₵[^\n]* - GH₵/.test(texts(recs)) && texts(recs).includes(" - GH₵"),
       "directory: no shop's goods are strung on its line", texts(recs));
 
     // The sampler: a want nobody stocks.
     await say(BUYER_3, "Do you sell iPhones?");
     recs = await fresh(BUYER_3);
     console.log("TASTE REPLY:\n" + texts(recs));
-    check(texts(recs).includes("Here is some of what the shops have:\n") && !texts(recs).includes("; "),
+    check(texts(recs).includes("Here is some of what the shops have:") && texts(recs).includes(" - GH₵") && !texts(recs).includes("; "),
       "taste: the sampler is a list, not a sentence", texts(recs));
   } finally {
     child.kill();

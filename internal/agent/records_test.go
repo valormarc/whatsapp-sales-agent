@@ -18,11 +18,11 @@ import (
 
 func TestQuoteRecordCarriesTheMeasure(t *testing.T) {
 	fabric := &catalogue.Product{Name: "Ankara fabric", ListPrice: 450, Unit: "yard", BaseQty: 6}
-	if got, want := quoteRecord(fabric), "Ankara fabric, 6 yards\nPrice: GH₵450"; got != want {
+	if got, want := quoteRecord(fabric), "Ankara fabric, 6 yards - GH₵450"; got != want {
 		t.Fatalf("quote = %q, want %q", got, want)
 	}
 	plain := &catalogue.Product{Name: "Ankle Strap Heels", ListPrice: 120}
-	if got, want := quoteRecord(plain), "Ankle Strap Heels\nPrice: GH₵120"; got != want {
+	if got, want := quoteRecord(plain), "Ankle Strap Heels - GH₵120"; got != want {
 		t.Fatalf("quote = %q, want %q", got, want)
 	}
 }
@@ -30,7 +30,7 @@ func TestQuoteRecordCarriesTheMeasure(t *testing.T) {
 func TestTotalRecordMatchesTheDemoShape(t *testing.T) {
 	items := []orders.OrderItem{{Name: "Ankara fabric", Price: 380}}
 	got := totalRecord(items, 25, 25, "delivery", "Osu", "merchant", "")
-	want := "Ankara fabric: GH₵380\nDelivery to Osu: GH₵25\nTotal: GH₵405"
+	want := "Ankara fabric - GH₵380\nDelivery to Osu: GH₵25\nTotal: GH₵405"
 	if got != want {
 		t.Fatalf("total = %q, want %q", got, want)
 	}

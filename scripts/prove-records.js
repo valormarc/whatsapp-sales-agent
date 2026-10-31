@@ -6,6 +6,8 @@
 // payment hands the buyer the payment record. Talk around
 // the records stays in pieces, as before.
 const { spawn } = require("child_process");
+const { createHmac } = require("crypto");
+const { createServer } = require("http");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
@@ -32,7 +34,7 @@ const BUYER = "233551119999";
 fs.writeFileSync(path.join(dir, "data", "catalogue.json"), JSON.stringify({
   merchants: {
     EFUA: { id: "EFUA", shopCode: "EFUA", name: "Efua's Store", ownerWhatsApp: OWNER,
-      payoutPhone: OWNER, dailyGiveawayAllowance: 300, deliveryFee: 25,
+      payoutPhone: OWNER, subaccountCode: "ACCT_EFUA", subaccountPhone: OWNER, dailyGiveawayAllowance: 300, deliveryFee: 25,
       deliveryNote: "Sent by bus to your station", deliveryPaidTo: "merchant",
       products: [
         { id: "ankara", name: "Ankara fabric", description: "Bright Ankara print cloth", listPrice: 450, floorPrice: 380, stock: 5, unit: "yard", baseQty: 6 },
@@ -73,14 +75,31 @@ const bodies = (rs) => rs.map((r) => r.body || "");
   let pass = 0, fail = 0;
   const check = (name, ok) => { console.log((ok ? "PASS " : "FAIL ") + name); ok ? pass++ : fail++; };
   try {
-    const env = { ...process.env, PORT: String(PORT), HACKATHON_AGENT_DATA_DIR: path.join(dir, "data"), WHATSAPP_DRY_RUN: "1", STALL_SANDBOX_ALLOW_MODEL: "1" };
-    delete env.SEEV_SECRET_KEY; delete env.SEEV_API_KEY;
+    let stubAmount = 0;
+    const seevStub = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (d) => { raw += d; });
+      req.on("end", () => {
+        res.setHeader("content-type", "application/json");
+        if (req.method === "POST" && req.url === "/api/v1/developer/payments") {
+          res.end(JSON.stringify({ data: { checkout_url: "https://pay.example.test/SEEVSIM-RECORDS", reference: "SEEVSIM-RECORDS" } }));
+        } else if (req.method === "GET" && req.url.startsWith("/api/v1/developer/payments/")) {
+          res.end(JSON.stringify({ data: { status: "completed", amount: stubAmount } }));
+        } else {
+          res.statusCode = 404;
+          res.end("{}");
+        }
+      });
+    });
+    await new Promise((resolve) => seevStub.listen(0, "127.0.0.1", resolve));
+    const env = { ...process.env, PORT: String(PORT), HACKATHON_AGENT_DATA_DIR: path.join(dir, "data"), WHATSAPP_DRY_RUN: "1", STALL_SANDBOX_ALLOW_MODEL: "1", SEEV_SECRET_KEY: "sk_sim", SEEV_API_BASE: `http://127.0.0.1:${seevStub.address().port}`, SEEV_WEBHOOK_SECRET: "prove-records-webhook-secret" };
+    delete env.SEEV_API_KEY;
     agent = spawn(path.join(__dirname, "..", "agent"), [], { env, stdio: "ignore" });
     for (let i = 0; i < 40; i++) { try { const r = await fetch(`${BASE}/healthz`); if (r.ok) break; } catch {} await sleep(400); }
 
     await say(BUYER, "SHOP-EFUA");
     const view = bodies(await say(BUYER, "Ankara fabric"));
-    check("the quote is one message on the demo paper", view.includes("Ankara fabric, 6 yards\nPrice: GH₵450"));
+    check("the quote is one message on the demo paper", view.includes("Ankara fabric, 6 yards - GH₵450"));
 
     await say(BUYER, "400");
     const haggle = bodies(outboxTo(BUYER)).join("\n");
@@ -101,7 +120,7 @@ const bodies = (rs) => rs.map((r) => r.body || "");
       done = bodies(await say(BUYER, answer));
       if (done.some((b) => b.includes("Pay here to complete"))) break;
     }
-    const totalRec = done.find((b) => b.startsWith("Ankara fabric: GH₵"));
+    const totalRec = done.find((b) => b.startsWith("Ankara fabric - GH₵"));
     check("the total is one record message", !!totalRec && totalRec.includes("\nDelivery to Osu: GH₵25\nTotal: GH₵"));
     const agreed = totalRec ? parseFloat((totalRec.match(/Total: GH₵([\d,]+)/) || [])[1].replace(",", "")) : 0;
     check("the total adds up", agreed > 380 && agreed <= 450 + 25);
@@ -116,8 +135,14 @@ const bodies = (rs) => rs.map((r) => r.body || "");
       check("the notice lines stand in the fixed order", ordered);
     }
 
-    await say(BUYER, "I have paid");
-    await say(OWNER, "yes");
+    const refBody = bodies(outboxTo(BUYER)).find((b) => b.includes("Your order reference is")) || "";
+    const ref = (refBody.match(/reference is (\S+)\./) || [])[1];
+    stubAmount = Math.round(agreed * 100);
+    const hookBody = JSON.stringify({ data: { reference: "SEEVSIM-RECORDS", status: "completed", amount: agreed }, meta: { order_reference: ref } });
+    const hookTs = `${Math.floor(Date.now() / 1000)}`;
+    const hookSig = "v1=" + createHmac("sha256", "prove-records-webhook-secret").update(`${hookTs}.${hookBody}`).digest("hex");
+    await fetch(`${BASE}/webhooks/seev`, { method: "POST", headers: { "content-type": "application/json", "x-seev-timestamp": hookTs, "x-seev-signature": hookSig }, body: hookBody });
+    await sleep(300);
     const buyerAll = bodies(outboxTo(BUYER));
     const confirmed = buyerAll.find((b) => b.startsWith("Payment confirmed\nItem:"));
     check("payment confirmed arrives as the record", !!confirmed && confirmed.includes("\nAmount: GH₵") && confirmed.includes("\nOrder: EFUA-") && confirmed.includes("Thank you for buying from Efua's Store."));

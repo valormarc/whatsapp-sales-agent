@@ -23,9 +23,9 @@ func TestHandHaggleListsItemsLineByLine(t *testing.T) {
 
 	c.say(t, buyer, "I will give you 509")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "For all of them together, then:\nDouble Clothes Rack: GH₵270") ||
-		!strings.Contains(got, "Ribbed Off-Shoulder Bodycon Maxi Dress: GH₵130") ||
-		!strings.Contains(got, "Halter Pleated Maxi Dress: GH₵150") ||
+	if !strings.Contains(got, "For all of them together, then:\nDouble Clothes Rack - GH₵270") ||
+		!strings.Contains(got, "Ribbed Off-Shoulder Bodycon Maxi Dress - GH₵130") ||
+		!strings.Contains(got, "Halter Pleated Maxi Dress - GH₵150") ||
 		!strings.Contains(got, "That is GH₵550 in all.") {
 		t.Fatalf("the hand should open as a list, got %q", got)
 	}
@@ -33,7 +33,7 @@ func TestHandHaggleListsItemsLineByLine(t *testing.T) {
 		t.Fatalf("the old strung sentence must not return, got %q", got)
 	}
 	got = meetTheCounter(t, c, buyer, got)
-	if !strings.Contains(got, "Double Clothes Rack: GH₵") || !strings.Contains(got, "Halter Pleated Maxi Dress: GH₵") ||
+	if !strings.Contains(got, "Double Clothes Rack - GH₵") || !strings.Contains(got, "Halter Pleated Maxi Dress - GH₵") ||
 		!strings.Contains(got, "That makes your order GH₵") {
 		t.Fatalf("the agreed hand should print as a receipt of shares, got %q", got)
 	}
@@ -49,7 +49,7 @@ func TestScopeQuestionListsTheSettledItems(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "I will give you 400 for all")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "These are already settled:\nDouble Clothes Rack: GH₵270") {
+	if !strings.Contains(got, "These are already settled:\nDouble Clothes Rack - GH₵270") {
 		t.Fatalf("the settled items should be listed, got %q", got)
 	}
 }
@@ -65,10 +65,10 @@ func TestBasketViewListsSettledAndInFront(t *testing.T) {
 	c.say(t, buyer, "show me what's in my basket")
 	got := c.last(t, buyer)
 	if !strings.Contains(got, "Here is what you have so far:") ||
-		!strings.Contains(got, "Double Clothes Rack: GH₵270") ||
+		!strings.Contains(got, "Double Clothes Rack - GH₵270") ||
 		!strings.Contains(got, "settled so far") ||
 		!strings.Contains(got, "Picked, not settled yet:") ||
-		!strings.Contains(got, "Halter Pleated Maxi Dress: GH₵150") {
+		!strings.Contains(got, "Halter Pleated Maxi Dress - GH₵150") {
 		t.Fatalf("the basket should list the settled rack and the waiting halter apart, got %q", got)
 	}
 }
@@ -85,8 +85,8 @@ func TestBasketViewListsPicksOnly(t *testing.T) {
 	c.replies(t, buyer)
 	c.say(t, buyer, "show me my basket")
 	got := c.last(t, buyer)
-	if !strings.Contains(got, "Double Clothes Rack: GH₵270") ||
-		!strings.Contains(got, "Halter Pleated Maxi Dress: GH₵150") ||
+	if !strings.Contains(got, "Double Clothes Rack - GH₵270") ||
+		!strings.Contains(got, "Halter Pleated Maxi Dress - GH₵150") ||
 		!strings.Contains(got, "at shelf prices") {
 		t.Fatalf("the picks should be listed at their shelf prices, got %q", got)
 	}
@@ -124,8 +124,8 @@ func TestDiscoverySearchResultsListedByShop(t *testing.T) {
 		t.Fatalf("the search should be served")
 	}
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "LUXE has:\nBeaded Sandals: GH₵80\nHP EliteBook 1030 G8 x360: GH₵6,800") ||
-		!strings.Contains(got, "EFUA has:\nHandmade Beaded Bag: GH₵850") {
+	if !strings.Contains(got, "LUXE\nBeaded Sandals - GH₵80\nHP EliteBook 1030 G8 x360 - GH₵6,800") ||
+		!strings.Contains(got, "EFUA\nHandmade Beaded Bag - GH₵850") {
 		t.Fatalf("each shop's matches should be listed under the shop, got %q", got)
 	}
 	if strings.Contains(got, " | ") {
@@ -153,7 +153,7 @@ func TestPaymentRecordListsSeveralItems(t *testing.T) {
 			{Name: "Double Clothes Rack", Price: 250},
 		},
 	})
-	if !strings.Contains(rec, "Payment confirmed\nThong Sandals: GH₵80\nDouble Clothes Rack: GH₵250\nAmount: GH₵330") {
+	if !strings.Contains(rec, "Payment confirmed\nThong Sandals - GH₵80\nDouble Clothes Rack - GH₵250\nAmount: GH₵330") {
 		t.Fatalf("the payment record should list the items, got %q", rec)
 	}
 	if strings.Contains(rec, "Item: Thong Sandals and Double Clothes Rack") {
@@ -175,8 +175,8 @@ func TestOrderReadbackListsItemsLineByLine(t *testing.T) {
 		},
 	})
 	rb := orderReadback(shop, orders.Default.GetOrder("HAND-6003"))
-	if !strings.Contains(rb, "Order HAND-6003:\nDouble Clothes Rack: GH₵260.8") ||
-		!strings.Contains(rb, "Halter Pleated Maxi Dress: GH₵140.8") ||
+	if !strings.Contains(rb, "Order HAND-6003:\nDouble Clothes Rack - GH₵260.8") ||
+		!strings.Contains(rb, "Halter Pleated Maxi Dress - GH₵140.8") ||
 		!strings.Contains(rb, "That is GH₵527 in all.") {
 		t.Fatalf("the readback should list the items, got %q", rb)
 	}

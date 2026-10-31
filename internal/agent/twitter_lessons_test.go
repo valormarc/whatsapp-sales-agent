@@ -143,7 +143,7 @@ func TestDeliveryAskedWhileBrowsingThenCloseChargesOneTotal(t *testing.T) {
 	c.say(t, buyer, "Send it to Koforidua")
 	c.finishDetails(t, buyer)
 	got = strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Handmade Beaded Bag: GH₵850\nDelivery to Koforidua: GH₵25\nTotal: GH₵875") || !strings.Contains(got, "Pay here") {
+	if !strings.Contains(got, "Handmade Beaded Bag - GH₵850\nDelivery to Koforidua: GH₵25\nTotal: GH₵875") || !strings.Contains(got, "Pay here") {
 		t.Fatalf("close with delivery = %q, want the breakdown and the link", got)
 	}
 	orders := ordersOnDisk(t, dir)

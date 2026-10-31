@@ -809,7 +809,7 @@ func productListText(merchantID string) string {
 	// is never priced here or invited an offer on.
 	parts := make([]string, 0)
 	for _, p := range stockedProducts(merchantID) {
-		parts = append(parts, "- "+p.Name+": "+money.GHS(p.ListPrice))
+		parts = append(parts, "- "+p.Name+" - "+money.GHS(p.ListPrice))
 	}
 	return "Here is what we have:\n" + strings.Join(parts, "\n") + "\nAsk me about any item, or make me an offer."
 }

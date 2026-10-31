@@ -791,7 +791,7 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 			byShop[v.Shop.ShopCode] = append(byShop[v.Shop.ShopCode], orders.OrderItem{Name: v.Product.Name, Price: v.Product.ListPrice})
 		}
 		for _, code := range order {
-			block := []string{code + " has:"}
+			block := []string{code}
 			block = append(block, orderItemLines(byShop[code])...)
 			lines = append(lines, strings.Join(block, "\n"))
 		}
@@ -825,12 +825,12 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 			// The directory lists, one product per line
 			// under the shop's heading, never a row of
 			// names strung along one line.
-			block := []string{m.Name + " (SHOP-" + m.ShopCode + "):"}
+			block := []string{m.Name + " (SHOP-" + m.ShopCode + ")"}
 			for i, p := range products {
 				if i >= 3 {
 					break
 				}
-				block = append(block, p.Name)
+				block = append(block, p.Name+" - "+money.GHS(p.ListPrice))
 			}
 			lines = append(lines, strings.Join(block, "\n"))
 		}
@@ -869,7 +869,7 @@ func discoveryTaste() (string, []ShownProduct) {
 		if len(products) == 0 {
 			continue
 		}
-		bits = append(bits, products[0].Name+" at "+m.Name)
+		bits = append(bits, m.ShopCode+"\n"+products[0].Name+" - "+money.GHS(products[0].ListPrice))
 		shown = append(shown, ShownProduct{ShopID: m.ID, ProductID: products[0].ID})
 		if len(bits) >= 3 {
 			break
@@ -878,9 +878,10 @@ func discoveryTaste() (string, []ShownProduct) {
 	if len(bits) == 0 {
 		return "", nil
 	}
-	// The taste is a list, not a sentence: one offering
-	// per line under its heading.
-	return "Here is some of what the shops have:\n" + strings.Join(bits, "\n") + "\nWhat else are you looking for?", shown
+	// The taste is a list, not a sentence: one block per
+	// shop in the directory shape, blocks parted by a
+	// blank line.
+	return "Here is some of what the shops have:\n\n" + strings.Join(bits, "\n\n") + "\n\nWhat else are you looking for?", shown
 }
 
 // discoveryNet is the no-model net for the unbound buyer: a

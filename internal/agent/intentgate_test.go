@@ -208,7 +208,7 @@ func TestDiscoveryPictureAskBindsServesAndTheOwnerAnswers(t *testing.T) {
 
 	c.say(t, buyer, "I'm looking for a bag")
 	shown := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(shown, "EFUA has it:") || !strings.Contains(shown, "Price: GH₵850") {
+	if !strings.Contains(shown, "EFUA has it:") || !strings.Contains(shown, "Handmade Beaded Bag - GH₵850") {
 		t.Fatalf("the search should show the bag first: %q", shown)
 	}
 	c.say(t, buyer, "Show me picture")
@@ -261,7 +261,7 @@ func TestEntryEchoSelectsTheProductItDoesNotDeal(t *testing.T) {
 	buyer := "233550009106"
 	c.say(t, buyer, "EFUA has: Handmade Beaded Bag - GH₵850")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Price: GH₵850") {
+	if !strings.Contains(got, "Handmade Beaded Bag - GH₵850") {
 		t.Fatalf("the echoed line should show her the product: %q", got)
 	}
 	if strings.Contains(got, "Deal.") || strings.Contains(got, "Where are you based?") || strings.Contains(got, "What name should go on the package?") {

@@ -49,7 +49,7 @@ func TestListingKeepsItsPhotosAndTheBuyerIsSentThem(t *testing.T) {
 		c.say(t, owner, "whole")
 		saved = strings.Join(c.replies(t, owner), "\n")
 	}
-	if !strings.Contains(saved, "Saved ✅ B Buckle Slides | List: GH₵75 | Last: GH₵70") {
+	if !strings.Contains(saved, "Saved ✅ B Buckle Slides - GH₵75, last price GH₵70") {
 		t.Fatalf("the compact save did not land: %q", saved)
 	}
 

@@ -240,7 +240,7 @@ try {
   let r = await say(BUYER_NOCODE, 'buyer (no code)', 'How much is the beaded bag?');
   check(
     'discovery answers with the attributed public result',
-    r.join(' ').includes('EFUA has it:') && r.join(' ').includes('Price: GH₵850'),
+    r.join(' ').includes('EFUA has it:') && r.join(' ').includes('Handmade Beaded Bag - GH₵850'),
     r.join(' '),
   );
   check('no other shop\'s goods mix into her result', !/Tilapia|GH₵180/.test(r.join(' ')), r.join(' '));

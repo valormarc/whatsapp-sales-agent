@@ -245,7 +245,7 @@ func TestPackDescriptorIsNotASplitRequest(t *testing.T) {
 	if strings.Contains(got, "piece by piece") {
 		t.Fatalf("naming the pack earned a refusal: %q", got)
 	}
-	if !strings.Contains(got, "Price: GH₵120") {
+	if !strings.Contains(got, "Raw Shea Butter (500g) - GH₵120") {
 		t.Fatalf("pack-named view = %q, want the ordinary quote", got)
 	}
 }

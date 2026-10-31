@@ -429,12 +429,12 @@ func burstLines(s *Session) []string {
 	}
 	lines := []string{head}
 	for i, item := range s.BurstBatch {
-		line := strconv.Itoa(i+1) + ". *" + item.Name + "* — " + money.GHS(item.ListPrice)
+		line := strconv.Itoa(i+1) + ". *" + item.Name + "* - " + money.GHS(item.ListPrice)
 		if item.Unit != "" && item.BaseQty > 0 {
 			line += " for " + formatQty(item.BaseQty) + " " + unitWord(item.Unit, item.BaseQty)
 		}
 		if len(item.Sizes) > 0 {
-			line += " — sizes " + strings.Join(item.Sizes, ", ")
+			line += ", sizes " + strings.Join(item.Sizes, ", ")
 		}
 		if item.Description != "" {
 			line += "\n" + item.Description
@@ -657,9 +657,11 @@ func handleBurstAnswer(from string, s *Session, text, lower string) bool {
 		}
 		attachPhotos(s.MerchantID, product, item.PhotoRefs)
 		saved = append(saved, product)
-		line := "Added ✅ " + product.Name + " | List: " + money.GHS(product.ListPrice) + " | Last: " + money.GHS(product.FloorPrice)
+		line := "Added ✅ " + product.Name + " - " + money.GHS(product.ListPrice)
 		if product.Fixed {
-			line += " | Fixed price"
+			line += ", fixed price"
+		} else {
+			line += ", last price " + money.GHS(product.FloorPrice)
 		}
 		savedLines = append(savedLines, line)
 	}

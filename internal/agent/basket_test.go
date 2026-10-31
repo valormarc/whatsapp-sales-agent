@@ -62,7 +62,7 @@ func TestBasketTwoItemsOneOrder(t *testing.T) {
 	}
 	c.say(t, buyer, "yes")
 	got = strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Added.") || !strings.Contains(got, "Price: GH₵850") {
+	if !strings.Contains(got, "Added.") || !strings.Contains(got, "Leather Bag - GH₵850") {
 		t.Fatalf("a yes should park the heels and show the bag, got %q", got)
 	}
 	c.say(t, buyer, "850")
@@ -91,11 +91,11 @@ func TestBasketTwoItemsOneOrder(t *testing.T) {
 		t.Fatalf("order name = %q", order.ProductName)
 	}
 	notes := strings.Join(c.replies(t, basketOwner), "\n")
-	if !strings.Contains(notes, "Item: Ankle Strap Heels, size 40: GH₵111") || !strings.Contains(notes, "Item: Leather Bag: GH₵850") ||
+	if !strings.Contains(notes, "Item: Ankle Strap Heels, size 40 - GH₵111") || !strings.Contains(notes, "Item: Leather Bag - GH₵850") ||
 		!strings.Contains(notes, "Agreed price: GH₵"+moneyFigure(sum)) {
 		t.Fatalf("the seller's notice should list both items with the size, got %q", notes)
 	}
-	if !strings.Contains(buyerGot, "Ankle Strap Heels: GH₵111") || !strings.Contains(buyerGot, "Leather Bag: GH₵850") || !strings.Contains(buyerGot, "Total: GH₵961") {
+	if !strings.Contains(buyerGot, "Ankle Strap Heels - GH₵111") || !strings.Contains(buyerGot, "Leather Bag - GH₵850") || !strings.Contains(buyerGot, "Total: GH₵961") {
 		t.Fatalf("the buyer should hear her items back, got %q", buyerGot)
 	}
 }

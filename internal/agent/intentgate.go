@@ -133,7 +133,7 @@ func thinkStageIntentQ(from string, s *Session, merchant *catalogue.Merchant, ms
 		// sentence come back strung in a sentence.
 		b.WriteString("She already has these agreed in this same order:\n")
 		for _, it := range s.Basket {
-			b.WriteString(it.Product.Name + ": " + money.GHS(it.AgreedPrice) + "\n")
+			b.WriteString(it.Product.Name + " - " + money.GHS(it.AgreedPrice) + "\n")
 		}
 	}
 	b.WriteString("The open question she was just asked: \"" + question + "\"\n")
