@@ -457,6 +457,41 @@ func SetDeliveryNote(merchantID, note string) error {
 	})
 }
 
+// SetDescription replaces a product's description with the
+// words the owner gives. The name she uses is resolved the
+// same way every other product command resolves it.
+func SetDescription(merchantID, name, description string) (Product, error) {
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return Product{}, errors.New("the description is empty")
+	}
+	var updated Product
+	err := updateMerchant(merchantID, func(m *Merchant) error {
+		i := productIndex(m, name)
+		if i < 0 {
+			return ErrProductNotFound
+		}
+		m.Products[i].Description = description
+		updated = m.Products[i]
+		return nil
+	})
+	return updated, err
+}
+
+// RenameShop changes the shop's display name. The shop code
+// — her address, the link her buyers already hold — never
+// moves with it.
+func RenameShop(merchantID, newName string) error {
+	newName = strings.TrimSpace(newName)
+	if newName == "" {
+		return errors.New("the new name is empty")
+	}
+	return updateMerchant(merchantID, func(m *Merchant) error {
+		m.Name = newName
+		return nil
+	})
+}
+
 // ErrBadMeasure is returned when a product is given a measure
 // with no unit or a base quantity of zero or less: a measure the
 // scaling maths would divide by, or quote nonsense from.

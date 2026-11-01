@@ -278,7 +278,7 @@ func TestDeliveryStyleAndAreaCommands(t *testing.T) {
 		t.Fatalf("style = %q, want quote", got)
 	}
 	mc.say(t, merchant, "my catalogue")
-	if got := strings.Join(mc.replies(t, merchant), "\n"); !strings.Contains(got, "you quote the fee for each order") {
+	if got := strings.Join(mc.replies(t, merchant), "\n"); !strings.Contains(got, "quoted per order") {
 		t.Fatalf("catalogue must show the quote style, got %q", got)
 	}
 }

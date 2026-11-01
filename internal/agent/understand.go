@@ -80,6 +80,9 @@ const (
 	intentAsk            = "ask"             // a question the facts can answer
 	intentOffTopic       = "offtopic"        // nothing to do with the shop
 	intentUnclear        = "unclear"         // a person would still ask what she means
+	intentDelivery       = "delivery"        // a buyer asks how delivery works at this shop: its cost, its reach, its note
+	intentChangePrice    = "change_price"    // the owner asks, in her own words, for a product's price to change
+	intentChangeLast     = "change_last_price" // the owner asks, in her own words, for a product's last price to change
 )
 
 // modelFigure is a figure in a model's JSON reading. The
@@ -129,6 +132,11 @@ type understood struct {
 	Item   string      `json:"item"`
 	Reply  string      `json:"reply"`
 	Budget modelFigure `json:"budget"`
+	// Figure is the number a command in her own words
+	// carries: the new price, the new last price. Like the
+	// budget, it is only ever carried once code verifies
+	// the same figure stands in her message itself.
+	Figure modelFigure `json:"figure"`
 
 	// DirectRoute is read by code from her words: she said the
 	// money went somewhere other than the payment link, so it
@@ -603,8 +611,9 @@ Three laws govern every reply the shop sends. First, think and answer: when the 
 Reason in this order before you answer: first, what she is referring to (a product, an order, a price already named, something she was just shown or told); second, what she wants to happen; third, what the facts allow. Most wrong answers come from skipping the first step. When the facts say she is replying to a quoted message, that message — and who sent it, her or the shop — is what she is referring to: judge her words against the quoted message first, and against the current conversation second.
 
 Answer with strict JSON only, no other text:
-{"intent": "...", "item": "...", "reply": "...", "budget": 0}
+{"intent": "...", "item": "...", "reply": "...", "budget": 0, "figure": 0}
 "budget" is a number, not words: when she states what she can spend (her budget, an amount she has for this, a ceiling she names), give that figure there exactly as she stated it; otherwise 0.
+"figure" is a number, not words: when the owner sets a figure — a new price, a new last price — give that figure there exactly as she stated it; otherwise 0.
 
 The acts you can name:
 - "payment_blocked": she tried to pay, or is trying, and could not: network trouble, the payment service not working, the bank or MoMo failing, no reception. Not a refusal to pay.
@@ -612,7 +621,7 @@ The acts you can name:
 - "payment_later": she will pay, just later: tomorrow, in the evening, when money comes.
 - "payment_want": she wants to pay now, or asks for the payment link: "send me the payment link", "I want to pay now", "let me pay", asking for the link again without saying it is dead.
 - "payment_claim": she says she has paid, in her own words, whether or not she uses the word paid: "I just sent the money", "check your phone, I have done it", "I have made the payment". Payment here is only ever through the payment button the platform sent for the order: the platform verifies a payment on it with the payment service itself, and a payment she says went anywhere else is one the platform cannot see or confirm. Her word alone never settles anything, and no merchant is ever asked to confirm a payment.
-- "item": she is asking about, or wants, a product on the shelf. Put the product's name, as it appears in the facts, in "item".
+- "item": she is asking about, or wants, a product — whether the facts hold it or not. An availability question ("do you have X", "is there X") is always this act, never "ask": put the name she used in "item" even when the shelf does not hold it, and the platform will record her want and answer in want form. Put the product's name, as it appears in the facts when it is there, in "item".
 - "picture": she wants to SEE a product before she goes on: asking for its photo in any words, or saying she will not buy until she has seen it. Put the product's name in "item" when she names one; when she plainly means the one she was last looking at, leave "item" empty and the platform will use that one. A picture ask is never a generic question and never a buy: the picture is served first.
 - "order_status": she is asking after an order she already made: where it stands, whether it is paid, what happens next with it.
 - "order_sent": the shop owner is reporting that the goods for a paid order have gone out to the buyer: she has sent it, dispatched it, given it to the rider or the station, or made it ready for collection. Only the owner names this act; a buyer never does.
@@ -625,6 +634,9 @@ The acts you can name:
 - "order_payment": the shop owner is asking about the payment on an order: whether it has been paid, what is happening with it. When an open order is in the facts and she asks about "the payment" or "this order" without naming another, that is the order she means.
 - "ask_buyer": the shop owner is telling you to ask her buyer something, or to find something out from the buyer: "ask the buyer", "ask her", "find out from her". You carry the question to the buyer yourself; never ask the owner what to ask when the facts show the open matter.
 - "attention": the shop owner is asking what needs her, what is outstanding, what she should deal with today: "what needs my attention", "what is pending", "what should I do today", "anything for me to handle". The platform answers from her books — disputes, paid orders waiting to be sent, her unfinished work, orders waiting on buyers — so do not draft the list yourself.
+- "change_price": the shop owner is asking, in whatever words of her own, for a product's price to change: "abeg change di price of Ankara Fabric to 500", "make the heels 130", "the bag should be 450 now". Only the owner names this act. Put the product's name, as it appears in her shelf facts, in "item", and the new price in "figure". The platform verifies both against her words and her shelf before anything moves; do not draft the confirmation yourself.
+- "change_last_price": the same ask for a product's LAST price — the lowest she will go: "drop her last price to 100", "make 380 the last price for the ankara". Put the product's name in "item" and the new last price in "figure". Only the owner names this act.
+- "delivery": a buyer is ASKING how delivery works at this shop: what it costs, how it is arranged, where the shop delivers to, when it leaves. A question, never her stating her own arrangement for an order in motion — "I will pick it up myself", "deliver it to Osu", "I will send a rider" are her choices for her purchase, never this act. The platform answers from the shop's own delivery facts; do not draft it yourself.
 - "new_listing": the shop owner is giving you a product to sell: describing goods she stocks, pasting an advert for a product, naming a product with its price or description so it can be listed. Goods copy meant for the shelf is this act, never a question; a statement about her shop, her orders or her day is not.
 - "shelf": she wants to see what the shop has, or start again from the shelf.
 - "basket_view": she is asking to see her basket: what she has picked, what she has already settled, what she is carrying in this order so far, in any words ("check basket", "what do I have so far?", "did we clear the basket?"). Do not draft it yourself; the platform lists it from her session.
@@ -766,7 +778,7 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 		b.WriteString("The last thing the agent told her, which an \"explain this\" from her most likely points at: \"" + sessions.get(key).LastMerchantNote + "\" If she asks to explain, explain THAT, in plain words, from the facts.\n")
 	}
 	b.WriteString("Things she can ask the agent to do: show her catalogue, change a price or a last price, set her daily giveaway allowance, remove a product, add a product by describing it or sending a photo, tell her how today is going, report on the payment of an order, ask a buyer a question on her behalf, and tell her what needs her attention.\n")
-	b.WriteString("Use \"order_payment\" when she is asking about the payment on an order, \"ask_buyer\" when she is telling the agent to ask her buyer something, and \"attention\" when she is asking what needs her or what is outstanding. Use \"ask\" for any other question her shelf, her day, her allowance or those abilities can answer, drafting the reply from the facts only.\n")
+	b.WriteString("Use \"order_payment\" when she is asking about the payment on an order, \"ask_buyer\" when she is telling the agent to ask her buyer something, and \"attention\" when she is asking what needs her or what is outstanding. Use \"change_price\" when she asks for a product's price to change, in any words of her own, and \"change_last_price\" for its last price, naming the product in \"item\" and the new figure in \"figure\". Use \"ask\" for any other question her shelf, her day, her allowance or those abilities can answer, drafting the reply from the facts only.\n")
 	b.WriteString("\nThe owner's message: " + msg)
 	sys := thinkSystem
 	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, Turn: turnTokenFor(from)})
@@ -812,7 +824,7 @@ func parseUnderstood(out *string) *understood {
 	}
 	switch u.Intent {
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
-		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentRecommend, intentTooExpensive, intentOrderPayment, intentAskBuyer, intentAttention, intentNewListing, intentShelf, intentBasketView, intentCourtesy, intentAsk, intentOffTopic, intentUnclear:
+		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentRecommend, intentTooExpensive, intentOrderPayment, intentAskBuyer, intentAttention, intentNewListing, intentShelf, intentBasketView, intentCourtesy, intentAsk, intentOffTopic, intentUnclear, intentDelivery, intentChangePrice, intentChangeLast:
 		return &u
 	}
 	return nil
@@ -859,6 +871,21 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		return true
 	case intentBasketView:
 		serveBasketView(from, s, shopID)
+		return true
+	case intentDelivery:
+		// How delivery works at this shop is a fact the
+		// shop itself set: the answer is composed from
+		// those facts, so its figures and her note are
+		// always exactly hers. But a purchase in motion
+		// owns her words first: "I will pick it up
+		// myself" said over a live quote is her choice
+		// for that order, not a question about delivery,
+		// and answering it with the delivery facts would
+		// eat the sale.
+		if s.Product != nil {
+			return false
+		}
+		whatsapp.SendText(from, deliveryAnswerFor(merchant))
 		return true
 	case intentOrderStatus:
 		o := orders.Default.NewestFor(shopID, from)
@@ -919,6 +946,14 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 			// the turn: it quotes the cut, haggles the
 			// cut, refuses what is not there.
 			if q, ok := parseQuantity(strings.ToLower(u.Words)); ok && q.Unit == p.Unit {
+				return false
+			}
+			// A pickup spoken over a standing quote for
+			// this same product is the purchase itself,
+			// not a fresh look at the item: decline, and
+			// the road below closes it at the quoted
+			// price with her mode already answered.
+			if s.LastViewed != nil && s.LastViewed.ID == p.ID && s.Qty > 0 && pickupRe.MatchString(strings.ToLower(u.Words)) {
 				return false
 			}
 		}
@@ -1000,6 +1035,16 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		}
 	case intentAsk, intentUnclear:
 		if strings.TrimSpace(u.Reply) == "" {
+			return false
+		}
+		// An availability ask for something the shop does
+		// not stock is the want road's, however the reading
+		// names it: a drafted "we do not have it" ends a
+		// conversation the want book exists to continue,
+		// and it writes nothing down. Decline, and the
+		// dispatch below records the want and offers the
+		// shelf, the way a seller answers.
+		if item, ok := unstockedAsk(strings.ToLower(u.Words)); ok && stockedByLooseName(shopID, item) == nil {
 			return false
 		}
 		_, figures := shelfFacts(shopID)
@@ -1155,6 +1200,26 @@ func reissueLink(from string, s *Session, merchant *catalogue.Merchant, order *o
 // catalogue moves on a model's reading alone.
 func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopID, msg string, u *understood) bool {
 	switch u.Intent {
+	case intentChangePrice, intentChangeLast:
+		// A catalogue command in her own mixed words: the
+		// model named the product and the figure, and both
+		// are verified before anything moves — the product
+		// against her shelf, the figure against the words
+		// she actually wrote. Verified, it travels the same
+		// road as the typed command and answers the same
+		// way; unverified, it is not acted on at all.
+		if strings.TrimSpace(u.Item) == "" || u.Figure <= 0 || !budgetFigureIn(msg, float64(u.Figure)) {
+			return false
+		}
+		if catalogue.FindByName(shopID, strings.TrimSpace(u.Item)) == nil {
+			return false
+		}
+		if u.Intent == intentChangePrice {
+			serveChangeListPrice(from, shopID, strings.TrimSpace(u.Item), float64(u.Figure))
+		} else {
+			serveChangeFloorPrice(from, shopID, strings.TrimSpace(u.Item), float64(u.Figure))
+		}
+		return true
 	case intentOrderSent:
 		return merchantMarkSent(from, merchant, shopID, msg)
 	case intentOrderPayment:

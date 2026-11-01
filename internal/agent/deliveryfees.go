@@ -192,6 +192,40 @@ func parseAreaFees(text string) []catalogue.AreaFee {
 
 // deliveryStyleOf is how the shop's fees are known: "quote"
 // only when she has chosen it; every other shop is "set".
+// deliveryAnswerFor is the buyer-facing answer to how
+// delivery works at one shop, composed from the shop's own
+// settings: her style, her standard fee, her area fees, who
+// the delivery money goes to, and her note in her own words.
+func deliveryAnswerFor(merchant *catalogue.Merchant) string {
+	if merchant == nil {
+		return "Delivery is arranged with the seller when you order."
+	}
+	var parts []string
+	if deliveryStyleOf(merchant) == "quote" {
+		parts = append(parts, "Delivery here is quoted per order: when you are ready to buy, I ask the seller for your order's fee, and you see it in your total before you pay.")
+	} else if merchant.DeliveryFee > 0 {
+		parts = append(parts, "Delivery costs "+money.GHS(merchant.DeliveryFee)+" a trip.")
+		if len(merchant.DeliveryAreas) > 0 {
+			areas := make([]string, 0, len(merchant.DeliveryAreas))
+			for _, a := range merchant.DeliveryAreas {
+				areas = append(areas, a.Area+" is "+money.GHS(a.Fee))
+			}
+			parts = append(parts, "For some places the fee is different: "+strings.Join(areas, ", ")+". Everywhere else pays "+money.GHS(merchant.DeliveryFee)+".")
+		}
+		if deliveryPaidToOf(merchant) == "merchant" {
+			parts = append(parts, "The delivery fee is part of the one total you pay here.")
+		} else {
+			parts = append(parts, "You pay the delivery fee to whoever brings your item, when it arrives.")
+		}
+	} else {
+		parts = append(parts, "Delivery is arranged with the seller when you order.")
+	}
+	if merchant.DeliveryNote != "" {
+		parts = append(parts, merchant.DeliveryNote)
+	}
+	return strings.Join(parts, " ")
+}
+
 func deliveryStyleOf(merchant *catalogue.Merchant) string {
 	if merchant != nil && merchant.DeliveryStyle == "quote" {
 		return "quote"

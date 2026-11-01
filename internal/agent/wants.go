@@ -177,7 +177,18 @@ func stockedByLooseName(shopID, item string) *catalogue.Product {
 // shelf is offered back with a light question, the way a real seller
 // answers. The offer wording rotates like the other repeated lines.
 func recordWantAndOfferShelf(from string, s *Session, msg string) {
-	wants.Default.Record(s.MerchantID, from, msg)
+	if wants.Default.Record(s.MerchantID, from, msg) {
+		// A new want is news the moment it lands: the
+		// seller hears it in her own chat, in the buyer's
+		// own words, not the next time she thinks to ask.
+		// The book dedupes a repeated ask, so she is told
+		// once per want, never once per message.
+		if shop := catalogue.GetMerchant(s.MerchantID); shop != nil {
+			if phone := merchantNotifyPhone(shop); phone != "" {
+				whatsapp.SendText(phone, "A buyer just asked for something you do not stock: \""+msg+"\" I have written it in your want book — say \"buyer wants\" to see them all — and I will tell her the moment you stock it.")
+			}
+		}
+	}
 	shelfLines := []string{
 		"Let me help you find it. Tell me which of these you are after.",
 		"This is what is on the shelf just now. Which of these are you after?",

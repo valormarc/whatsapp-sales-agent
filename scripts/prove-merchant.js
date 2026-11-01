@@ -138,14 +138,16 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
     ], /SHOP-[A-Z0-9-]+/);
     const shopCode = (bodies(outboxTo(M)).match(/SHOP-([A-Z0-9-]+)/) || [])[1] || "";
     check("she opens her shop in chat and is handed her code", signed && !!shopOf(M), shopCode ? "code " + shopCode : "no code found");
+    const beforeCat = outboxTo(M).length;
     const emptyCat = await ask(M, "my catalogue");
-    const catOpenedWalk = /What is it called/i.test(bodies(outboxTo(M).slice(-2)));
+    const catOpenedWalk = /What is it called/i.test(bodies(outboxTo(M).slice(beforeCat)));
     if (catOpenedWalk) await say(M, "cancel");
     check("an empty catalogue answers like a dashboard home, not an error", /add|empty|nothing/i.test(emptyCat) && !catOpenedWalk);
 
     // Stocking, way one: the guided walk, a measured good.
     await say(M, "add a product");
     const ankaraSaved = await answerWalk(M, [
+      [/shall i add/i, "yes"],
       [/called/i, "Ankara Fabric"],
       [/tell me about|in a few words|describe|description/i, "Bright wax print cotton"],
       [/right price/i, "yes"],
@@ -154,8 +156,7 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
       [/price/i, "450"],
       [/by measure/i, "by the yard"],
       [/sizes/i, "no"],
-      [/save|shall i/i, "yes"],
-    ], /Ankara Fabric[\s\S]*saved|is live/i);
+    ], /Saved\.|is live/);
     await closeWalk(M);
     const ankara = (shopOf(M) || { products: [] }).products.find((p) => p.name === "Ankara Fabric");
     check("guided walk stocks a measured good at 450, last 380, 6 yards", ankaraSaved && ankara && ankara.listPrice === 450 && ankara.floorPrice === 380 && ankara.baseQty === 6,
@@ -180,7 +181,7 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
     const dupOffered = /replace|rename/i.test(bodies(outboxTo(M)));
     if (dupOffered && !(shopOf(M) || { products: [] }).products.find((p) => p.name.includes("Heels") && p.listPrice === 125)) {
       await say(M, "replace");
-      await answerWalk(M, [[/save|shall i/i, "yes"]], /Saved\.|is live/i, 4);
+      await answerWalk(M, [[/save|shall i/i, "yes"]], /Saved\.|is live/, 4);
     }
     const heelsCount = (shopOf(M) || { products: [] }).products.filter((p) => p.name.includes("Heels")).length;
     const heelsNow = (shopOf(M) || { products: [] }).products.find((p) => p.name.includes("Heels"));
@@ -189,6 +190,7 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
     // Measure commands, both ways.
     await say(M, "add a product");
     await answerWalk(M, [
+      [/shall i add/i, "yes"],
       [/called/i, "Shea Butter"],
       [/tell me about|in a few words|describe|description/i, "Raw unrefined shea"],
       [/right price/i, "yes"],
@@ -197,8 +199,7 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
       [/price/i, "200"],
       [/by measure/i, "whole only"],
       [/sizes/i, "no"],
-      [/save|shall i/i, "yes"],
-    ], /Shea Butter[\s\S]*saved|is live/i);
+    ], /Saved\.|is live/);
     await closeWalk(M);
     const measureReply = await ask(M, "set measure of Shea Butter to 5 litres");
     check("set measure reprices by the unit (200 for 5 litres = 40 a litre)", /GH₵40/.test(measureReply) && (shopOf(M).products.find((p) => p.name === "Shea Butter") || {}).unit === "litre");
@@ -211,6 +212,11 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
     const fixedReply = await ask(M, "change last price of Ankle Strap Heels to 130");
     check("change last price to the list makes it fixed, in her words", /fixed/i.test(fixedReply));
 
+    const releaseGate = async (buyer) => {
+      if (!orders().find((o) => o.from === buyer) && /in hand/i.test(bodies(outboxTo(buyer)))) {
+        await say(M, "yes");
+      }
+    };
     // A buyer meets the fixed price.
     await say(B1, "SHOP-" + shopCode);
     await say(B1, "Ankle Strap Heels");
@@ -220,6 +226,7 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
     check("a fixed price deals at the price", bodies(dealt).includes("yours for GH₵130"));
     await say(B1, "I will pick it up myself");
     await say(B1, "Ama Serwaa"); await say(B1, "no"); await say(B1, "yes");
+    await releaseGate(B1);
     check("the fixed-price sale completes with the pay button", outboxTo(B1).some((r) => r.kind === "cta_url"));
 
     // A buyer buys a cut of the measure.
@@ -236,7 +243,8 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
     check("3 yards of a 6-yard 450 piece orders at 225", !!cutOrder && cutOrder.price === 225, cutOrder ? "price " + cutOrder.price : "no order");
 
     // Removal.
-    const removed = await ask(M, "remove Phone Case");
+    const removedQ = await ask(M, "remove Phone Case");
+    const removed = removedQ + "\n" + (await ask(M, "yes"));
     check("remove takes a product off the shelf", !!(shopOf(M) || { products: [] }).products.every((p) => !p.name.includes("Phone Case")) && /removed|taken off|gone/i.test(removed));
 
     // Delivery, every way it can be set.
@@ -256,6 +264,7 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
     await say(B3, "200");
     await say(B3, "Delivery to Osu");
     await say(B3, "Yaw Darko"); await say(B3, "no"); await say(B3, "yes");
+    await releaseGate(B3);
     const sheaOrder = orders().find((o) => o.from === B3);
     check("area fee and merchant purse ride the total (200 + Osu 30 = 230)", !!sheaOrder && sheaOrder.deliveryFee === 30 && sheaOrder.total === 230,
       sheaOrder ? "fee " + sheaOrder.deliveryFee + " total " + sheaOrder.total : "no order");
@@ -274,6 +283,7 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
     check("an unstocked ask is written down, alerted, and listed for her", wantAlert && /guinea brocade/i.test(wantsList));
     await say(M, "add a product");
     await answerWalk(M, [
+      [/shall i add/i, "yes"],
       [/called/i, "Guinea Brocade"],
       [/tell me about|in a few words|describe|description/i, "Heavy woven brocade"],
       [/right price/i, "yes"],
@@ -282,8 +292,7 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
       [/price/i, "500"],
       [/by measure/i, "whole only"],
       [/sizes/i, "no"],
-      [/save|shall i/i, "yes"],
-    ], /Guinea Brocade[\s\S]*saved|is live/i);
+    ], /Saved\.|is live/);
     await closeWalk(M);
     check("stocking a wanted item alerts the buyer who asked", /guinea brocade/i.test(bodies(outboxTo(B4))) && /in stock|available|landed|arrived/i.test(bodies(outboxTo(B4))));
 
@@ -291,6 +300,12 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
     const loopOrder = orders().find((o) => o.from === B3);
     check("she received the order notice for the sale", !!loopOrder && bodies(outboxTo(M)).includes(loopOrder.reference));
     if (loopOrder) {
+      try { agent.kill("SIGKILL"); } catch {}
+      await sleep(800);
+      const seededLoop = store("orders.json"); seededLoop[loopOrder.reference].status = "paid"; seededLoop[loopOrder.reference].paymentPath = "seev";
+      fs.writeFileSync(path.join(dir, "data", "orders.json"), JSON.stringify(seededLoop));
+      var agentLoop = spawn(path.join(__dirname, "..", "agent"), [], { env, stdio: ["ignore", "ignore", errFd] });
+      for (let i = 0; i < 40; i++) { try { const r = await fetch(`${BASE}/healthz`); if (r.ok) break; } catch {} await sleep(400); }
       await say(M, "I have sent " + loopOrder.reference);
       check("marking sent tells the buyer", /sent/i.test(bodies(outboxTo(B3).slice(-2))));
       await say(B3, "It has arrived, thank you");
@@ -298,15 +313,18 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
     } else { check("marking sent tells the buyer", false, "no B3 order to send"); check("the buyer's arrival closes the loop with her", false, "no B3 order"); }
 
     // A dispute from her side of the counter.
+    await say(M, "set stock of Shea Butter to 2");
     await say(B5, "SHOP-" + shopCode);
     await say(B5, "Shea Butter");
     await say(B5, "200");
     await say(B5, "I will pick it up myself");
     await say(B5, "Esi Owusu"); await say(B5, "no"); await say(B5, "yes");
+    await releaseGate(B5);
     const dispOrder = orders().find((o) => o.from === B5);
     if (!dispOrder) { check("a dispute reaches her with the buyer's own words", false, "the B5 sale never completed"); check("her refund claim is put to the buyer, not taken on her word", false, "no dispute"); check("the buyer's yes closes it with no strike", false, "no dispute"); }
     if (dispOrder) {
     try { agent.kill("SIGKILL"); } catch {}
+    try { if (typeof agentLoop !== "undefined") agentLoop.kill("SIGKILL"); } catch {}
     await sleep(800);
     const seeded = store("orders.json"); seeded[dispOrder.reference].status = "paid"; seeded[dispOrder.reference].paymentPath = "seev";
     fs.writeFileSync(path.join(dir, "data", "orders.json"), JSON.stringify(seeded));
@@ -362,6 +380,7 @@ const B1 = "233551200101", B2 = "233551200102", B3 = "233551200103", B4 = "23355
     console.log("ERROR " + e.message); fail++;
   } finally {
     try { agent.kill("SIGKILL"); } catch {}
+    try { if (typeof agentLoop !== "undefined") agentLoop.kill("SIGKILL"); } catch {}
     try { if (typeof agent2 !== "undefined") agent2.kill("SIGKILL"); } catch {}
     console.log(`\nmerchant proof: ${pass} pass, ${fail} fail`);
     process.exit(fail ? 1 : 0);

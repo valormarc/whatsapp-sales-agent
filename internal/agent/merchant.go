@@ -162,6 +162,15 @@ var (
 	setStockRe    = regexp.MustCompile(`^(?:set|update) stock of (.+?) to (\d+)$`)
 	myOrdersRe    = regexp.MustCompile(`^(my )?orders[.!?]?$`)
 	cancelOrderRe = regexp.MustCompile(`^cancel order ([a-z0-9-]+)[.!?]?$`)
+	// Her shop link, asked for in the shape she would ask a
+	// person: the link is the door her buyers already use,
+	// and it is always hers to have back.
+	shopLinkRe = regexp.MustCompile(`^(send me|give me|share|show me|what is|what's)?\s*(me\s+)?(my\s+|the\s+)?shop link[.!?]?$`)
+	// A description rewrite and a shop rename, in the same
+	// command shape as the price commands. The name is read
+	// from her lowered words; the new words keep her case.
+	changeDescRe = regexp.MustCompile(`(?i)^(?:change|set|update) (?:the )?description of (.+?) to (.+)$`)
+	renameShopRe = regexp.MustCompile(`(?i)^rename (?:my )?shop to (.+)$`)
 	// The wants list: what her buyers asked for that she does not
 	// stock, kept for her in the want book.
 	wantsListRe = regexp.MustCompile(`^(buyer )?wants$|^(buyer )?requests$`)
@@ -315,10 +324,29 @@ func serveRemoveAnswer(from string, s *Session, merchantID, lower string) {
 			whatsapp.SendText(from, "I could not remove it after all: "+err.Error()+". Nothing changed.")
 			return
 		}
-		whatsapp.SendText(from, removed.Name+" is out of your catalogue. Customers will no longer be offered it.")
+		whatsapp.SendText(from, "Removed. "+removed.Name+" is out of your catalogue. Customers will no longer be offered it.")
 		return
 	}
 	whatsapp.SendText(from, "No problem. "+name+" stays in your catalogue.")
+}
+
+// walkCommandOutranks reports whether a message is one of
+// the platform's own taught commands in its exact shape —
+// the words the agent itself tells her to say. An open
+// listing walk never owns these: they are how she runs her
+// shop, and reading one as a product name or a step answer
+// holds her hostage to a walk she may not even remember
+// opening. The set is whole-message exact, so a sentence
+// that merely contains the words still feeds the walk.
+func walkCommandOutranks(text string) bool {
+	switch strings.TrimSpace(strings.ToLower(text)) {
+	case "my catalogue", "my catalog", "my products", "my items",
+		"my orders", "buyer wants", "my shop link", "shop link",
+		"send me my shop link", "send me my link",
+		"how is today", "what needs my attention", "what needs attention":
+		return true
+	}
+	return false
 }
 
 func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
@@ -378,6 +406,17 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 			whatsapp.SendText(from, "That question is no longer open, so I have left everything as it is.")
 			return
 		}
+	}
+
+	if s.Onboarding != nil && walkCommandOutranks(text) {
+		// A recognised command in its exact taught shape is
+		// never a walk answer: she asked for her catalogue
+		// (or her orders, her link, her wants) and the open
+		// walk was eating the words as a product name. The
+		// walk is dropped, the way cancel drops it, and the
+		// command is served by the ordinary dispatch below.
+		s.Onboarding = nil
+		sessions.put(key, s)
 	}
 
 	if s.Onboarding != nil {
@@ -1210,6 +1249,38 @@ func enterOnboardingConfirm(from string, flow *OnboardingFlow) {
 	}
 }
 
+// serveChangeListPrice carries out a list price change and
+// answers in the command's own words. The typed command and
+// the model's reading of the same ask in her own words share
+// this one road, so the two can never drift apart.
+func serveChangeListPrice(from, merchantID, name string, amount float64) {
+	product, err := catalogue.UpdateListPrice(merchantID, name, amount)
+	if err != nil {
+		whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
+		return
+	}
+	if product.Fixed {
+		whatsapp.SendText(from, "Done. "+product.Name+" now lists at "+money.GHS(product.ListPrice)+", and it is still fixed price.")
+	} else {
+		whatsapp.SendText(from, "Done. "+product.Name+" now lists at "+money.GHS(product.ListPrice)+". Its last price stays "+money.GHS(product.FloorPrice)+".")
+	}
+}
+
+// serveChangeFloorPrice is the same shared road for a last
+// price change.
+func serveChangeFloorPrice(from, merchantID, name string, amount float64) {
+	product, err := catalogue.UpdateFloorPrice(merchantID, name, amount)
+	if err != nil {
+		whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
+		return
+	}
+	if product.Fixed {
+		whatsapp.SendText(from, "Done. "+product.Name+" is now fixed at "+money.GHS(product.ListPrice)+": there is no bargaining on it.")
+	} else {
+		whatsapp.SendText(from, "Done. The last price for "+product.Name+" is now "+money.GHS(product.FloorPrice)+". Its price stays "+money.GHS(product.ListPrice)+".")
+	}
+}
+
 // handleMerchantCommand runs one catalogue command outside the
 // onboarding flow. It returns true when the message was a command,
 // whether it succeeded or not, so the caller does not fall through to
@@ -1257,6 +1328,15 @@ func retryPaymentSetup(from string, merchant *catalogue.Merchant, lower string) 
 }
 
 func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant, text, lower string) bool {
+	if shopLinkRe.MatchString(lower) {
+		if link := shopEntryLink(merchant); link != "" {
+			whatsapp.SendText(from, "Your shop link: "+link+"\nAnyone who taps it lands in your shop here, and only your shop. Your shop code is SHOP-"+merchant.ShopCode+".")
+		} else {
+			whatsapp.SendText(from, "Your shop code is SHOP-"+merchant.ShopCode+": a buyer sends it here, in this chat, and lands in your shop, and only your shop.")
+		}
+		return true
+	}
+
 	if payoutDetailsRe.MatchString(lower) {
 		return offerPayoutDetailsFlow(from, s, merchant)
 	}
@@ -1285,7 +1365,7 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 		}
 		lines = append(lines, "Your daily giveaway allowance is "+money.GHS(merchant.DailyGiveawayAllowance)+". Your last prices are yours only; customers never see them.")
 		if deliveryStyleOf(merchant) == "quote" {
-			line := "Delivery: you quote the fee for each order as it comes, and the buyer sees it inside her full total before she pays."
+			line := "Delivery: quoted per order. You name the fee for each order as it comes, and the buyer sees it inside her full total before she pays."
 			if merchant.DeliveryNote != "" {
 				line += " " + merchant.DeliveryNote
 			}
@@ -1456,16 +1536,7 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			whatsapp.SendText(from, "I could not read the new price in that. Try: change price of <name> to 500.")
 			return true
 		}
-		product, err := catalogue.UpdateListPrice(merchant.ID, strings.TrimSpace(m[1]), *amount)
-		if err != nil {
-			whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
-			return true
-		}
-		if product.Fixed {
-			whatsapp.SendText(from, "Done. "+product.Name+" now lists at "+money.GHS(product.ListPrice)+", and it is still fixed price.")
-		} else {
-			whatsapp.SendText(from, "Done. "+product.Name+" now lists at "+money.GHS(product.ListPrice)+". Its last price stays "+money.GHS(product.FloorPrice)+".")
-		}
+		serveChangeListPrice(from, merchant.ID, strings.TrimSpace(m[1]), *amount)
 		return true
 	}
 
@@ -1475,16 +1546,27 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			whatsapp.SendText(from, "I could not read the new last price in that. Try: change last price of <name> to 500.")
 			return true
 		}
-		product, err := catalogue.UpdateFloorPrice(merchant.ID, strings.TrimSpace(m[1]), *amount)
+		serveChangeFloorPrice(from, merchant.ID, strings.TrimSpace(m[1]), *amount)
+		return true
+	}
+
+	if m := changeDescRe.FindStringSubmatch(text); m != nil {
+		product, err := catalogue.SetDescription(merchant.ID, strings.TrimSpace(m[1]), strings.TrimSpace(m[2]))
 		if err != nil {
 			whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
 			return true
 		}
-		if product.Fixed {
-			whatsapp.SendText(from, "Done. "+product.Name+" is now fixed at "+money.GHS(product.ListPrice)+": there is no bargaining on it.")
-		} else {
-			whatsapp.SendText(from, "Done. The last price for "+product.Name+" is now "+money.GHS(product.FloorPrice)+". Its price stays "+money.GHS(product.ListPrice)+".")
+		whatsapp.SendText(from, "Done. The description for "+product.Name+" now reads: "+product.Description)
+		return true
+	}
+
+	if m := renameShopRe.FindStringSubmatch(text); m != nil {
+		newName := strings.TrimSpace(m[1])
+		if err := catalogue.RenameShop(merchant.ID, newName); err != nil {
+			whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
+			return true
 		}
+		whatsapp.SendText(from, "Done. Your shop is now called "+newName+". Your shop code stays SHOP-"+merchant.ShopCode+", so the link your buyers already have still lands here.")
 		return true
 	}
 

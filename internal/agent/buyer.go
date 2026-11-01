@@ -567,6 +567,25 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		return
 	}
 
+	// A pickup spoken over a standing measure quote is the
+	// purchase itself: she was quoted the price for her
+	// amount, and "I will pick it up myself" takes it at
+	// that price and answers the fulfilment question in
+	// the same breath. The deal closes at the quoted
+	// price — the price she was just given — and her own
+	// words are then read by the fulfilment step they
+	// belong to, so the mode lands without being asked
+	// for twice. A haggle in progress owns her words
+	// first; this road is only for a quote still standing
+	// at its price.
+	if s.Stage == "browsing" && s.LastViewed != nil && s.LastViewed.ByMeasure() && s.Qty > 0 && !s.PendingClose && s.Round == 0 && pickupRe.MatchString(lower) {
+		sc := scaledCopy(s.LastViewed, s.Qty)
+		s.Product = &sc
+		beginFulfilment(from, s, sc.ListPrice)
+		handleFulfilment(from, s, merchant, msg, lower)
+		return
+	}
+
 	// Quantities while browsing: a measured amount is quoted,
 	// refused or clarified by the measure behaviour, and the
 	// quantity she settles on is remembered for the offer that

@@ -849,16 +849,50 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 			u.Intent = "search"
 			return actOnDiscovery(from, lower, u)
 		}
-		whatsapp.SendText(from, discoveryReplyOr(u, "No problem at all. What are you looking to buy? I will check every shop for it."))
+		whatsapp.SendText(from, discoveryReplyHoldingUp(from, u, "No problem at all. What are you looking to buy? I will check every shop for it."))
 		return true
 	case "offtopic":
-		whatsapp.SendText(from, discoveryReplyOr(u, "That one is outside my work here. I sell for the shops on this number: tell me a shop code if you have one, or tell me what you are looking to buy and I will search every shop."))
+		whatsapp.SendText(from, discoveryReplyHoldingUp(from, u, "That one is outside my work here. I sell for the shops on this number: tell me a shop code if you have one, or tell me what you are looking to buy and I will search every shop."))
 		return true
 	case "unclear":
-		whatsapp.SendText(from, discoveryReplyOr(u, "I can help you buy from the shops here. Send me a shop code if you have one, or tell me what you are looking for and I will search every shop."))
+		whatsapp.SendText(from, discoveryReplyHoldingUp(from, u, "I can help you buy from the shops here. Send me a shop code if you have one, or tell me what you are looking for and I will search every shop."))
 		return true
 	}
 	return false
+}
+
+// discoveryReplyHoldingUp answers with the drafted words,
+// and — while results stand unpicked — holds them up again
+// under the answer, in the same boxed blocks she was first
+// shown. A greeting never closes a question that is still
+// open: the charter asks the draft to do this, and the
+// platform guarantees the blocks themselves, because they
+// are its own composition, not the draft's.
+func discoveryReplyHoldingUp(from string, u *discoveryUnderstanding, fallback string) string {
+	reply := discoveryReplyOr(u, fallback)
+	pre, ok := sessions.lookup(sessionKey("", from))
+	if !ok || pre == nil || len(pre.DiscoveryShown) == 0 {
+		return reply
+	}
+	var blocks []string
+	seen := map[string]int{}
+	for _, sp := range pre.DiscoveryShown {
+		shop := catalogue.GetMerchant(sp.ShopID)
+		p := catalogue.FindByID(sp.ShopID, sp.ProductID)
+		if shop == nil || p == nil {
+			continue
+		}
+		if idx, dup := seen[sp.ShopID]; dup {
+			blocks[idx] += "\n" + p.Name + " - " + money.GHS(p.ListPrice)
+		} else {
+			seen[sp.ShopID] = len(blocks)
+			blocks = append(blocks, shop.ShopCode+"\n"+p.Name+" - "+money.GHS(p.ListPrice))
+		}
+	}
+	if len(blocks) == 0 {
+		return reply
+	}
+	return reply + "\n\nStill here:\n" + codeBox(blocks)
 }
 
 // codeBox wraps a shop-block list in WhatsApp's code
