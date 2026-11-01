@@ -652,6 +652,10 @@ func routeMerchantYesNoTap(from string, shop *catalogue.Merchant, buttonID strin
 		if req := oldestOpenInHand(shop.ID); req != nil && req.Buyer == q.Ref {
 			handleMerchantInHand(from, merchant, word, word)
 		}
+	case "dispatchall":
+		if q.Ref == shop.ID {
+			serveDispatchAllAnswer(from, merchant, yes)
+		}
 	case "listing":
 		if s.Onboarding != nil && s.Onboarding.Step == "confirm" && s.Onboarding.Name == q.Ref {
 			if serveSellerWalkTurn(from, s, merchant, word, word) {
@@ -1040,6 +1044,13 @@ func handleInboundTurn(in Inbound) {
 		// question it names, and only that question.
 		if _, _, isYesNoTap := parseYesNoTap(in.ButtonID); isYesNoTap {
 			routeMerchantYesNoTap(from, shop, in.ButtonID)
+			return
+		}
+		// A tap on a dispatch reminder's button marks that
+		// reminder's own order sent: the button carries the
+		// order with it, so no words are needed at all.
+		if strings.HasPrefix(in.ButtonID, "dsent_") {
+			routeDispatchSentTap(from, shop, strings.TrimPrefix(in.ButtonID, "dsent_"))
 			return
 		}
 		text := strings.TrimSpace(in.Text)

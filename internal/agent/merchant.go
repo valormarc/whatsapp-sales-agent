@@ -419,6 +419,11 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 				serveRemoveAnswer(from, s, merchantID, lower)
 				return
 			}
+		case "dispatchall":
+			s.YesNoQ = nil
+			sessions.put(key, s)
+			serveDispatchAllAnswer(from, merchant, isClearYes(lower))
+			return
 		}
 		// A remove question whose handler declined is
 		// orphaned — its underlying request is no longer

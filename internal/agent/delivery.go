@@ -17,6 +17,8 @@ package agent
 // (orders.Order.DeliveryState), so a restart loses nothing.
 
 import (
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -86,6 +88,45 @@ func merchantMarkSent(from string, merchant *catalogue.Merchant, shopID, msg str
 			target = o
 		}
 	}
+	// A reply quoting a dispatch reminder is about that
+	// reminder's order: she is answering the push itself, so
+	// the quoted order binds the mark the way a named
+	// reference does, instead of leaving her to name it again
+	// among several waiting. The body check scopes this to
+	// dispatch reminders only, so quoting anything else binds
+	// nothing here.
+	if target == nil && !namedRef {
+		if q := turnQuoteOf(from); q != nil && q.Known && q.Order != nil && q.Order.MerchantID == shopID && strings.HasPrefix(q.Body, "A paid order is still waiting to go out") {
+			if fresh := orders.Default.GetOrder(q.Order.Reference); fresh != nil {
+				target = fresh
+			}
+		}
+	}
+	// A report about the whole set ("all", "sent all") with
+	// several orders waiting is a bigger act than marking one:
+	// it is confirmed once, as a set, instead of being answered
+	// with the which-order list she has just said does not
+	// apply. With one waiting it is simply that one, marked
+	// directly, and with none waiting the plain no-waiting line
+	// answers it.
+	if target == nil && !namedRef && dispatchAllWording(msg) {
+		if len(waiting) == 0 {
+			whatsapp.SendText(from, "There is no paid order waiting to be sent just now.")
+			return true
+		}
+		if len(waiting) == 1 {
+			w := waiting[0]
+			target = &w
+		} else {
+			s := sessions.get(sessionKey(shopID, from))
+			if s == nil {
+				s = &Session{Stage: "merchant", MerchantID: shopID}
+				sessions.put(sessionKey(shopID, from), s)
+			}
+			askYesNo(from, s, "dispatchall", shopID, "Mark all "+strconv.Itoa(len(waiting))+" orders waiting as sent?", "Yes", "Change")
+			return true
+		}
+	}
 	if target == nil && !namedRef && len(waiting) == 1 {
 		w := waiting[0]
 		target = &w
@@ -107,20 +148,69 @@ func merchantMarkSent(from string, merchant *catalogue.Merchant, shopID, msg str
 			whatsapp.SendText(from, "I could not find that order reference among your waiting orders: "+strings.Join(lines, ", ")+". Which of these has gone?")
 			return true
 		}
-		whatsapp.SendText(from, "Which order has gone? "+strings.Join(lines, ", ")+". Tell me the reference and I will mark it.")
+		whatsapp.SendText(from, whichOrderSentText(waiting))
 		return true
 	}
-	if target.Status != "paid" {
-		whatsapp.SendText(from, "Order "+target.Reference+" has not been paid yet, so it cannot be marked as sent.")
+	applyMarkSent(from, merchant, target)
+	return true
+}
+
+// dispatchAllSoleRe and its companions read a dispatch
+// report as being about the whole waiting set. They run
+// only inside merchantMarkSent, where the turn has already
+// been read as an order-sent report and a named reference
+// has already had its chance to bind, so they stay narrow:
+// a whole-set word standing alone, or "all" paired with a
+// dispatch verb in either order.
+var (
+	dispatchAllSoleRe    = regexp.MustCompile(`^(all|all of them|all of it|everything|every one|all orders|both|both of them)[.!]?$`)
+	dispatchAllSentAllRe = regexp.MustCompile(`\b(sent|shipped|dispatched|delivered)\s+all\b`)
+	dispatchAllAllGoneRe = regexp.MustCompile(`\ball\s+(have\s+)?(gone|sent|dispatched|delivered)\b`)
+)
+
+// dispatchAllWording reports whether the merchant's words
+// cover every waiting order together, rather than one of
+// them.
+func dispatchAllWording(msg string) bool {
+	lower := strings.ToLower(strings.TrimSpace(msg))
+	if dispatchAllSoleRe.MatchString(lower) {
 		return true
+	}
+	if strings.Contains(lower, "all of them") {
+		return true
+	}
+	if dispatchAllSentAllRe.MatchString(lower) {
+		return true
+	}
+	return dispatchAllAllGoneRe.MatchString(lower)
+}
+
+// whichOrderSentText asks which of the waiting orders has
+// gone, in the one wording every road that asks it shares.
+func whichOrderSentText(waiting []orders.Order) string {
+	var lines []string
+	for _, o := range waiting {
+		lines = append(lines, o.Reference+" ("+o.ProductName+")")
+	}
+	return "Which order has gone? " + strings.Join(lines, ", ") + ". Tell me the reference and I will mark it."
+}
+
+// markSentCore marks one order sent and tells its buyer,
+// returning the outcome in one word: "unpaid" when the
+// order has not been paid, "sent" or "received" when it
+// already stands there, and "marked" when this call moved
+// it. It sends no word to the merchant: each road words its
+// own confirmation — one line for one order, a summary for
+// a set — over this same effect.
+func markSentCore(merchant *catalogue.Merchant, target *orders.Order) string {
+	if target.Status != "paid" {
+		return "unpaid"
 	}
 	switch target.DeliveryState {
 	case "sent":
-		whatsapp.SendText(from, "Order "+target.Reference+" is already marked as sent.")
-		return true
+		return "sent"
 	case "received":
-		whatsapp.SendText(from, "Order "+target.Reference+" is already confirmed received by the buyer.")
-		return true
+		return "received"
 	}
 	ref := target.Reference
 	orders.Default.Update(ref, func(o *orders.Order) {
@@ -132,8 +222,70 @@ func merchantMarkSent(from string, merchant *catalogue.Merchant, shopID, msg str
 		buyerLine = "Your order " + ref + " (" + target.ProductName + ") at " + merchant.Name + " is ready. " + fulfilmentReadyLine(target)
 	}
 	whatsapp.SendText(target.From, buyerLine)
-	whatsapp.SendText(from, "Marked as sent: "+ref+" ("+target.ProductName+"). I have told the buyer.")
-	return true
+	return "marked"
+}
+
+// applyMarkSent marks one order through the shared core
+// and tells the merchant the outcome for that order, in the
+// words the typed road has always used.
+func applyMarkSent(from string, merchant *catalogue.Merchant, target *orders.Order) {
+	switch markSentCore(merchant, target) {
+	case "unpaid":
+		whatsapp.SendText(from, "Order "+target.Reference+" has not been paid yet, so it cannot be marked as sent.")
+	case "sent":
+		whatsapp.SendText(from, "Order "+target.Reference+" is already marked as sent.")
+	case "received":
+		whatsapp.SendText(from, "Order "+target.Reference+" is already confirmed received by the buyer.")
+	case "marked":
+		whatsapp.SendText(from, "Marked as sent: "+target.Reference+" ("+target.ProductName+"). I have told the buyer.")
+	}
+}
+
+// routeDispatchSentTap serves a tap on a dispatch
+// reminder's button: the button names its own order, so the
+// tap marks exactly that order through the same effect as a
+// typed report. A tap whose order is gone, or belongs to
+// another shop, is stale and is let go quietly.
+func routeDispatchSentTap(from string, shop *catalogue.Merchant, ref string) {
+	target := orders.Default.GetOrder(ref)
+	if target == nil || target.MerchantID != shop.ID {
+		return
+	}
+	applyMarkSent(from, shop, target)
+}
+
+// serveDispatchAllAnswer settles the whole-set confirmation:
+// a yes marks every order still waiting, counted fresh at
+// answer time, and reports the set in one line; a no marks
+// nothing and asks which order has gone, so she can name
+// them one by one instead.
+func serveDispatchAllAnswer(from string, merchant *catalogue.Merchant, yes bool) {
+	var waiting []orders.Order
+	for _, o := range paidOrdersOf(merchant.ID) {
+		if o.DeliveryState == "" {
+			waiting = append(waiting, o)
+		}
+	}
+	if len(waiting) == 0 {
+		whatsapp.SendText(from, "There is no paid order waiting to be sent just now.")
+		return
+	}
+	if !yes {
+		whatsapp.SendText(from, whichOrderSentText(waiting))
+		return
+	}
+	marked := 0
+	for i := range waiting {
+		o := waiting[i]
+		if markSentCore(merchant, &o) == "marked" {
+			marked++
+		}
+	}
+	if marked == len(waiting) {
+		whatsapp.SendText(from, "Marked as sent: all "+strconv.Itoa(len(waiting))+" orders. I have told the buyers.")
+	} else {
+		whatsapp.SendText(from, "Marked as sent: "+strconv.Itoa(marked)+" of the "+strconv.Itoa(len(waiting))+" orders. I have told the buyers.")
+	}
 }
 
 // fulfilmentReadyLine says how a ready order is collected,

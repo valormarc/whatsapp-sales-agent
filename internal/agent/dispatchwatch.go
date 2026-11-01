@@ -103,7 +103,13 @@ func CheckDispatchNudges(now time.Time) {
 			continue
 		}
 		sent++
-		whatsapp.SendText(phone, dispatchNudgeText(*stored, now.Sub(created)))
+		// The nudge carries its own button for its own order,
+		// so marking it sent is one tap on the reminder itself
+		// instead of a typed report she has to aim at the right
+		// order among several waiting.
+		whatsapp.SendButtons(phone, dispatchNudgeText(*stored, now.Sub(created)), []whatsapp.Button{
+			{ID: "dsent_" + stored.Reference, Title: "Mark as sent"},
+		})
 	}
 }
 
