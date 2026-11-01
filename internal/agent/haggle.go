@@ -46,6 +46,48 @@ func parseNumbered(s string) (float64, error) {
 // that amount for the thing in front of her.
 var budgetFrameRe = regexp.MustCompile(`(?i)\bbudget\b[^0-9]{0,14}\d+(?:\.\d+)?|\d+(?:\.\d+)?\s*(?:is\s+)?(?:my\s+)?budget\b`)
 
+var smallCountRe = regexp.MustCompile(`\b(\d{1,2})\s+([a-z]+)`)
+
+// browsingOffer reads a figure as an offer at the browsing
+// stage, where a small count glued to a product's name is
+// a quantity of that product, not money: in "Strip crop
+// top, black totes bag, 1 lingerie" the 1 is one of the
+// lingerie, and a haggle opened on it as a GH₵1 offer is a
+// nonsense she never made — it ate her whole list and
+// countered on the first item. The count is blanked only
+// when the word after it belongs to a stocked product's
+// name in this shop and the number is of a count's size;
+// a real figure keeps its reading, and mid-haggle numbers
+// never come through here at all — there, a number is a
+// move in the haggle and parseOffer reads it directly.
+func browsingOffer(shopID, lower string) *float64 {
+	offer := parseOffer(lower)
+	if offer == nil {
+		return nil
+	}
+	words := map[string]bool{}
+	for _, p := range stockedProducts(shopID) {
+		for _, w := range strings.Fields(strings.ToLower(p.Name)) {
+			words[strings.TrimSuffix(w, "s")] = true
+		}
+	}
+	cleaned := smallCountRe.ReplaceAllStringFunc(lower, func(m string) string {
+		parts := strings.Fields(m)
+		if len(parts) != 2 {
+			return m
+		}
+		n, err := strconv.Atoi(parts[0])
+		if err != nil || n < 1 || n > 12 || !words[strings.TrimSuffix(parts[1], "s")] {
+			return m
+		}
+		return strings.Repeat(" ", len(parts[0])) + " " + parts[1]
+	})
+	if cleaned == lower {
+		return offer
+	}
+	return parseOffer(cleaned)
+}
+
 func parseOffer(text string) *float64 {
 	stripped := strings.ReplaceAll(text, ",", "")
 	spans := quantityNumberSpans(stripped)

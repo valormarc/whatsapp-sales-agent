@@ -40,6 +40,7 @@ const BUYER_D = "233551209714";
 const BUYER_E = "233551209715";
 const BUYER_F = "233551209716";
 const BUYER_G = "233551209717";
+const BUYER_H = "233551209718";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "basketview-"));
 const cat = { merchants: { luxe: { id: "luxe", name: "Luxe", shopCode: "LUXE", ownerWhatsApp: OWNER, payoutPhone: OWNER, dailyGiveawayAllowance: 300, deliveryFee: 25, deliveryNote: "Sent by bus to your station", products: [
   { id: "sandals", name: "Thong Sandals", description: "Thong sandals, sizes 37-41.", listPrice: 80, floorPrice: 60, stock: 5 },
@@ -237,6 +238,26 @@ async function pickBoth(buyer) {
       check(!texts(recs).includes("Shall I send the payment link"),
         "leg G: no confirmation question stands between the handshake and the deal", texts(recs));
     }
+
+    // Leg H: several products named in ONE typed message
+    // are picked whole and settled one by one. His live
+    // test named three items in one breath and was shown
+    // only the first; and the count in such a list ("1
+    // lingerie") was read as a GH₵1 offer, which opened a
+    // haggle on the first item and dropped the rest.
+    await say(BUYER_H, "SHOP-LUXE");
+    await fresh(BUYER_H);
+    await say(BUYER_H, "1 thong sandals\nDouble clothes rack please");
+    recs = await fresh(BUYER_H);
+    console.log("LEG H TYPED PICKS REPLY:\n" + texts(recs));
+    check(texts(recs).includes("settle them one by one"),
+      "leg H: typed picks are taken up together", texts(recs));
+    check(texts(recs).includes("Thong Sandals - GH₵80"),
+      "leg H: the first pick stands in front with its price", texts(recs));
+    await say(BUYER_H, "I will take it at 80");
+    recs = await fresh(BUYER_H);
+    check(texts(recs).includes("Double Clothes Rack - GH₵270"),
+      "leg H: settling the first pick brings the second up", texts(recs));
   } finally {
     child.kill();
     fs.rmSync(dir, { recursive: true, force: true });

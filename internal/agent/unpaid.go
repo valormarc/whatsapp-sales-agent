@@ -76,9 +76,13 @@ func prePassSpent() bool {
 
 var unpaidWatchOnce sync.Once
 
-// StartUnpaidWatch starts the watch's slow tick. It is called
-// once by the server as it starts; tests drive the pass
-// directly and never start the tick.
+// StartUnpaidWatch starts the watch's slow tick, and with
+// it the fresh payment watch's short tick (see
+// freshpay.go): the two are the payment book's two clocks,
+// one that confirms a landed payment within the minute and
+// one that surfaces a payment that never came. It is
+// called once by the server as it starts; tests drive the
+// passes directly and never start the ticks.
 func StartUnpaidWatch() {
 	unpaidWatchOnce.Do(func() {
 		go func() {
@@ -98,6 +102,19 @@ func StartUnpaidWatch() {
 					CheckUnpaidOrders(time.Now().UTC())
 				}()
 				time.Sleep(unpaidTick)
+			}
+		}()
+		go func() {
+			for {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "agent: fresh payment watch pass panicked and was recovered: %v\n", r)
+						}
+					}()
+					CheckFreshPayments(time.Now().UTC())
+				}()
+				time.Sleep(freshTick)
 			}
 		}()
 	})

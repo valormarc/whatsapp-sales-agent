@@ -363,6 +363,39 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	}
 	noteSpeakerWords(s, text)
 
+	// Whether this turn quotes the allowance note is
+	// settled before any lane reads her words: a reply
+	// quoting the note is about the note. The fee-quote
+	// lane sits above the note's own door in this
+	// dispatcher, and without the guard a quoted
+	// "set it 300" was consumed as the oldest open
+	// quote's fee before the note ever saw it (the
+	// fifth audit) — the same guard the command lane
+	// below already rides on.
+	quotingNote := contextID != "" && s.LastNoteMsgID != "" && contextID == s.LastNoteMsgID
+	if q := turnQuoteOf(from); q != nil && q.Known && s.LastMerchantNote != "" && q.Body == s.LastMerchantNote {
+		quotingNote = true
+	}
+
+	// Her words are understood once, lazily: the doors below
+	// ask the mind only when they reach the point of needing
+	// it, so a turn her commands serve never spends the call.
+	// The mind goes before the advert door now, because a
+	// statement about her shop ("I have sent the bag order")
+	// and goods copy for the shelf read alike to a harvest
+	// and only meaning tells them apart; the door remains,
+	// below, for the days the model cannot be reached.
+	var thought *understood
+	thoughtDone := false
+	think := func() *understood {
+		if !thoughtDone {
+			thought = understandMerchantMessage(from, merchant, merchantID, text)
+			thoughtDone = true
+		}
+		return thought
+	}
+
+
 	// A bare typed yes or no belongs to the armed button
 	// question, the way a tap on its buttons does. Button
 	// taps are bound by question ID; typed words had no
@@ -420,6 +453,46 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	}
 
 	if s.Onboarding != nil {
+		// A price question stands open and her message is
+		// not shaped as its answer: she is doing something
+		// else — reporting a delivery, asking what needs
+		// her, asking after her stock — and the walk must
+		// not eat the turn and answer it with the price
+		// question again, the loop a live merchant hit when
+		// every errand she ran came back as "What is the
+		// list price for Lace Nightdress?". Her ordinary
+		// readers get the turn first — her commands, her
+		// day questions, the mind's acts — and the walk
+		// stays open behind them: a figure shaped as the
+		// price resumes it where it left off. A new listing
+		// reading never claims the turn here; the open walk
+		// is the listing she is already making. The gate
+		// runs ahead of the walk's own intent read on these
+		// steps because a turn carries one understanding
+		// call, and a figureless errand is not the walk's
+		// to spend it on; the walk's question-and-cancel
+		// reading keeps every other step, and this step's
+		// shaped answers.
+		if (s.Onboarding.Step == "list" || s.Onboarding.Step == "lastprice") &&
+			controlWord(lower) != "cancel" && !walkPriceAnswerShaped(s.Onboarding, text, lower) {
+			if !explainRe.MatchString(lower) && !quotingNote && handleMerchantCommand(from, s, merchant, text, lower) {
+				return
+			}
+			if dayAskRe.MatchString(lower) {
+				answerMerchantDayQuestion(from, text, merchantID)
+				return
+			}
+			if u := think(); u != nil && u.Intent != intentNewListing && actOnMerchantUnderstanding(from, merchant, merchantID, text, u) {
+				// A question about the step itself is
+				// answered and the step asked again, the
+				// walk's own courtesy; an errand is simply
+				// done, with the walk standing behind it.
+				if u.Intent == intentAsk || u.Intent == intentUnclear {
+					askOnboardingStep(from, s.Onboarding)
+				}
+				return
+			}
+		}
 		if serveSellerWalkTurn(from, s, merchant, text, lower) {
 			return
 		}
@@ -447,20 +520,6 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	if s.PendingRemove != "" && s.yesNoFor("remove") && (isClearYes(lower) || isClearNo(lower)) {
 		serveRemoveAnswer(from, s, merchantID, lower)
 		return
-	}
-
-	// Whether this turn quotes the allowance note is
-	// settled before any lane reads her words: a reply
-	// quoting the note is about the note. The fee-quote
-	// lane sits above the note's own door in this
-	// dispatcher, and without the guard a quoted
-	// "set it 300" was consumed as the oldest open
-	// quote's fee before the note ever saw it (the
-	// fifth audit) — the same guard the command lane
-	// below already rides on.
-	quotingNote := contextID != "" && s.LastNoteMsgID != "" && contextID == s.LastNoteMsgID
-	if q := turnQuoteOf(from); q != nil && q.Known && s.LastMerchantNote != "" && q.Body == s.LastMerchantNote {
-		quotingNote = true
 	}
 
 	// Her answer to an open per-order delivery fee request
@@ -541,24 +600,6 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 			}
 			return
 		}
-	}
-
-	// Her words are understood once, lazily: the doors below
-	// ask the mind only when they reach the point of needing
-	// it, so a turn her commands serve never spends the call.
-	// The mind goes before the advert door now, because a
-	// statement about her shop ("I have sent the bag order")
-	// and goods copy for the shelf read alike to a harvest
-	// and only meaning tells them apart; the door remains,
-	// below, for the days the model cannot be reached.
-	var thought *understood
-	thoughtDone := false
-	think := func() *understood {
-		if !thoughtDone {
-			thought = understandMerchantMessage(from, merchant, merchantID, text)
-			thoughtDone = true
-		}
-		return thought
 	}
 
 	// An advert pasted with no walk open is itself the
@@ -716,6 +757,22 @@ func walkPriceShape(text string) bool {
 }
 
 // advanceOnboarding feeds one merchant message to the onboarding flow.
+// walkPriceAnswerShaped reports whether a message reads
+// as the answer to the walk's open price question, judged
+// by the same two tests the price steps themselves apply:
+// a figure the offer reader can read, in a price's shape
+// (a bare figure, or a plain price wording — never a prose
+// sentence carrying a figure about something else). At the
+// last-price step, her fixed-price words are an answer
+// too, with no figure at all.
+func walkPriceAnswerShaped(flow *OnboardingFlow, text, lower string) bool {
+	if flow.Step == "lastprice" && fixedPriceRe.MatchString(lower) {
+		return true
+	}
+	amount := parseOffer(lower)
+	return amount != nil && *amount > 0 && walkPriceShape(text)
+}
+
 func advanceOnboarding(from string, s *Session, text, lower string) {
 	// When this turn ends the listing, a kept burst batch is
 	// presented next (see burst.go).

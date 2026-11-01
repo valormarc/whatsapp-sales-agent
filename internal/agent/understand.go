@@ -131,6 +131,7 @@ func (f *modelFigure) UnmarshalJSON(data []byte) error {
 type understood struct {
 	Intent string      `json:"intent"`
 	Item   string      `json:"item"`
+	Items  []string    `json:"items"`
 	Reply  string      `json:"reply"`
 	Budget modelFigure `json:"budget"`
 	// Figure is the number a command in her own words
@@ -612,7 +613,8 @@ Three laws govern every reply the shop sends. First, think and answer: when the 
 Reason in this order before you answer: first, what she is referring to (a product, an order, a price already named, something she was just shown or told); second, what she wants to happen; third, what the facts allow. Most wrong answers come from skipping the first step. When the facts say she is replying to a quoted message, that message — and who sent it, her or the shop — is what she is referring to: judge her words against the quoted message first, and against the current conversation second.
 
 Answer with strict JSON only, no other text:
-{"intent": "...", "item": "...", "reply": "...", "budget": 0, "figure": 0}
+{"intent": "...", "item": "...", "items": [], "reply": "...", "budget": 0, "figure": 0}
+"items" lists products, never figures: when she names more than one product in one message, put every product she names there, in her order, each name as it appears in the facts when it is there; otherwise leave it empty.
 "budget" is a number, not words: when she states what she can spend (her budget, an amount she has for this, a ceiling she names), give that figure there exactly as she stated it; otherwise 0.
 "figure" is a number, not words: when the owner sets a figure — a new price, a new last price — give that figure there exactly as she stated it; otherwise 0.
 
@@ -622,7 +624,7 @@ The acts you can name:
 - "payment_later": she will pay, just later: tomorrow, in the evening, when money comes.
 - "payment_want": she wants to pay now, or asks for the payment link: "send me the payment link", "I want to pay now", "let me pay", asking for the link again without saying it is dead.
 - "payment_claim": she says she has paid, in her own words, whether or not she uses the word paid: "I just sent the money", "check your phone, I have done it", "I have made the payment". Payment here is only ever through the payment button the platform sent for the order: the platform verifies a payment on it with the payment service itself, and a payment she says went anywhere else is one the platform cannot see or confirm. Her word alone never settles anything, and no merchant is ever asked to confirm a payment.
-- "item": she is asking about, or wants, a product — whether the facts hold it or not. An availability question ("do you have X", "is there X") is always this act, never "ask": put the name she used in "item" even when the shelf does not hold it, and the platform will record her want and answer in want form. Put the product's name, as it appears in the facts when it is there, in "item".
+- "item": she is asking about, or wants, a product — whether the facts hold it or not. An availability question ("do you have X", "is there X") is always this act, never "ask": put the name she used in "item" even when the shelf does not hold it, and the platform will record her want and answer in want form. Put the product's name, as it appears in the facts when it is there, in "item". When she names several products in one message — a list of things she wants, on separate lines or joined in one breath — put the first in "item" and every one of them, in her order, in "items": she means to pick them all, and the platform will settle them one by one.
 - "picture": she wants to SEE a product before she goes on: asking for its photo in any words, or saying she will not buy until she has seen it. Put the product's name in "item" when she names one; when she plainly means the one she was last looking at, leave "item" empty and the platform will use that one. A picture ask is never a generic question and never a buy: the picture is served first.
 - "order_status": she is asking after an order she already made: where it stands, whether it is paid, what happens next with it.
 - "order_sent": the shop owner is reporting that the goods for a paid order have gone out to the buyer: she has sent it, dispatched it, given it to the rider or the station, or made it ready for collection. Only the owner names this act; a buyer never does.
@@ -779,6 +781,16 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	if key := sessionKey(shopID, from); sessions.get(key) != nil && sessions.get(key).LastMerchantNote != "" {
 		b.WriteString("The last thing the agent told her, which an \"explain this\" from her most likely points at: \"" + sessions.get(key).LastMerchantNote + "\" If she asks to explain, explain THAT, in plain words, from the facts.\n")
 	}
+	if ms := sessions.get(sessionKey(shopID, from)); ms != nil && ms.Onboarding != nil {
+		flow := ms.Onboarding
+		what := "a product"
+		if flow.Name != "" {
+			what = "the " + flow.Name
+		}
+		if q := onboardingQuestionText(flow); q != "" {
+			b.WriteString("She is in the middle of listing " + what + " for her shop; it is not saved yet, and the listing is waiting on this question: \"" + q + "\" A message of hers that answers that question belongs to the listing and the flow will take it after you. A question ABOUT that step is an \"ask\": explain the step plainly in \"reply\" — her list price is the price customers see first, and her last price is the lowest she will accept when a customer bargains, which customers never see. Anything else she raises — an order she has sent, a question about her day, what needs her attention — is its own act, served with the listing kept open behind it.\n")
+		}
+	}
 	b.WriteString("Things she can ask the agent to do: show her catalogue, change a price or a last price, set her daily giveaway allowance, remove a product, add a product by describing it or sending a photo, tell her how today is going, report on the payment of an order, ask a buyer a question on her behalf, and tell her what needs her attention.\n")
 	b.WriteString("Use \"order_payment\" when she is asking about the payment on an order, \"ask_buyer\" when she is telling the agent to ask her buyer something, and \"attention\" when she is asking what needs her or what is outstanding. Use \"change_price\" when she asks for a product's price to change, in any words of her own, and \"change_last_price\" for its last price, naming the product in \"item\" and the new figure in \"figure\". Use \"ask\" for any other question her shelf, her day, her allowance or those abilities can answer, drafting the reply from the facts only.\n")
 	b.WriteString("\nThe owner's message: " + msg)
@@ -924,6 +936,12 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		}
 		return offerCheaperAlternative(from, s, merchant, shopID, current, u.Words)
 	case intentItem:
+		// Several products named in one message are picked
+		// whole and settled one by one, the way several
+		// taps on the shelf sheet settle (see shelf.go).
+		if len(u.Items) >= 2 && serveTypedPicks(from, s, merchant, shopID, u) {
+			return true
+		}
 		p := catalogue.FindProduct(shopID, strings.ToLower(u.Item))
 		if p == nil {
 			p = quotedProductIn(shopID, from)

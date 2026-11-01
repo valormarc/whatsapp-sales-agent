@@ -35,11 +35,16 @@ func stubStageModel(t *testing.T) {
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		system, her := "", ""
+		all := ""
 		for _, m := range body.Messages {
+			all += m.Content + "\n"
 			if m.Role == "system" {
 				system = m.Content
 			}
 			if i := strings.LastIndex(m.Content, "Her message:"); i >= 0 {
+				her = strings.ToLower(m.Content[i:])
+			}
+			if i := strings.LastIndex(m.Content, "The owner's message:"); i >= 0 {
 				her = strings.ToLower(m.Content[i:])
 			}
 		}
@@ -50,6 +55,8 @@ func stubStageModel(t *testing.T) {
 				content = `{"intent":"payment_expired","reply":""}`
 			case strings.Contains(her, "i want to pay now"):
 				content = `{"intent":"payment_want","reply":""}`
+			case strings.Contains(her, "what do you mean by last price") && strings.Contains(all, "in the middle of listing"):
+				content = `{"intent":"ask","reply":"Your last price is the lowest you will accept for it. I bargain between your list price and your last price, and I never go below it. Customers never see it."}`
 			}
 		}
 		if strings.Contains(system, "intent reader for a seller") {

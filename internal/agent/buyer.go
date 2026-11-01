@@ -217,7 +217,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// with a thought-through refusal instead of an answer or a
 	// blank. What the thinking declines falls through to the
 	// branches below, the net, unchanged.
-	if (s.Stage == "browsing" || s.Stage == "agreed" || s.Stage == "") && !s.PendingClose && s.Onboarding == nil && s.Signup == nil && parseOffer(lower) == nil {
+	if (s.Stage == "browsing" || s.Stage == "agreed" || s.Stage == "") && !s.PendingClose && s.Onboarding == nil && s.Signup == nil && browsingOffer(shopID, lower) == nil {
 		if u := thinkBuyerMessage(from, s, merchant, shopID, msg); u != nil {
 			// A budget the thinking read off her words is
 			// carried once the figure is verified against
@@ -675,7 +675,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// price with no item in sight gets the human question back:
 	// which item is it for.
 	if s.Stage == "browsing" {
-		if offer := parseOffer(lower); offer != nil {
+		if offer := browsingOffer(shopID, lower); offer != nil {
 			// An offer that can only be read on the whole
 			// hand she is holding opens the haggle on the
 			// total instead of binding to one item (see

@@ -35,6 +35,7 @@ import (
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/money"
+	"github.com/valormarc/hackathon-agent/internal/wants"
 	"github.com/valormarc/hackathon-agent/internal/whatsapp"
 )
 
@@ -287,6 +288,75 @@ func presentShelf(from string, shop *catalogue.Merchant) {
 func presentShelfPick(from, shopID string, p *catalogue.Product) {
 	sendProductPhotos(from, shopID, p)
 	sendProductView(from, p, " Want to make an offer?")
+}
+
+// serveTypedPicks answers a buyer who names several
+// products in one typed message: she means to pick them
+// all, the way tapping several on the sheet means it, so
+// the picks are taken whole and settled one by one through
+// the same machinery the sheet's Done starts. Only the
+// first used to be heard — she named three things, was
+// shown one, and her later "same for all" had nothing to
+// hold on to. The model's reading names the items; code
+// verifies each against the shelf. A name the shelf does
+// not hold is written in the want book and answered
+// honestly; a name that has sold out is answered honestly
+// too; goods sold by measure keep their own road, so one
+// measured name in the list declines the whole turn back
+// to the single-item roads. It serves only when at least
+// two named products stand stocked to be picked.
+func serveTypedPicks(from string, s *Session, merchant *catalogue.Merchant, shopID string, u *understood) bool {
+	var picked []*catalogue.Product
+	seen := map[string]bool{}
+	var gone, missing []string
+	for _, name := range u.Items {
+		p := catalogue.FindProduct(shopID, strings.ToLower(strings.TrimSpace(name)))
+		if p == nil {
+			missing = append(missing, strings.TrimSpace(name))
+			continue
+		}
+		if seen[p.ID] {
+			continue
+		}
+		seen[p.ID] = true
+		if p.ByMeasure() {
+			return false
+		}
+		if p.AvailableUnits() <= 0 {
+			gone = append(gone, p.Name)
+			continue
+		}
+		picked = append(picked, p)
+	}
+	if len(picked) < 2 {
+		return false
+	}
+	for _, name := range missing {
+		if name == "" {
+			continue
+		}
+		if wants.Default.Record(shopID, from, name) {
+			if phone := merchantNotifyPhone(merchant); phone != "" {
+				whatsapp.SendText(phone, "A buyer just asked for something you do not stock: \""+name+"\" I have written it in your want book — say \"buyer wants\" to see them all — and I will tell her the moment you stock it.")
+			}
+		}
+		whatsapp.SendText(from, "I do not have "+name+" here yet. I have noted it, and I will tell you the moment it lands.")
+	}
+	for _, name := range gone {
+		whatsapp.SendText(from, "The "+name+" has sold out just now, so it is not available to buy.")
+	}
+	ids := make([]string, 0, len(picked))
+	for _, p := range picked {
+		ids = append(ids, p.ID)
+	}
+	s.ShelfPicks = ids
+	next := takeNextShelfPick(s, shopID)
+	if next == nil {
+		return false
+	}
+	whatsapp.SendText(from, "Good. Let us settle them one by one, starting with this one.")
+	presentShelfPick(from, shopID, next)
+	return true
 }
 
 // takeNextShelfPick moves the first of her remaining

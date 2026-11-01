@@ -393,9 +393,17 @@ func strField(m map[string]json.RawMessage, key string) *string {
 }
 
 // ParseWebhookEvent pulls the fields the webhook handler needs out of
-// a Seev event body, whether Seev nests them under data or sends them
-// flat. Our own order reference travels in the meta we set at
-// creation; Seev's session reference identifies the payment itself.
+// a Seev event body. Seev's real deliveries nest everything one level
+// deeper than the flat shape the handler was first written against:
+// the payment itself rides in data.transaction (reference, status,
+// amount), and our own order reference travels in the metadata we set
+// at creation, which Seev returns as transaction.metadata.developer
+// .order_reference. That mismatch is why every real webhook arrived,
+// verified, answered 200 — and settled nothing, the fields all
+// reading empty one level above where they live; only a buyer's own
+// report, read back through the session API's flatter shape, ever
+// confirmed a payment. Both shapes are read now, the transaction
+// first: the flat fields remain for any surface that sends them.
 // The amount, when present, is in major units.
 func ParseWebhookEvent(body []byte) Event {
 	empty := Event{}
@@ -410,6 +418,21 @@ func ParseWebhookEvent(body []byte) Event {
 			d = dm
 		}
 	}
+	// The transaction nest, when the delivery carries one:
+	// the payment's own fields live there, not in data.
+	tx := map[string]json.RawMessage{}
+	if rawTx, ok := d["transaction"]; ok {
+		var tm map[string]json.RawMessage
+		if err := json.Unmarshal(rawTx, &tm); err == nil && tm != nil {
+			tx = tm
+		}
+	}
+	field := func(key string) *string {
+		if v := strField(tx, key); v != nil {
+			return v
+		}
+		return strField(d, key)
+	}
 	meta := map[string]json.RawMessage{}
 	if rawMeta, ok := d["meta"]; ok {
 		var mm map[string]json.RawMessage
@@ -422,12 +445,30 @@ func ParseWebhookEvent(body []byte) Event {
 			meta = mm
 		}
 	}
-	ev := Event{
-		Reference:      strField(d, "reference"),
-		OrderReference: strField(meta, "order_reference"),
-		Status:         strField(d, "status"),
+	// Our order reference as Seev returns it: inside the
+	// transaction's metadata, under the developer key the
+	// creation set it with.
+	orderRef := strField(meta, "order_reference")
+	if orderRef == nil {
+		var metadata map[string]json.RawMessage
+		if rawMd, ok := tx["metadata"]; ok {
+			_ = json.Unmarshal(rawMd, &metadata)
+		}
+		if rawDev, ok := metadata["developer"]; ok {
+			var dev map[string]json.RawMessage
+			if err := json.Unmarshal(rawDev, &dev); err == nil && dev != nil {
+				orderRef = strField(dev, "order_reference")
+			}
+		}
 	}
-	if rawAmount, ok := d["amount"]; ok {
+	ev := Event{
+		Reference:      field("reference"),
+		OrderReference: orderRef,
+		Status:         field("status"),
+	}
+	if rawAmount, ok := tx["amount"]; ok {
+		ev.AmountMajor = majorAmount(rawAmount)
+	} else if rawAmount, ok := d["amount"]; ok {
 		ev.AmountMajor = majorAmount(rawAmount)
 	}
 	return ev
