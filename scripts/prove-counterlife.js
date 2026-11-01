@@ -227,7 +227,7 @@ async function waitHealth() {
       "leg 6: a real place moves the walk on", texts(recs));
   } finally {
     child.kill();
-    fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   }
   console.log(failures === 0 ? "PROOF GREEN" : `PROOF RED: ${failures} leg(s) failed`);
   process.exit(failures === 0 ? 0 : 1);

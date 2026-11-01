@@ -39,6 +39,7 @@ const BUYER_C = "233551209713";
 const BUYER_D = "233551209714";
 const BUYER_E = "233551209715";
 const BUYER_F = "233551209716";
+const BUYER_G = "233551209717";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "basketview-"));
 const cat = { merchants: { luxe: { id: "luxe", name: "Luxe", shopCode: "LUXE", ownerWhatsApp: OWNER, payoutPhone: OWNER, dailyGiveawayAllowance: 300, deliveryFee: 25, deliveryNote: "Sent by bus to your station", products: [
   { id: "sandals", name: "Thong Sandals", description: "Thong sandals, sizes 37-41.", listPrice: 80, floorPrice: 60, stock: 5 },
@@ -210,6 +211,32 @@ async function pickBoth(buyer) {
     console.log("LEG F CLEAR REPLY:\n" + texts(recs));
     check(texts(recs).includes("Cleared. Your basket is empty now."),
       "leg F: 'remove everything I picked' is read and empties the basket", texts(recs));
+
+    // Leg G: a handshake word closes a standing counter
+    // on the spot. The owner's own live moment: the
+    // counter stood at 65, he said "Deal", and the agent
+    // still asked "Shall I send the payment link?" before
+    // dealing. A handshake has no second meaning; the
+    // confirmation step stays for weaker words only. The
+    // counter is drawn the way leg C draws it, on the
+    // whole hand.
+    recs = await pickBoth(BUYER_G);
+    await tap(BUYER_G, "shelfdone", "Done, settle them");
+    recs = await fresh(BUYER_G);
+    await say(BUYER_G, "I will give you 330 for all");
+    recs = await fresh(BUYER_G);
+    const gFigs = figures(texts(recs)).filter((f) => f > 330 && f < 350);
+    const gCounter = gFigs[gFigs.length - 1];
+    check(gCounter !== undefined, "leg G setup: a counter stands above her 330", texts(recs));
+    if (gCounter !== undefined) {
+      await say(BUYER_G, "Deal");
+      recs = await fresh(BUYER_G);
+      console.log("LEG G DEAL REPLY:\n" + texts(recs));
+      check(texts(recs).includes("That makes your order GH₵" + gCounter),
+        "leg G: 'Deal' closes the sale at the standing counter", texts(recs));
+      check(!texts(recs).includes("Shall I send the payment link"),
+        "leg G: no confirmation question stands between the handshake and the deal", texts(recs));
+    }
   } finally {
     child.kill();
     fs.rmSync(dir, { recursive: true, force: true });

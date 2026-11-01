@@ -480,6 +480,15 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 			processOffer(from, s, merchant, *offer, msg)
 			return
 		}
+		// A handshake word with no price in it, said as the
+		// whole reply — "deal", "agreed", "I'll take it" —
+		// closes the standing counter on the spot, at the
+		// counter's price: those words have no second
+		// meaning to insure against (see dealWordRe).
+		if dealWordRe.MatchString(lower) {
+			beginFulfilment(from, s, s.Ask)
+			return
+		}
 		// Commitment words with no price in them ("I'll buy") move
 		// to the confirmation step at the standing price: the buyer
 		// is quoted the one total and asked plainly. Her "I'll buy"

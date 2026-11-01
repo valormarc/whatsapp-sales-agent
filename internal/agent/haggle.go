@@ -252,6 +252,19 @@ func standSubject(s *Session) string {
 	return "the " + s.Product.Name
 }
 
+// dealWordRe is the handshake in its whole-message
+// shapes: "deal", "agreed", "I'll take it" said as the
+// entire reply to a standing counter. These words have
+// no second meaning — nobody says "deal" to mean "I
+// heard you", the way "ok" or "fine" can — so inside a
+// haggle they close the standing price on the spot,
+// without the confirmation step the model's read below
+// keeps for every warmer, weaker phrasing, where a
+// misread must cost no more than one "Not yet" tap.
+// The same words inside a longer sentence are talk,
+// and the reading owns them.
+var dealWordRe = regexp.MustCompile(`^\s*(it['’]s a deal|done deal|deal|agreed|sold|i['’]ll take it|i will take it|take it)[\s.!]*$`)
+
 // haggleTurnReadsAccept asks the thinking to read a
 // figure-free turn inside a haggle: with a price standing
 // on the table, is she accepting it? Whether "Ok" after a
