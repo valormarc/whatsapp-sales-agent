@@ -213,7 +213,14 @@ func startReorder(from string, s *Session, merchant *catalogue.Merchant, shopID,
 		lines = append(lines, line)
 	}
 	if len(lines) == 0 {
-		whatsapp.SendText(from, merchant.Name+" does not have "+strings.Join(missing, ", ")+" on the shelf any more, so that order cannot be repeated as it stands. Here is what they have now:\n"+productListText(shopID))
+		// Nothing of the order can be repeated: the answer
+		// says so, and then the shelf itself is presented
+		// the way a shelf is presented — the sheet she can
+		// pick from — never the whole catalogue dumped as
+		// text. The sheet falls back to the text list on
+		// its own when the shop is stocked out entirely.
+		whatsapp.SendText(from, merchant.Name+" does not have "+strings.Join(missing, ", ")+" on the shelf any more, so that order cannot be repeated as it stands. Here is what they have now:")
+		presentShelf(from, merchant)
 		return true
 	}
 

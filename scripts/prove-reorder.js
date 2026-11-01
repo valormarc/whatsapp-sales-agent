@@ -34,12 +34,15 @@ const catalogue = { merchants: {
     products: [{ id: "heels", name: "Ankle Strap Heels", description: "Pointed ankle-strap heels.", listPrice: 120, floorPrice: 100, stock: 5 }] },
   quot: { id: "quot", name: "Quot Kicks", shopCode: "QUOT", ownerWhatsApp: OWNER, payoutPhone: OWNER, dailyGiveawayAllowance: 300, deliveryStyle: "quote",
     products: [{ id: "sneakers", name: "Runner Sneakers", description: "Lightweight runners.", listPrice: 200, floorPrice: 160, stock: 5 }] },
+  gone: { id: "gone", name: "Gone Styles", shopCode: "GONE", ownerWhatsApp: OWNER, payoutPhone: OWNER, dailyGiveawayAllowance: 300, deliveryFee: 20, deliveryPaidTo: "merchant", deliveryStyle: "set",
+    products: [{ id: "tote", name: "Everyday Tote", description: "A sturdy everyday tote.", listPrice: 60, floorPrice: 50, stock: 3 }] },
 } };
 fs.writeFileSync(path.join(dir, "data", "catalogue.json"), JSON.stringify(catalogue));
 const past = (ref, shop, buyer, product, price, fee, place) => ({ reference: ref, merchantId: shop, from: buyer, productName: product, price, total: price + fee, deliveryFee: fee, status: "paid", paymentPath: "seev", fulfilment: "delivery", location: place, packageName: "Kojo Tsey", deliveryState: "received", createdAt: new Date().toISOString() });
 fs.writeFileSync(path.join(dir, "data", "orders.json"), JSON.stringify({
   "DESK-0007": past("DESK-0007", "desk", B1, "Ankle Strap Heels", 120, 20, "Osu"),
   "QUOT-0003": past("QUOT-0003", "quot", B1, "Runner Sneakers", 200, 30, "Kasoa"),
+  "GONE-0001": past("GONE-0001", "gone", B1, "Vanished Dress", 90, 20, "Osu"),
 }));
 
 const freePort = () => new Promise((res, rej) => { const s = net.createServer(); s.once("error", rej); s.listen(0, () => { const p = s.address().port; s.close(() => res(p)); }); });
@@ -163,6 +166,13 @@ async function main() {
     orders = JSON.parse(fs.readFileSync(path.join(dir, "data", "orders.json"), "utf8"));
     mine = Object.values(orders).filter((o) => o.from === B1 && o.merchantId === "quot" && o.reference !== "QUOT-0003");
     check("the quote-shop repeat is booked with its fee", mine.length === 1 && mine[0].deliveryFee === 30 && mine[0].packageName === "Kojo Tsey", JSON.stringify(mine));
+
+    console.log("F. the whole order is gone from the shelf: the refusal, then the sheet");
+    await post(B1, "SHOP-GONE"); await waitFor(B1, (t) => t.includes("Everyday Tote"), "the third shelf");
+    await post(B1, "Can I buy this again?");
+    rs = await waitFor(B1, (t) => t.includes("cannot be repeated as it stands"), "the refusal");
+    check("the refusal is spoken", body(rs).includes("Vanished Dress"), body(rs));
+    check("the shelf follows as the sheet, not a text dump", rs.some((r) => r.kind === "list") && !rs.some((r) => (r.body || "").includes("```")), JSON.stringify(rs.map((r) => r.kind)));
 
     check("no panics in the agent log", !/panic/i.test(agentLog));
   } catch (e) {
