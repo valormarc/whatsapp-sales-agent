@@ -612,7 +612,26 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		// A media id already collected is not collected
 		// twice (collectFlowPhoto keeps each id once).
 		noteFlowColour(flow, photoColour)
-		collectFlowPhoto(flow, imageID)
+		kept := collectFlowPhoto(flow, imageID)
+		if flow.PhotoCompact && flow.Step == "lastprice" && flow.FloorPrice <= 0 {
+			// The compact listing's own contract (the same
+			// shape the advert-join below honours): a photo
+			// joining while its last price question stands
+			// is acknowledged — added, or honestly refused
+			// at the cap — never taken in silently. The
+			// album rule governs the guided walk, whose
+			// seller is mid-flow; this seller is waiting on
+			// an answer, and silence reads as a lost photo.
+			// (The cap proof's seven sends of one photo all
+			// landed on this branch and heard nothing, the
+			// seventh included.)
+			if kept {
+				whatsapp.SendText(from, "Got it ✅ Photo added to "+flow.Name+".")
+			} else {
+				whatsapp.SendText(from, "I could not add that one: "+flow.Name+" already holds "+strconv.Itoa(maxProductPhotos)+" photos, the most a listing shows.")
+			}
+			return
+		}
 		if photoAckCovered(flow.RepeatAckAt) {
 			return
 		}

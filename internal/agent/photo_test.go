@@ -332,6 +332,41 @@ func TestThrowInSamePhotoTwiceIsNotReadBackTwice(t *testing.T) {
 	}
 }
 
+// A photo joining a compact listing that stands at its
+// last price question is acknowledged as added — and a
+// seventh is honestly refused — never taken in silently
+// by the album rule. (The live cap proof's seven sends of
+// one photo all landed on the album branch and heard
+// nothing, because the branch collected first and let the
+// burst-window throttle speak for it.)
+func TestCompactListingPhotoJoinsAreAcknowledgedAndCapped(t *testing.T) {
+	owner := "233550001130"
+	dir := setupChat(t, owner, shopWithBag)
+	c := &chat{dir: dir}
+	caption := "Double Clothes Rack — GH₵270\nBlack metal double clothes hanging rack with bottom storage shelf"
+
+	c.photo(t, owner, caption)
+	_ = c.replies(t, owner)
+	s := sessions.get(sessionKey(MerchantID, owner))
+	if s == nil || s.Onboarding == nil || !s.Onboarding.PhotoCompact || s.Onboarding.Step != "lastprice" {
+		t.Fatalf("the rich caption should open a compact listing at its last price question, flow = %+v", s)
+	}
+	for i := 2; i <= 6; i++ {
+		c.photo(t, owner, caption)
+		if got := c.last(t, owner); !strings.Contains(got, "Photo added to Double Clothes Rack.") {
+			t.Fatalf("photo %d joining the compact listing must be acknowledged, got %q", i, got)
+		}
+	}
+	c.photo(t, owner, caption)
+	if got := c.last(t, owner); !strings.Contains(got, "I could not add that one") || !strings.Contains(got, "already holds 6 photos") {
+		t.Fatalf("the seventh photo must be honestly refused, got %q", got)
+	}
+	s = sessions.get(sessionKey(MerchantID, owner))
+	if s == nil || s.Onboarding == nil || len(s.Onboarding.PhotoRefs) != 6 {
+		t.Fatalf("the listing must hold exactly six photos, flow = %+v", s)
+	}
+}
+
 func TestBuyerPhotoDoesNotOpenOnboarding(t *testing.T) {
 	merchant := "233550001107"
 	buyer := "233550002107"
