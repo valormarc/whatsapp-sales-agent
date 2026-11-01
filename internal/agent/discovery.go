@@ -41,6 +41,7 @@ Read her message and decide:
 - intent "order_missing": she is telling you that an order she already paid for has NOT arrived: it never came, it is lost, she is still waiting and it is overdue. The facts name her paid orders when she has any; give "shop" as that order's shop code. Merely asking where an order stands is a search of another kind, not this.
 - intent "browse": she asks what shops or goods there are.
 - intent "basket_view": she asks to see her basket, what she has picked or settled so far, in any words. She has not chosen a shop on this number yet, so she holds no basket here; the agent answers that plainly.
+- intent "basket_clear": she tells you to empty her basket, in any words. She has not chosen a shop on this number yet, so she holds no basket here either; the agent answers that plainly.
 - intent "no_shop": she says she has no particular shop, without naming a thing she wants. If she names a thing as well, it is a search.
 - intent "offtopic": her message is not about buying or shops at all.
 - intent "unclear": none of the above fits.
@@ -842,6 +843,9 @@ func actOnDiscovery(from, lower string, u *discoveryUnderstanding) bool {
 		whatsapp.SendText(from, discoveryReplyOr(u, "Tell me a shop, or tell me what you want to buy and I will search every shop for it."))
 		return true
 	case "basket_view":
+		whatsapp.SendText(from, discoveryReplyOr(u, "Your basket is empty at the moment: you have not picked anything on this number yet. Tell me a shop code if you have one, or tell me what you want to buy and I will search every shop for it."))
+		return true
+	case "basket_clear":
 		whatsapp.SendText(from, discoveryReplyOr(u, "Your basket is empty at the moment: you have not picked anything on this number yet. Tell me a shop code if you have one, or tell me what you want to buy and I will search every shop for it."))
 		return true
 	case "no_shop":

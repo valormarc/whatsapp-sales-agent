@@ -161,6 +161,16 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		}
 	}
 
+	// Clearing the basket: the command in its canonical
+	// shapes is served ahead of everything, the way the
+	// view below is, because at every stage the answer is
+	// the same act. Only the view existed before, so the
+	// command was answered with the list itself and the
+	// basket stood.
+	if basketClearAsked(lower) && serveBasketClear(from, s, shopID) {
+		return
+	}
+
 	// The basket view: "show me what's in my basket" is a
 	// structural ask with one referent, her own standing in
 	// this order, and it is answered from the session ahead
@@ -183,9 +193,15 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// drafted.
 	if (s.Stage == "haggling" || s.Stage == "fulfilment" || s.Stage == "lastprice") &&
 		strings.Contains(lower, "basket") && parseOffer(lower) == nil {
-		if u := thinkBuyerMessage(from, s, merchant, shopID, msg); u != nil && u.Intent == intentBasketView {
-			serveBasketView(from, s, shopID)
-			return
+		if u := thinkBuyerMessage(from, s, merchant, shopID, msg); u != nil {
+			if u.Intent == intentBasketView {
+				serveBasketView(from, s, shopID)
+				return
+			}
+			if u.Intent == intentBasketClear {
+				serveBasketClear(from, s, shopID)
+				return
+			}
 		}
 	}
 

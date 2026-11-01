@@ -166,3 +166,66 @@ func serveBasketView(from string, s *Session, shopID string) bool {
 	whatsapp.SendText(from, strings.Join(lines, "\n"))
 	return true
 }
+
+// basketClearRe reads the command to empty the basket in
+// its canonical shapes: a clearing word aimed at the
+// basket, in either order. Every other phrasing of the
+// command ("remove everything I picked", "start over")
+// is the model's to read: the buyer board names it as
+// its own act (see understand.go), because what counts
+// as telling the shop to drop the basket is a judgement,
+// not a word list.
+var basketClearRe = regexp.MustCompile(`\b(clear|empty)\b[^.?!]*\bbasket\b|\bbasket\b[^.?!]*\b(clear|empty)\b`)
+
+// basketClearAsked reports whether this turn is the
+// clearing command: the canonical shape, and not a
+// question about the basket — "did we clear the
+// basket?" asks after it, and questions belong to the
+// view and the model's reading, never to this net.
+func basketClearAsked(lower string) bool {
+	if strings.HasSuffix(strings.TrimSpace(lower), "?") {
+		return false
+	}
+	return basketClearRe.MatchString(lower)
+}
+
+// basketStands reports whether anything stands in this
+// order for her to clear: settled items, picks waiting,
+// a hand on the table, or a sale of one item in motion.
+func basketStands(s *Session) bool {
+	if len(s.Basket) > 0 || len(s.ShelfPicks) > 0 || len(s.TotalHand) > 0 {
+		return true
+	}
+	if s.ShelfSettling && s.Product != nil {
+		return true
+	}
+	return s.PendingClose || s.Stage == "haggling" || s.Stage == "fulfilment" || s.Stage == "agreed"
+}
+
+// serveBasketClear empties her basket: everything she
+// has picked or settled in this order so far goes, and
+// any sale in motion with it, the way a dropped sale
+// ends — the session is replaced whole, so nothing of
+// the old order can survive inside the new one. An
+// order already made is not a basket and is never
+// touched here; cancelling that is its own road.
+func serveBasketClear(from string, s *Session, shopID string) bool {
+	if !basketStands(s) {
+		whatsapp.SendText(from, "Your basket is empty at the moment. When you pick something or settle an item here, it will stand in your basket.")
+		return true
+	}
+	var view *catalogue.Product
+	if s.Product != nil {
+		view = s.Product
+		if s.Qty > 0 {
+			view = wholeProductOf(shopID, s.Product)
+		}
+	} else {
+		view = s.LastViewed
+	}
+	cancelFeeQuote(shopID, from)
+	cancelInHand(shopID, from)
+	sessions.put(sessionKey(shopID, from), &Session{Stage: "browsing", MerchantID: shopID, LastViewed: view, Location: s.Location, History: s.History})
+	whatsapp.SendText(from, "Cleared. Your basket is empty now.")
+	return true
+}

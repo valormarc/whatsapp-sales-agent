@@ -37,6 +37,8 @@ const BUYER_A = "233551209711";
 const BUYER_B = "233551209712";
 const BUYER_C = "233551209713";
 const BUYER_D = "233551209714";
+const BUYER_E = "233551209715";
+const BUYER_F = "233551209716";
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "basketview-"));
 const cat = { merchants: { luxe: { id: "luxe", name: "Luxe", shopCode: "LUXE", ownerWhatsApp: OWNER, payoutPhone: OWNER, dailyGiveawayAllowance: 300, deliveryFee: 25, deliveryNote: "Sent by bus to your station", products: [
   { id: "sandals", name: "Thong Sandals", description: "Thong sandals, sizes 37-41.", listPrice: 80, floorPrice: 60, stock: 5 },
@@ -184,6 +186,30 @@ async function pickBoth(buyer) {
     console.log("LEG D BASKET REPLY:\n" + texts(recs));
     check(texts(recs).includes("Thong Sandals - GH₵80") && texts(recs).includes("Double Clothes Rack - GH₵270"),
       "leg D: 'Check basket' is read by the thinking and answered with the list", texts(recs));
+
+    // Leg E: clearing the basket in its canonical words.
+    // The owner's own report: "clear basket" was answered
+    // with the list itself and nothing was dropped,
+    // because only the view existed.
+    recs = await pickBoth(BUYER_E);
+    await say(BUYER_E, "clear basket");
+    recs = await fresh(BUYER_E);
+    console.log("LEG E CLEAR REPLY:\n" + texts(recs));
+    check(texts(recs).includes("Cleared. Your basket is empty now."),
+      "leg E: 'clear basket' empties the basket and says so", texts(recs));
+    await say(BUYER_E, "show me my basket");
+    recs = await fresh(BUYER_E);
+    check(texts(recs).includes("Your basket is empty at the moment."),
+      "leg E: the basket stands empty after the clear", texts(recs));
+
+    // Leg F: the same command in her own words — the
+    // thinking reads it and the platform empties it.
+    recs = await pickBoth(BUYER_F);
+    await say(BUYER_F, "remove everything I picked");
+    recs = await fresh(BUYER_F);
+    console.log("LEG F CLEAR REPLY:\n" + texts(recs));
+    check(texts(recs).includes("Cleared. Your basket is empty now."),
+      "leg F: 'remove everything I picked' is read and empties the basket", texts(recs));
   } finally {
     child.kill();
     fs.rmSync(dir, { recursive: true, force: true });

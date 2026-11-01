@@ -76,6 +76,7 @@ const (
 	intentNewListing     = "new_listing"     // the owner is giving the agent a product to list
 	intentShelf          = "shelf"           // she wants to see what the shop has
 	intentBasketView     = "basket_view"     // she asks to see her basket: what she has picked and settled
+	intentBasketClear    = "basket_clear"    // she tells the shop to empty her basket and start again
 	intentCourtesy       = "courtesy"        // thanks, gratitude, a goodbye: the conversation closing warmly
 	intentAsk            = "ask"             // a question the facts can answer
 	intentOffTopic       = "offtopic"        // nothing to do with the shop
@@ -640,6 +641,7 @@ The acts you can name:
 - "new_listing": the shop owner is giving you a product to sell: describing goods she stocks, pasting an advert for a product, naming a product with its price or description so it can be listed. Goods copy meant for the shelf is this act, never a question; a statement about her shop, her orders or her day is not.
 - "shelf": she wants to see what the shop has, or start again from the shelf.
 - "basket_view": she is asking to see her basket: what she has picked, what she has already settled, what she is carrying in this order so far, in any words ("check basket", "what do I have so far?", "did we clear the basket?"). Do not draft it yourself; the platform lists it from her session.
+- "basket_clear": she is TELLING you to empty her basket: drop everything she has picked or settled so far in this order and start again, in any words ("clear basket", "empty my basket", "remove everything I picked", "forget the basket"). It is a command about her standing order, never a question — asking to SEE the basket, or asking whether it was cleared, is "basket_view". An order already made and paid for is not a basket; that is another act. Do not draft it yourself; the platform empties it.
 - "courtesy": she is thanking the shop, expressing gratitude, or saying goodbye, most often right after a completed purchase. This is part of the shop's conversation, never off-topic. Draft the reply in "reply": short, warm, correct English. When the facts show her completed order, acknowledge it briefly by its reference or product. Never pitch the shelf, never list goods, never name a price in a courtesy reply.
 - "ask": a question about the shop that the facts you are given can answer, or a request to explain something already said. Draft the answer in "reply": short, plain, warm, in correct English, using ONLY the facts given. An explanation is an answer, never a question back.
 - "offtopic": the message has nothing to do with this shop, its goods, an order or a payment.
@@ -824,7 +826,7 @@ func parseUnderstood(out *string) *understood {
 	}
 	switch u.Intent {
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
-		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentRecommend, intentTooExpensive, intentOrderPayment, intentAskBuyer, intentAttention, intentNewListing, intentShelf, intentBasketView, intentCourtesy, intentAsk, intentOffTopic, intentUnclear, intentDelivery, intentChangePrice, intentChangeLast:
+		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentRecommend, intentTooExpensive, intentOrderPayment, intentAskBuyer, intentAttention, intentNewListing, intentShelf, intentBasketView, intentBasketClear, intentCourtesy, intentAsk, intentOffTopic, intentUnclear, intentDelivery, intentChangePrice, intentChangeLast:
 		return &u
 	}
 	return nil
@@ -871,6 +873,9 @@ func actOnBuyerUnderstanding(from string, s *Session, merchant *catalogue.Mercha
 		return true
 	case intentBasketView:
 		serveBasketView(from, s, shopID)
+		return true
+	case intentBasketClear:
+		serveBasketClear(from, s, shopID)
 		return true
 	case intentDelivery:
 		// How delivery works at this shop is a fact the
