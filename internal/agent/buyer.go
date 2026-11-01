@@ -217,7 +217,7 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 	// with a thought-through refusal instead of an answer or a
 	// blank. What the thinking declines falls through to the
 	// branches below, the net, unchanged.
-	if (s.Stage == "browsing" || s.Stage == "agreed" || s.Stage == "") && !s.PendingClose && s.Onboarding == nil && s.Signup == nil && browsingOffer(shopID, lower) == nil {
+	if (s.Stage == "browsing" || s.Stage == "agreed" || s.Stage == "") && !s.PendingClose && s.Onboarding == nil && s.Signup == nil && (browsingOffer(shopID, lower) == nil || unattachedFigureTurn(shopID, s, lower)) {
 		if u := thinkBuyerMessage(from, s, merchant, shopID, msg); u != nil {
 			// A budget the thinking read off her words is
 			// carried once the figure is verified against

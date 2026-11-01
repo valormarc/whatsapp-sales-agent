@@ -48,6 +48,36 @@ var budgetFrameRe = regexp.MustCompile(`(?i)\bbudget\b[^0-9]{0,14}\d+(?:\.\d+)?|
 
 var smallCountRe = regexp.MustCompile(`\b(\d{1,2})\s+([a-z]+)`)
 
+var figureFramingRe = regexp.MustCompile(`(?i)\b\d+(?:[.,]\d+)?\b|\bgh₵\b|\bghc\b|\bghs\b|\bcedis?\b|\bpesewas?\b|[.,;:!?]`)
+
+// unattachedFigureTurn reports whether a browsing turn
+// carrying a figure should be read by the thinking before
+// the offer road claims it. The figure must be attached to
+// nothing: no product named in the message, nothing in
+// front of her, nothing held or being settled — and the
+// message must say more than the number, words the thinking
+// can read the figure against. A figure framed as what she
+// has to spend is her budget, and the thinking is built to
+// carry a stated budget and recommend within it; left to
+// the offer road it was claimed as an offer for an unnamed
+// item and answered with "which item is that offer for"
+// and the shelf — a buyer stating her means and her need
+// in one breath got shown products instead of helped. A
+// bare figure keeps the offer road: there is nothing else
+// to read. And what the thinking declines falls through to
+// the offer road unchanged, so a genuine offer for an
+// unnamed item still gets its clarifying question.
+func unattachedFigureTurn(shopID string, s *Session, lower string) bool {
+	if s.ShelfSettling || len(s.TotalHand) > 0 || len(s.Basket) > 0 {
+		return false
+	}
+	if s.LastViewed != nil || catalogue.FindProduct(shopID, lower) != nil {
+		return false
+	}
+	rest := figureFramingRe.ReplaceAllString(lower, " ")
+	return len(strings.Fields(rest)) >= 2
+}
+
 // browsingOffer reads a figure as an offer at the browsing
 // stage, where a small count glued to a product's name is
 // a quantity of that product, not money: in "Strip crop

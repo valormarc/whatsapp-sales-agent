@@ -117,6 +117,19 @@ func StartUnpaidWatch() {
 				time.Sleep(freshTick)
 			}
 		}()
+		go func() {
+			for {
+				func() {
+					defer func() {
+						if r := recover(); r != nil {
+							fmt.Fprintf(os.Stderr, "agent: dispatch watch pass panicked and was recovered: %v\n", r)
+						}
+					}()
+					CheckDispatchNudges(time.Now().UTC())
+				}()
+				time.Sleep(dispatchTick)
+			}
+		}()
 	})
 }
 

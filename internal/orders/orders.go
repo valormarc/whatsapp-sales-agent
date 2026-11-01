@@ -219,6 +219,12 @@ type Order struct {
 	// told both sides about this order sitting unpaid, so it
 	// alerts once and never nags.
 	UnpaidAlerted bool `json:"unpaidAlerted,omitempty"`
+	// DispatchNudged marks that the dispatch watch has
+	// already pushed this order to the merchant once as paid
+	// and still waiting to go out, so the push happens once
+	// and never nags; the attention answer keeps listing it
+	// for as long as it waits.
+	DispatchNudged bool `json:"dispatchNudged,omitempty"`
 	// LinkAttempts counts the payment links minted for this
 	// order: the first at the sale, then a fresh one each time
 	// the buyer reports the link dead and the agent re-issues.
