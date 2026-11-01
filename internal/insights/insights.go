@@ -13,22 +13,37 @@ import (
 	"github.com/valormarc/hackathon-agent/internal/money"
 )
 
+// dayMoney prepares the day's money figures for any answer
+// composed from them: rounded to whole cedis, with the left
+// taken from the rounded figures. The book keeps what the
+// day's arithmetic produced, and a subtraction there can
+// carry a raw float's tail (25.999999999999986); a figure
+// prepared as a fact for an answer never does, so no answer
+// composed or drafted from these facts can carry one either.
+func dayMoney(day daybook.State) (revenue, given, allowance, left float64) {
+	revenue = money.Round(day.Revenue)
+	given = money.Round(day.GivenAway)
+	allowance = money.Round(day.Allowance)
+	left = allowance - given
+	if left < 0 {
+		left = 0
+	}
+	return
+}
+
 // DayReportLines is the day report as separate short lines, for
 // messages laid out line by line: the same figures as
 // DayReportText, with the counts worded the way a person says
 // them (one sale, two sales).
 func DayReportLines(day daybook.State) []string {
-	left := day.Allowance - day.GivenAway
-	if left < 0 {
-		left = 0
-	}
+	revenue, given, allowance, left := dayMoney(day)
 	sales := "sales"
 	if day.Sales == 1 {
 		sales = "sale"
 	}
 	lines := []string{
-		"Today: " + money.JSNumber(float64(day.Sales)) + " " + sales + ", " + money.GHS(day.Revenue) + " in.",
-		"Given away: " + money.GHS(day.GivenAway) + " of your " + money.GHS(day.Allowance) + " allowance, " + money.GHS(left) + " left.",
+		"Today: " + money.JSNumber(float64(day.Sales)) + " " + sales + ", " + money.GHS(revenue) + " in.",
+		"Given away: " + money.GHS(given) + " of your " + money.GHS(allowance) + " allowance, " + money.GHS(left) + " left.",
 	}
 	if day.WalkAways != 0 {
 		who := "customers"
@@ -43,13 +58,10 @@ func DayReportLines(day daybook.State) []string {
 // DayReportText is the day report: what the merchant hears after a
 // sale and at end of day.
 func DayReportText(day daybook.State) string {
-	left := day.Allowance - day.GivenAway
-	if left < 0 {
-		left = 0
-	}
+	revenue, given, allowance, left := dayMoney(day)
 	parts := []string{
-		money.JSNumber(float64(day.Sales)) + " sale(s) today, " + money.GHS(day.Revenue) + " in.",
-		"Given away in haggling: " + money.GHS(day.GivenAway) + " of your " + money.GHS(day.Allowance) + " allowance, " + money.GHS(left) + " left.",
+		money.JSNumber(float64(day.Sales)) + " sale(s) today, " + money.GHS(revenue) + " in.",
+		"Given away in haggling: " + money.GHS(given) + " of your " + money.GHS(allowance) + " allowance, " + money.GHS(left) + " left.",
 	}
 	if day.WalkAways != 0 {
 		parts = append(parts, money.JSNumber(float64(day.WalkAways))+" customer(s) walked away from a final price.")

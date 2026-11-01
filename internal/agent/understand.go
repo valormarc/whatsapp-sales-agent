@@ -73,6 +73,7 @@ const (
 	intentOrderPayment   = "order_payment"   // the owner asks about the payment on an order
 	intentAskBuyer       = "ask_buyer"       // the owner tells the agent to ask her buyer
 	intentAttention      = "attention"       // the owner asks what needs her attention: her outstanding work, answered from the books
+	intentClearWork      = "clear_work"      // the owner tells the agent to clear her standing unfinished work: the platform confirms with her first
 	intentNewListing     = "new_listing"     // the owner is giving the agent a product to list
 	intentShelf          = "shelf"           // she wants to see what the shop has
 	intentBasketView     = "basket_view"     // she asks to see her basket: what she has picked and settled
@@ -449,6 +450,26 @@ func productsStrung(text string) bool {
 	return false
 }
 
+// longDecimalFigure reports whether a figure token carries
+// more decimal places than money is ever written with: a raw
+// float's tail (25.999999999999986), which no composed answer
+// may carry even when it matches a fact to the cent — the
+// cent-level comparison below would wave it through, so the
+// shape itself is refused here, at the send side, for every
+// gated draft. A k figure is exempt: its decimals are
+// thousandths of a thousand ("12.345k" is 12,345, a whole
+// figure when read).
+func longDecimalFigure(tok string) bool {
+	if strings.HasSuffix(tok, "k") || strings.HasSuffix(tok, "K") {
+		return false
+	}
+	i := strings.IndexByte(tok, '.')
+	if i < 0 {
+		return false
+	}
+	return len(tok)-i-1 > 2
+}
+
 func figuresClean(text string, allowed ...float64) bool {
 	for _, wf := range wordFigures(text) {
 		// A spelled figure is money when a currency word
@@ -471,6 +492,9 @@ func figuresClean(text string, allowed ...float64) bool {
 		}
 	}
 	for _, tok := range figureTokenRe.FindAllString(text, -1) {
+		if longDecimalFigure(tok) {
+			return false
+		}
 		v, err := parseFigure(tok)
 		if err != nil {
 			return false
@@ -556,6 +580,9 @@ func recapFiguresClean(text string, moneyAllowed, bareAllowed []float64) bool {
 		}
 	}
 	for _, m := range figureTokenRe.FindAllStringIndex(text, -1) {
+		if longDecimalFigure(text[m[0]:m[1]]) {
+			return false
+		}
 		v, err := parseFigure(text[m[0]:m[1]])
 		if err != nil {
 			return false
@@ -637,6 +664,7 @@ The acts you can name:
 - "order_payment": the shop owner is asking about the payment on an order: whether it has been paid, what is happening with it. When an open order is in the facts and she asks about "the payment" or "this order" without naming another, that is the order she means.
 - "ask_buyer": the shop owner is telling you to ask her buyer something, or to find something out from the buyer: "ask the buyer", "ask her", "find out from her". You carry the question to the buyer yourself; never ask the owner what to ask when the facts show the open matter.
 - "attention": the shop owner is asking what needs her, what is outstanding, what she should deal with today: "what needs my attention", "what is pending", "what should I do today", "anything for me to handle". The platform answers from her books — disputes, paid orders waiting to be sent, her unfinished work, orders waiting on buyers — so do not draft the list yourself.
+- "clear_work": the shop owner is telling you to clear away her standing unfinished work: a listing she is in the middle of making and has not saved, photos she sent that are kept waiting to be listed, or items kept from her photos waiting for their prices — "clear them", "drop all that", "forget the photos". Only the owner names this act. Do not draft it yourself; the platform confirms with her first and does the clearing itself.
 - "change_price": the shop owner is asking, in whatever words of her own, for a product's price to change: "abeg change di price of Ankara Fabric to 500", "make the heels 130", "the bag should be 450 now". Only the owner names this act. Put the product's name, as it appears in her shelf facts, in "item", and the new price in "figure". The platform verifies both against her words and her shelf before anything moves; do not draft the confirmation yourself.
 - "change_last_price": the same ask for a product's LAST price — the lowest she will go: "drop her last price to 100", "make 380 the last price for the ankara". Put the product's name in "item" and the new last price in "figure". Only the owner names this act.
 - "delivery": a buyer is ASKING how delivery works at this shop: what it costs, how it is arranged, where the shop delivers to, when it leaves. A question, never her stating her own arrangement for an order in motion — "I will pick it up myself", "deliver it to Osu", "I will send a rider" are her choices for her purchase, never this act. The platform answers from the shop's own delivery facts; do not draft it yourself.
@@ -720,15 +748,30 @@ func thinkBuyerMessage(from string, s *Session, merchant *catalogue.Merchant, sh
 // one). Callers verify currency-marked figures against
 // the money set and bare figures against either, the
 // recap gate's shape.
-func merchantDayFigures(merchant *catalogue.Merchant, shopID string) (string, []float64, []float64) {
-	day := daybook.Default.GetDayState(shopID, daybook.Options{Allowance: merchant.DailyGiveawayAllowance})
-	left := day.Allowance - day.GivenAway
+// dayMoneyPools prepares a day's figures for a composed or
+// drafted answer, split by kind as merchantDayFigures
+// documents: the money rounded to whole cedis (the facts
+// boundary — a raw float's tail in the book, 25.999999999999986
+// for a GH₵26 giveaway, never reaches a fact or a verification
+// pool), the counts bare. Every merchant day path that hands
+// figures to a draft or a gate takes them from here, so the
+// class cannot survive on one path while another is fixed.
+func dayMoneyPools(day daybook.State) (moneyPool, countPool []float64) {
+	revenue := money.Round(day.Revenue)
+	given := money.Round(day.GivenAway)
+	allowance := money.Round(day.Allowance)
+	left := allowance - given
 	if left < 0 {
 		left = 0
 	}
-	return insights.DayReportText(day),
-		[]float64{day.Revenue, day.GivenAway, day.Allowance, left},
+	return []float64{revenue, given, allowance, left},
 		[]float64{float64(day.Sales), float64(day.WalkAways)}
+}
+
+func merchantDayFigures(merchant *catalogue.Merchant, shopID string) (string, []float64, []float64) {
+	day := daybook.Default.GetDayState(shopID, daybook.Options{Allowance: merchant.DailyGiveawayAllowance})
+	moneyPool, countPool := dayMoneyPools(day)
+	return insights.DayReportText(day), moneyPool, countPool
 }
 
 // understandMerchantMessage asks the model what the merchant
@@ -838,7 +881,7 @@ func parseUnderstood(out *string) *understood {
 	}
 	switch u.Intent {
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
-		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentRecommend, intentTooExpensive, intentOrderPayment, intentAskBuyer, intentAttention, intentNewListing, intentShelf, intentBasketView, intentBasketClear, intentCourtesy, intentAsk, intentOffTopic, intentUnclear, intentDelivery, intentChangePrice, intentChangeLast:
+		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentRecommend, intentTooExpensive, intentOrderPayment, intentAskBuyer, intentAttention, intentClearWork, intentNewListing, intentShelf, intentBasketView, intentBasketClear, intentCourtesy, intentAsk, intentOffTopic, intentUnclear, intentDelivery, intentChangePrice, intentChangeLast:
 		return &u
 	}
 	return nil
@@ -1264,6 +1307,13 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 	case intentAttention:
 		whatsapp.SendText(from, merchantAttentionText(merchant, sessions.get(sessionKey(shopID, from))))
 		return true
+	case intentClearWork:
+		// Her word to clear her standing work opens the
+		// one confirmation (see pendingquestion.go): the
+		// act performs nothing itself, and with no work
+		// standing it declines, so her words fall through
+		// to the ordinary readings.
+		return openClearWorkConfirmation(from, sessions.get(sessionKey(shopID, from)))
 	case intentAsk, intentUnclear:
 		if strings.TrimSpace(u.Reply) == "" {
 			return false

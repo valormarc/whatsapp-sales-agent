@@ -396,6 +396,18 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	}
 
 
+	// Question ownership: a question already awaiting her
+	// answer owns this turn before any flow below may read
+	// it (see pendingquestion.go). The armed button
+	// question's typed-answer rule directly below keeps its
+	// own ownership of a bare yes or no owed to it — the
+	// resolver declines those words when such a question is
+	// armed and she is not quoting the pending question —
+	// so the two ownerships never fight over one word.
+	if s.PendingMerchantQ != nil && servePendingMerchantQuestion(from, s, merchant, merchantID, text, lower, think) {
+		return
+	}
+
 	// A bare typed yes or no belongs to the armed button
 	// question, the way a tap on its buttons does. Button
 	// taps are bound by question ID; typed words had no
@@ -458,6 +470,14 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	}
 
 	if s.Onboarding != nil {
+		// Her word to clear her standing work opens its
+		// confirmation here, before the walk's own readers:
+		// the instruction is about the walk and the work
+		// standing behind it, and it is never a step answer
+		// for the walk to misread.
+		if serveMerchantClearAsk(from, s, merchant, text, lower) {
+			return
+		}
 		// A price question stands open and her message is
 		// not shaped as its answer: she is doing something
 		// else — reporting a delivery, asking what needs
@@ -492,8 +512,19 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 				// answered and the step asked again, the
 				// walk's own courtesy; an errand is simply
 				// done, with the walk standing behind it.
+				// One question at a time, though: when the
+				// act's own answer asks a question back, that
+				// question is the live one — it is armed as
+				// the pending question and the walk's
+				// question is NOT pushed again in the same
+				// turn, so her next answer has exactly one
+				// question it can belong to.
 				if u.Intent == intentAsk || u.Intent == intentUnclear {
-					askOnboardingStep(from, s.Onboarding)
+					if strings.HasSuffix(strings.TrimSpace(u.Reply), "?") {
+						noteMerchantActQuestion(s, u)
+					} else {
+						askOnboardingStep(from, s.Onboarding)
+					}
 				}
 				return
 			}
@@ -502,6 +533,13 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 			return
 		}
 		advanceOnboarding(from, s, text, lower)
+		return
+	}
+
+	// Her word to clear her standing work when no walk is
+	// open — kept photos or kept items standing alone —
+	// opens the same confirmation (see pendingquestion.go).
+	if serveMerchantClearAsk(from, s, merchant, text, lower) {
 		return
 	}
 
@@ -676,6 +714,11 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 			}
 			s.Onboarding = nil
 		} else if actOnMerchantUnderstanding(from, merchant, merchantID, text, u) {
+			// A drafted question in the act's reply is
+			// armed as the pending question, so her next
+			// message is read against it first (see
+			// pendingquestion.go).
+			noteMerchantActQuestion(s, u)
 			return
 		}
 	}

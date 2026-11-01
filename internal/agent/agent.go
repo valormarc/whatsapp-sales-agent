@@ -279,6 +279,15 @@ type Session struct {
 	// audit).
 	PendingRemoveID string
 
+	// PendingMerchantQ is the one question currently awaiting
+	// the merchant's own answer in her chat, armed by the flow
+	// that asked it (see pendingquestion.go). While it stands,
+	// her next message is resolved against it before any
+	// listing-walk step, stage reader or other flow may read
+	// the message: one pending question owns the turn, and no
+	// other flow pushes its next question in the same turn.
+	PendingMerchantQ *MerchantQuestion
+
 	// LastMerchantNote is the last substantive thing the agent
 	// told the merchant in her own chat (today, the allowance
 	// prompt that rides the day answer). Her "explain this"
@@ -761,18 +770,16 @@ func answerMerchantDayQuestion(from, text, merchantID string) {
 		// may carry only the day book's own figures — the
 		// same set the verified fallback reports — and
 		// anything else falls back to that report.
-		left := day.Allowance - day.GivenAway
-		if left < 0 {
-			left = 0
-		}
 		// The day's figures verify in two pools (the
 		// fifth audit): currency-marked figures against
 		// the money alone, bare figures against money or
 		// counts. Pooled in one set, a count of sales
-		// licensed a GH₵ figure the day never saw.
-		if reply != nil && voiceClean(*reply) && recapFiguresClean(*reply,
-			[]float64{day.Revenue, day.GivenAway, day.Allowance, left},
-			[]float64{float64(day.Sales), float64(day.WalkAways)}) {
+		// licensed a GH₵ figure the day never saw. The
+		// pools come from dayMoneyPools, so the money in
+		// them is rounded at the facts boundary like
+		// every other merchant day path.
+		moneyPool, countPool := dayMoneyPools(day)
+		if reply != nil && voiceClean(*reply) && recapFiguresClean(*reply, moneyPool, countPool) {
 			whatsapp.SendText(from, *reply)
 			answered = true
 		}

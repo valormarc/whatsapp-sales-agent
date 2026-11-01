@@ -109,13 +109,19 @@ func BuildSystemPrompt(ctx Context) string {
 
 	if ctx.Day != nil {
 		day := ctx.Day
-		left := day.Allowance - day.GivenAway
+		// The day's money is prepared as whole cedis at
+		// this facts boundary, like every day path: the
+		// book's raw subtraction can carry a float's tail,
+		// and a fact handed to a drafting call must never
+		// carry one into a reply.
+		given := money.Round(day.GivenAway)
+		left := money.Round(day.Allowance) - given
 		if left < 0 {
 			left = 0
 		}
 		lines = append(lines,
 			"",
-			"THE DAY BOOK: "+itoa(day.Sales)+" sale(s) so far today, "+money.GHS(day.GivenAway)+" given away in discounts, "+money.GHS(left)+" of today's giveaway allowance left. Let this set your firmness.",
+			"THE DAY BOOK: "+itoa(day.Sales)+" sale(s) so far today, "+money.GHS(given)+" given away in discounts, "+money.GHS(left)+" of today's giveaway allowance left. Let this set your firmness.",
 		)
 	}
 
@@ -130,7 +136,15 @@ func BuildSystemPrompt(ctx Context) string {
 // made outside this chat are invisible to it and it must say so rather
 // than guess.
 func BuildMerchantPrompt(merchant catalogue.Merchant, day daybook.State) string {
-	left := day.Allowance - day.GivenAway
+	// The day's money is prepared as whole cedis at this
+	// facts boundary, like every day path: the book's raw
+	// subtraction can carry a float's tail, and a fact
+	// handed to a drafting call must never carry one into
+	// the merchant's answer.
+	revenue := money.Round(day.Revenue)
+	given := money.Round(day.GivenAway)
+	allowance := money.Round(day.Allowance)
+	left := allowance - given
 	if left < 0 {
 		left = 0
 	}
@@ -140,7 +154,7 @@ func BuildMerchantPrompt(merchant catalogue.Merchant, day daybook.State) string 
 		"If she asks about something these figures cannot answer, say what you do know and name the limit plainly: you can only see what flowed through this agent, so sales she made outside this chat are invisible to you.",
 		voiceLaw,
 		"",
-		"TODAY'S BOOK: " + itoa(day.Sales) + " sale(s), " + money.GHS(day.Revenue) + " in, " + money.GHS(day.GivenAway) + " given away in discounts, " + money.GHS(left) + " of the " + money.GHS(day.Allowance) + " giveaway allowance left, " + itoa(day.WalkAways) + " walk-away(s).",
+		"TODAY'S BOOK: " + itoa(day.Sales) + " sale(s), " + money.GHS(revenue) + " in, " + money.GHS(given) + " given away in discounts, " + money.GHS(left) + " of the " + money.GHS(allowance) + " giveaway allowance left, " + itoa(day.WalkAways) + " walk-away(s).",
 	}, "\n")
 }
 

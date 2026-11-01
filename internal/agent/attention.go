@@ -128,7 +128,7 @@ func merchantAttentionText(merchant *catalogue.Merchant, s *Session) string {
 		if len(waiting) == 1 {
 			noun = "order is"
 		}
-		blocks = append(blocks, []string{strconv.Itoa(len(waiting)) + " " + noun + " waiting for buyers to pay, " + money.GHS(owed) + " in all."})
+		blocks = append(blocks, []string{strconv.Itoa(len(waiting)) + " " + noun + " waiting for buyers to pay, " + money.GHS(money.Round(owed)) + " in all."})
 	}
 	day := daybook.Default.GetDayState(merchant.ID, daybook.Options{Allowance: merchant.DailyGiveawayAllowance})
 	blocks = append(blocks, []string{"Today so far: " + insights.DayReportText(day)})
