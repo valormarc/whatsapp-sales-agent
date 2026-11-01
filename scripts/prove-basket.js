@@ -61,7 +61,8 @@ async function waitFor(fn, label, timeoutMs = 60000) {
     await new Promise((r) => setTimeout(r, 700));
   }
 }
-const told = (who, sub) => () => outboxTo(who).some((r) => (r.body || "").toLowerCase().includes(sub.toLowerCase()));
+const said = (r) => ((r.body || "") + "\n" + JSON.stringify(r.sections || [])).toLowerCase();
+const told = (who, sub) => () => outboxTo(who).some((r) => said(r).includes(sub.toLowerCase()));
 function orders() { const f = path.join(dir, "data", "orders.json"); return fs.existsSync(f) ? Object.values(JSON.parse(fs.readFileSync(f, "utf8"))) : []; }
 
 (async () => {

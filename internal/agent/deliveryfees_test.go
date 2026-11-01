@@ -111,6 +111,88 @@ func TestQuoteStylePausesAsksAndCompletes(t *testing.T) {
 	}
 }
 
+// Two buyers waiting on a fee for the SAME place take
+// the merchant's one answer together: the fee is quoted
+// per place, not per buyer. (The pressure proof's three
+// Kasoa buyers could never be answered before this
+// grouping: every reply, even naming the place, still
+// counted as ambiguous and drew the clarification again.)
+func TestOneFeeAnswerSettlesEveryBuyerWaitingOnThatPlace(t *testing.T) {
+	merchant := "233550003020"
+	dir := setupChat(t, merchant, shopQuoteStyle)
+	_ = dir
+	c := &chat{dir: dir}
+	buyers := []string{"233550003021", "233550003022"}
+	for _, buyer := range buyers {
+		c.say(t, buyer, "SHOP-TEST")
+		c.replies(t, buyer)
+		c.say(t, buyer, "Handmade Beaded Bag")
+		c.last(t, buyer)
+		c.say(t, buyer, "850")
+		c.replies(t, buyer)
+		c.say(t, buyer, "Delivery to Osu")
+		if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "I have asked her") {
+			t.Fatalf("buyer %s must be told the fee is being asked, got %q", buyer, got)
+		}
+		if s := sessions.get(sessionKey("demo", buyer)); s == nil || s.FulfilStep != "feewait" {
+			t.Fatalf("buyer %s must be waiting on the fee, got %+v", buyer, s)
+		}
+	}
+	c.replies(t, merchant) // drain the two alerts
+	c.say(t, merchant, "fee 30")
+	for _, buyer := range buyers {
+		if got := strings.Join(c.replies(t, buyer), "\n"); !strings.Contains(got, "says delivery to Osu is GH₵30") {
+			t.Fatalf("buyer %s must hear the quoted fee from the one answer, got %q", buyer, got)
+		}
+		if s := sessions.get(sessionKey("demo", buyer)); s != nil && s.FulfilStep == "feewait" {
+			t.Fatalf("buyer %s must no longer be waiting on the fee", buyer)
+		}
+	}
+	if got := strings.Join(c.replies(t, merchant), "\n"); strings.Count(got, "Done. I have told the buyer delivery to Osu is GH₵30") != 1 {
+		t.Fatalf("the merchant hears the shared outcome once, got %q", got)
+	}
+}
+
+// Different places waiting stay distinct: a bare figure
+// binds nothing (the audit's guard), and naming a place
+// settles only that place's buyers.
+func TestFeeAnswersStayPerPlaceWhenPlacesDiffer(t *testing.T) {
+	merchant := "233550003030"
+	dir := setupChat(t, merchant, shopQuoteStyle)
+	c := &chat{dir: dir}
+	osuBuyer, kasoaBuyer := "233550003031", "233550003032"
+	for _, step := range []struct{ buyer, place string }{{osuBuyer, "Osu"}, {kasoaBuyer, "Kasoa"}} {
+		c.say(t, step.buyer, "SHOP-TEST")
+		c.replies(t, step.buyer)
+		c.say(t, step.buyer, "Handmade Beaded Bag")
+		c.last(t, step.buyer)
+		c.say(t, step.buyer, "850")
+		c.replies(t, step.buyer)
+		c.say(t, step.buyer, "Delivery to "+step.place)
+		c.replies(t, step.buyer)
+	}
+	c.replies(t, merchant)
+	c.say(t, merchant, "fee 30")
+	if got := strings.Join(c.replies(t, merchant), "\n"); !strings.Contains(got, "More than one buyer is waiting") {
+		t.Fatalf("a bare figure across two places must draw the clarification, got %q", got)
+	}
+	for _, buyer := range []string{osuBuyer, kasoaBuyer} {
+		if got := strings.Join(c.replies(t, buyer), "\n"); strings.Contains(got, "says delivery to") {
+			t.Fatalf("no buyer may hear a fee from the bare figure, buyer %s got %q", buyer, got)
+		}
+	}
+	c.say(t, merchant, "Osu 30")
+	if got := strings.Join(c.replies(t, osuBuyer), "\n"); !strings.Contains(got, "says delivery to Osu is GH₵30") {
+		t.Fatalf("the Osu buyer must hear her fee, got %q", got)
+	}
+	if got := strings.Join(c.replies(t, kasoaBuyer), "\n"); strings.Contains(got, "says delivery to") {
+		t.Fatalf("the Kasoa buyer must still be waiting, got %q", got)
+	}
+	if s := sessions.get(sessionKey("demo", kasoaBuyer)); s == nil || s.FulfilStep != "feewait" {
+		t.Fatalf("the Kasoa buyer must still be in feewait, got %+v", s)
+	}
+}
+
 func TestQuoteDeclineHandsTheChoiceBack(t *testing.T) {
 	merchant := "233550003021"
 	dir := setupChat(t, merchant, shopQuoteStyle)

@@ -411,18 +411,25 @@ func handleMerchantFeeQuote(from string, merchant *catalogue.Merchant, msg, lowe
 			}
 		}
 		if len(all) > len(quotes) {
-			matches := 0
-			var namedShop *catalogue.Merchant
+			// The answer routes by the place it names; what
+			// must be unique is the SHOP it points at, not
+			// the quote — one shop can hold several waiting
+			// quotes for the same place, all of them that
+			// shop's to answer.
+			matched := map[string]*catalogue.Merchant{}
 			for _, wq := range all {
 				if wq.quote.Place != "" && strings.Contains(lower, strings.ToLower(wq.quote.Place)) {
-					matches++
-					namedShop = wq.shop
+					matched[wq.shop.ID] = wq.shop
 				}
 			}
-			if matches == 1 && namedShop.ID != merchant.ID {
-				merchant = namedShop
-				quotes = openFeeQuotes(merchant.ID)
-			} else if matches != 1 {
+			if len(matched) == 1 {
+				for _, ms := range matched {
+					if ms.ID != merchant.ID {
+						merchant = ms
+						quotes = openFeeQuotes(merchant.ID)
+					}
+				}
+			} else {
 				var lines []string
 				for _, wq := range all {
 					lines = append(lines, wq.quote.Item+" to "+wq.quote.Place+" ("+wq.shop.Name+")")
@@ -432,25 +439,34 @@ func handleMerchantFeeQuote(from string, merchant *catalogue.Merchant, msg, lowe
 			}
 		}
 	}
-	q := &quotes[0]
+	// The fee is quoted per place, not per buyer: every
+	// waiting quote for one place takes the same answer.
+	// More than one buyer waiting is ambiguous only when
+	// different places wait and the answer names none of
+	// them — binding a bare figure to the oldest by file
+	// order would price the wrong buyer's delivery (the
+	// second audit). When the waiting quotes are all for
+	// one place, or the answer names a place, every quote
+	// for that place is the answer's target. (Until this
+	// grouping, three buyers waiting on the same place
+	// could never be answered at all: the merchant's
+	// place-named reply still counted as ambiguous.)
+	targets := quotes
 	if len(quotes) > 1 {
-		// More than one buyer is waiting: a bare figure
-		// cannot say whose fee it is, and binding it to
-		// the oldest by file order prices the wrong
-		// buyer's delivery (the second audit). The answer
-		// must name the place; until it does, she is asked
-		// which, and nothing is bound.
-		var named *feeQuote
-		matches := 0
-		for i := range quotes {
-			if quotes[i].Place != "" && strings.Contains(lower, strings.ToLower(quotes[i].Place)) {
-				named = &quotes[i]
-				matches++
+		var named []feeQuote
+		places := map[string]bool{}
+		for _, oq := range quotes {
+			places[oq.Place] = true
+			if oq.Place != "" && strings.Contains(lower, strings.ToLower(oq.Place)) {
+				named = append(named, oq)
 			}
 		}
-		if matches == 1 {
-			q = named
-		} else {
+		switch {
+		case len(named) > 0:
+			targets = named
+		case len(places) == 1:
+			targets = quotes
+		default:
 			var lines []string
 			for _, oq := range quotes {
 				lines = append(lines, oq.Item+" to "+oq.Place)
@@ -459,60 +475,74 @@ func handleMerchantFeeQuote(from string, merchant *catalogue.Merchant, msg, lowe
 			return true
 		}
 	}
-	buyer := q.Buyer
-	key := sessionKey(merchant.ID, buyer)
-	// Everything below writes the buyer's session from
-	// the merchant's turn — rewinding her fulfilment,
-	// parking the quoted fee, driving her flow onward —
-	// so it runs under the buyer's turn lock.
-	withCrossLock(from, buyer, func() {
-		sess := sessions.get(key)
-		live := sess != nil && sess.Stage == "fulfilment" && (sess.FulfilStep == "feewait" || sess.FulfilStep == "feeexpired") && sess.FeeQuotePlace == q.Place
-		if declined {
-			settleFeeQuote(merchant.ID, buyer, "declined", 0)
-			if live {
-				sess.FulfilStep = "choice"
-				sess.FeeQuotePlace = ""
-				sessions.put(key, sess)
-				sendPieces(buyer, merchant.Name+" cannot deliver to "+q.Place+".", "You can pick it up yourself, meet up, or give me another place to try.")
-				sendChoiceQuestion(buyer, sess, merchant)
-			} else {
-				whatsapp.SendText(buyer, merchant.Name+" cannot deliver to "+q.Place+". When you are ready to buy again, tell me, and we will find another way for the goods to reach you.")
-			}
-			whatsapp.SendText(from, "Understood. I have told the buyer you cannot deliver to "+q.Place+".")
+	// One merchant-facing line per distinct outcome: an
+	// answer that settles several buyers at one place is
+	// confirmed to her once, not once per buyer.
+	merchantSaid := map[string]bool{}
+	tellMerchant := func(text string) {
+		if merchantSaid[text] {
 			return
 		}
-		settleFeeQuote(merchant.ID, buyer, "answered", fee)
-		if live {
-			sess.FeeQuotePlace = ""
-			sessions.put(key, sess)
-			purse := "It joins the total you pay here, and you will see the full total before you pay."
-			if deliveryPaidToOf(merchant) == "carrier" {
-				purse = "You pay that to whoever brings the item, when it arrives."
+		merchantSaid[text] = true
+		whatsapp.SendText(from, text)
+	}
+	for ti := range targets {
+		q := &targets[ti]
+		buyer := q.Buyer
+		key := sessionKey(merchant.ID, buyer)
+		// Everything below writes the buyer's session from
+		// the merchant's turn — rewinding her fulfilment,
+		// parking the quoted fee, driving her flow onward —
+		// so it runs under the buyer's turn lock.
+		withCrossLock(from, buyer, func() {
+			sess := sessions.get(key)
+			live := sess != nil && sess.Stage == "fulfilment" && (sess.FulfilStep == "feewait" || sess.FulfilStep == "feeexpired") && sess.FeeQuotePlace == q.Place
+			if declined {
+				settleFeeQuote(merchant.ID, buyer, "declined", 0)
+				if live {
+					sess.FulfilStep = "choice"
+					sess.FeeQuotePlace = ""
+					sessions.put(key, sess)
+					sendPieces(buyer, merchant.Name+" cannot deliver to "+q.Place+".", "You can pick it up yourself, meet up, or give me another place to try.")
+					sendChoiceQuestion(buyer, sess, merchant)
+				} else {
+					whatsapp.SendText(buyer, merchant.Name+" cannot deliver to "+q.Place+". When you are ready to buy again, tell me, and we will find another way for the goods to reach you.")
+				}
+				tellMerchant("Understood. I have told the buyer you cannot deliver to " + q.Place + ".")
+				return
 			}
-			sendPieces(buyer,
-				merchant.Name+" says delivery to "+q.Place+" is "+money.GHS(fee)+".",
-				purse)
-			if q.Parked != nil {
-				// A repeat order rides through on its parked
-				// details: the fee was the only missing fact, and
-				// it has just landed, so the recap is next.
-				f := *q.Parked
-				f.Fee = fee
-				f.Location = q.Place
-				sess.PendingFulfil = f
-				sess.FulfilStep = "confirm"
+			settleFeeQuote(merchant.ID, buyer, "answered", fee)
+			if live {
+				sess.FeeQuotePlace = ""
 				sessions.put(key, sess)
-				sendOrderRecap(buyer, sess, f)
+				purse := "It joins the total you pay here, and you will see the full total before you pay."
+				if deliveryPaidToOf(merchant) == "carrier" {
+					purse = "You pay that to whoever brings the item, when it arrives."
+				}
+				sendPieces(buyer,
+					merchant.Name+" says delivery to "+q.Place+" is "+money.GHS(fee)+".",
+					purse)
+				if q.Parked != nil {
+					// A repeat order rides through on its parked
+					// details: the fee was the only missing fact, and
+					// it has just landed, so the recap is next.
+					f := *q.Parked
+					f.Fee = fee
+					f.Location = q.Place
+					sess.PendingFulfil = f
+					sess.FulfilStep = "confirm"
+					sessions.put(key, sess)
+					sendOrderRecap(buyer, sess, f)
+				} else {
+					beginPackageDetails(buyer, sess, fulfilment{Mode: "delivery", Fee: fee, Location: q.Place})
+				}
+				tellMerchant("Done. I have told the buyer delivery to " + q.Place + " is " + money.GHS(fee) + ", and her order is going ahead.")
 			} else {
-				beginPackageDetails(buyer, sess, fulfilment{Mode: "delivery", Fee: fee, Location: q.Place})
+				whatsapp.SendText(buyer, merchant.Name+" has quoted "+money.GHS(fee)+" for delivery to "+q.Place+". When you are ready to buy, tell me and we will use it.")
+				tellMerchant("Done. That buyer is not in a live chat just now, so I have sent her the fee for when she is ready.")
 			}
-			whatsapp.SendText(from, "Done. I have told the buyer delivery to "+q.Place+" is "+money.GHS(fee)+", and her order is going ahead.")
-		} else {
-			whatsapp.SendText(buyer, merchant.Name+" has quoted "+money.GHS(fee)+" for delivery to "+q.Place+". When you are ready to buy, tell me and we will use it.")
-			whatsapp.SendText(from, "Done. That buyer is not in a live chat just now, so I have sent her the fee for when she is ready.")
-		}
-	})
+		})
+	}
 	return true
 }
 

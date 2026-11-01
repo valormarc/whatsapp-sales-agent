@@ -56,7 +56,7 @@ function outbox(to) {
   return fs.readFileSync(f, "utf8").split("\n").filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter((r) => r && r.to === to);
 }
 function fresh(to) { const all = outbox(to); const n = seen.get(to) || 0; seen.set(to, all.length); return all.slice(n); }
-const body = (rs) => rs.map((r) => r.body || "").join("\n");
+const body = (rs) => rs.map((r) => (r.body || "") + "\n" + JSON.stringify(r.sections || [])).join("\n");
 async function waitFor(to, pred, what, timeout = 150000) {
   const start = Date.now(); let acc = [];
   while (Date.now() - start < timeout) {

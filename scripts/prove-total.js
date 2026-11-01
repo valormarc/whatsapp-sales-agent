@@ -158,7 +158,11 @@ async function waitHealth() {
     check(texts(recs).includes("For all of them together") && texts(recs).includes("GH₵550"),
       "leg 2: the offer is taken on the whole hand at its 550 total", texts(recs));
 
-    if (!texts(recs).includes("yours for")) {
+    // The talk may counter, or it may accept the opening
+    // offer outright when the figure already sits inside
+    // the bounds — both are the agreement leg 3 asserts.
+    let m = texts(recs).match(/That makes your order GH₵([\d,]+(?:\.\d+)?) in all/);
+    if (!m) {
       const figs = figures(texts(recs)).filter((f) => f >= 500 && f < 550);
       const counter = figs[figs.length - 1];
       check(counter !== undefined, "leg 3 setup: the counter names a figure inside the hand's bounds", texts(recs));
@@ -166,10 +170,10 @@ async function waitHealth() {
         await say(BUYER_B, String(counter));
         recs = await fresh(BUYER_B);
       }
+      m = texts(recs).match(/That makes your order GH₵([\d,]+(?:\.\d+)?) in all/);
     }
-    const m = texts(recs).match(/That makes your order GH₵([\d,]+(?:\.\d+)?) in all/);
     const agreedTotal = m ? parseFloat(m[1].replace(/,/g, "")) : NaN;
-    check(texts(recs).includes("yours for") && agreedTotal >= 500 && agreedTotal <= 550,
+    check(agreedTotal >= 500 && agreedTotal <= 550,
       "leg 3: the talk agrees one total between the summed last prices and the list", texts(recs));
 
     await say(BUYER_B, "Send it to Koforidua");

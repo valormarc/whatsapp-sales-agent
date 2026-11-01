@@ -143,14 +143,15 @@ async function waitForText(who, phrase, capMs) {
 // haggleToDeal offers, then offers the engine's own last
 // figure back until the deal line appears.
 async function haggleToDeal(buyer, opening) {
+  const dealShown = () => { const b = bodies(outboxTo(buyer).slice(-6)); return b.includes("yours for") || b.includes("That makes your order"); };
   let r = await say(buyer, opening);
   for (let i = 0; i < 5; i++) {
-    if (bodies(outboxTo(buyer).slice(-6)).includes("yours for")) return true;
+    if (dealShown()) return true;
     const figs = [...bodies(r).matchAll(/GH₵([\d,]+)/g)].map((m) => parseFloat(m[1].replace(",", "")));
     if (!figs.length) return false;
     r = await say(buyer, String(figs[figs.length - 1]));
   }
-  return bodies(outboxTo(buyer).slice(-6)).includes("yours for");
+  return dealShown();
 }
 function orders() {
   const f = path.join(dir, "data", "orders.json");

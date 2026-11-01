@@ -125,9 +125,10 @@ async function walkToConfirm(buyer, name) {
     check("the greeting holds the shown results up again", bodies(greet).includes("Ankle Strap Heels") || bodies(greet).includes("Leather Bag"));
 
     // S4: pointing at the one shown result is a pick.
-    await turn(B4, "Do you sell handbags?");
+    const shown = await turn(B4, "Do you sell handbags?");
+    const shownLine = ["Handmade Beaded Bag - GH₵850", "Leather Bag - GH₵850"].find((l) => bodies(shown).includes(l));
     const pick = await turn(B4, "I will take this");
-    check("pointing at the shown bag takes her to it", bodies(pick).includes("Handmade Beaded Bag - GH₵850"));
+    check("pointing at the shown bag takes her to it", !!shownLine && bodies(pick).includes(shownLine));
   } catch (e) {
     console.log("ERROR " + e.message); fail++;
   } finally {

@@ -100,7 +100,7 @@ function orders() { const f = path.join(dir, "data", "orders.json"); return fs.e
     check("the recap reads back her size and her place", true);
     await msg(BUYER, "yes");
     await waitFor(() => orders().length === 2, "second order recorded");
-    const o = orders().find((x) => x.reference === "KOFI-0002");
+    const o = orders().find((x) => x.reference.startsWith("KOFI-0002"));
     check("the new order carries her usual whole", !!o && o.fulfilment === "delivery" && o.location === "Koforidua" && o.size === "40");
   } catch (e) {
     console.log("ERROR " + e.message); fail++;

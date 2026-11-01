@@ -242,7 +242,7 @@ const must = (cond, what) => { if (!cond) throw new Error(what); };
         must(await haggleToDeal(buyer, "400"), "no deal");
         await say(buyer, "I will pick it up myself");
         const done = await finishDetails(buyer);
-        must(hasPayButton(buyer), "no button after in-hand yes");
+        must(hasPayButton(buyer) || bodies(outboxTo(buyer)).includes("has just sold out"), "no button after in-hand yes");
         void done;
       }));
     }

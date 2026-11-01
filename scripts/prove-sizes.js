@@ -56,7 +56,8 @@ async function waitFor(fn, label, timeoutMs = 60000) {
     await new Promise((r) => setTimeout(r, 700));
   }
 }
-const told = (who, sub) => () => outboxTo(who).some((r) => (r.body || "").toLowerCase().includes(sub.toLowerCase()));
+const said = (r) => ((r.body || "") + "\n" + JSON.stringify(r.sections || [])).toLowerCase();
+const told = (who, sub) => () => outboxTo(who).some((r) => said(r).includes(sub.toLowerCase()));
 function catalogue() { return JSON.parse(fs.readFileSync(path.join(dir, "data", "catalogue.json"), "utf8")); }
 function orders() { const f = path.join(dir, "data", "orders.json"); return fs.existsSync(f) ? Object.values(JSON.parse(fs.readFileSync(f, "utf8"))) : []; }
 
@@ -109,6 +110,11 @@ function orders() { const f = path.join(dir, "data", "orders.json"); return fs.e
     console.log("recap seen: " + JSON.stringify(recap));
     check("the recap reads her size back", true);
     await msg(BUYER, "yes");
+    // The heels are the shop's last unit, so the sale
+    // pauses for the seller to confirm she has them in
+    // hand; her yes releases the order.
+    await waitFor(told(OWNER, "Do you have it in hand now?"), "seller asked to confirm in hand");
+    await msg(OWNER, "yes");
     await waitFor(() => orders().length === 1, "order recorded");
     check("the order carries her size", orders()[0].size === "41");
   } catch (e) {
