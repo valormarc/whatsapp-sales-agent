@@ -397,7 +397,7 @@ func completeSale(from string, s *Session, price float64, f fulfilment) {
 		MerchantID:     shopID,
 		PayoutPhone:    payout,
 		Fulfilment:     f.Mode,
-		Location:       f.Location,
+		Location:       guardPlace(f.Location),
 		Collector:      f.Collector,
 		PackageName:    f.PackageName,
 		Note:           f.Note,

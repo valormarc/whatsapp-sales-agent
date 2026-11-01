@@ -21,6 +21,45 @@ var placeExtraFiller = map[string]bool{
 	"so": true, "well": true, "today": true, "tomorrow": true,
 }
 
+// affirmationHeads are the words a buyer answers a question
+// with — yes, same, ok — which ride at the head of an answer
+// that also carries its content: "Yes accra" at the
+// same-or-different question is agreement plus the place
+// Accra. The affirmation is her answering, never part of
+// the place, and a value that stores it whole ships the
+// goods to a town called Yes.
+var affirmationHeads = map[string]bool{
+	"yes": true, "yeah": true, "yep": true, "same": true,
+	"ok": true, "okay": true, "sure": true,
+}
+
+// stripAffirmationHead drops a leading affirmation word
+// when content follows it, and reports whether what is
+// left is a bare affirmation with nothing behind it.
+func stripAffirmationHead(t string) string {
+	fields := strings.Fields(t)
+	if len(fields) == 0 {
+		return t
+	}
+	if !affirmationHeads[strings.ToLower(fields[0])] {
+		return t
+	}
+	return strings.Join(fields[1:], " ")
+}
+
+// guardPlace cleans a place that is already stored, for
+// the surfaces that print it or write it onto an order:
+// a value taken in before the intake learned better can
+// still carry its affirmation head, and it must never be
+// shown or shipped in that shape. Only the head is
+// touched; the rest of her place stands exactly as stored.
+func guardPlace(loc string) string {
+	if stripped := stripAffirmationHead(strings.TrimSpace(loc)); stripped != "" {
+		return stripped
+	}
+	return loc
+}
+
 // cleanPlace reads a place out of a short message, conservatively:
 // the text up to the first punctuation, a leading preposition or
 // "the" dropped, one to four words, every word a plain word and
@@ -38,6 +77,7 @@ func cleanPlace(raw string) string {
 			break
 		}
 	}
+	t = stripAffirmationHead(t)
 	words := strings.Fields(t)
 	if len(words) == 0 || len(words) > 4 {
 		return ""

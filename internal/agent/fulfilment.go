@@ -1330,7 +1330,7 @@ func composeOrderRecap(s *Session, f fulfilment, turn string) string {
 	}
 	switch f.Mode {
 	case "delivery":
-		lines = append(lines, "Delivery to "+f.Location+".")
+		lines = append(lines, "Delivery to "+guardPlace(f.Location)+".")
 	case "pickup":
 		if f.Collector != "" {
 			lines = append(lines, f.Collector+" will collect it from the shop.")
@@ -1338,11 +1338,11 @@ func composeOrderRecap(s *Session, f fulfilment, turn string) string {
 			lines = append(lines, "You collect it from the shop yourself.")
 		}
 	case "meet":
-		lines = append(lines, "Meeting place: "+f.Location+".")
+		lines = append(lines, "Meeting place: "+guardPlace(f.Location)+".")
 	default:
 		line := "Delivery will be arranged with the seller."
 		if f.Location != "" {
-			line = "Delivery will be arranged with the seller. The place noted is " + f.Location + "."
+			line = "Delivery will be arranged with the seller. The place noted is " + guardPlace(f.Location) + "."
 		}
 		lines = append(lines, line)
 	}
