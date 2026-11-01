@@ -198,7 +198,10 @@ func recordWantAndOfferShelf(from string, s *Session, msg string) {
 	s.Shelves++
 	sendPieces(from,
 		"I do not have that one here yet. The moment it lands, I will alert you on this number.",
-		prefix+"\n"+productListText(s.MerchantID))
+		prefix)
+	if shop := catalogue.GetMerchant(s.MerchantID); shop != nil {
+		presentShelf(from, shop)
+	}
 }
 
 // alertWaitingBuyers tells every buyer whose recorded want a newly

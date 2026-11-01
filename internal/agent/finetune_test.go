@@ -18,15 +18,18 @@ import (
 // questions with her money.
 
 func TestPlugWantForSomethingNotStocked(t *testing.T) {
-	_, c := setupTwoShops(t)
+	dir, c := setupTwoShops(t)
 
 	buyer := "233550005101"
 	c.say(t, buyer, "SHOP-AMA")
 	c.replies(t, buyer)
 	c.say(t, buyer, "any plug for rice cooker")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "I do not have that one here yet") || !strings.Contains(got, "Smoked Tilapia") {
+	if !strings.Contains(got, "I do not have that one here yet") {
 		t.Fatalf("plug want = %q, want the shelf offered back like any other want", got)
+	}
+	if sheet := sheetText(t, dir, buyer); !strings.Contains(sheet, "Smoked Tilapia") {
+		t.Fatalf("plug want sheet = %q, want her shelf on the sheet", sheet)
 	}
 	list := wants.Default.List("ama")
 	if len(list) != 1 || !strings.Contains(strings.ToLower(list[0].Text), "rice cooker") {
@@ -35,15 +38,15 @@ func TestPlugWantForSomethingNotStocked(t *testing.T) {
 }
 
 func TestBarePlugAskOffersTheShelf(t *testing.T) {
-	_, c := setupTwoShops(t)
+	dir, c := setupTwoShops(t)
 
 	buyer := "233550005102"
 	c.say(t, buyer, "SHOP-AMA")
 	c.replies(t, buyer)
 	c.say(t, buyer, "any plug pls")
-	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "Smoked Tilapia") {
-		t.Fatalf("bare plug ask = %q, want the shelf offered", got)
+	c.replies(t, buyer)
+	if sheet := sheetText(t, dir, buyer); !strings.Contains(sheet, "Smoked Tilapia") {
+		t.Fatalf("bare plug ask sheet = %q, want the shelf offered", sheet)
 	}
 }
 
@@ -124,7 +127,7 @@ func TestAtFigureIsReadAsAnOffer(t *testing.T) {
 }
 
 func TestLaneSteersThenGoesQuiet(t *testing.T) {
-	_, c := setupTwoShops(t)
+	dir, c := setupTwoShops(t)
 
 	buyer := "233550005109"
 	c.say(t, buyer, "SHOP-EFUA")
@@ -134,8 +137,11 @@ func TestLaneSteersThenGoesQuiet(t *testing.T) {
 	// and the sum itself never answered.
 	c.say(t, buyer, "what is 5 + 5?")
 	got := strings.Join(c.replies(t, buyer), "\n")
-	if !strings.Contains(got, "outside my work here") || !strings.Contains(got, "Handmade Beaded Bag") {
+	if !strings.Contains(got, "outside my work here") {
 		t.Fatalf("first off-topic turn = %q, want the steer with the shelf", got)
+	}
+	if sheet := lastSheetText(t, dir, buyer); !strings.Contains(sheet, "Handmade Beaded Bag") {
+		t.Fatalf("first off-topic sheet = %q, want the shelf on the sheet", sheet)
 	}
 	if strings.Contains(got, "10") {
 		t.Fatalf("the agent answered the sum: %q", got)

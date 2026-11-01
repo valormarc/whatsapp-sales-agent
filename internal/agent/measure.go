@@ -398,6 +398,7 @@ func handleQuantity(from string, s *Session, merchant *catalogue.Merchant, msg, 
 			s.LastViewed = p
 		}
 		whatsapp.SendText(from, "The "+p.Name+" has sold out just now, so I cannot quote it by measure.")
+		presentShelf(from, merchant)
 		return true
 	}
 

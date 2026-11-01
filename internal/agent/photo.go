@@ -61,6 +61,10 @@ type throwDraft struct {
 	Unit        string
 	BaseQty     float64
 	Sizes       []string
+	// Stock is the count she stated for the goods ("3 in
+	// stock"), read from her own words. Zero means she
+	// stated none and the save assumes one, as before.
+	Stock int
 	// PriceDoubted marks a read price the harvest itself does
 	// not trust (see harvestDoubt): the walk confirms it with
 	// the seller before the listing can go any further.
@@ -331,15 +335,48 @@ func throwDraftFromCaption(caption string) throwDraft {
 	if meaningful == 0 {
 		return d
 	}
+	if n, ok := parseStockCount(caption); ok {
+		d.Stock = n
+	}
 	// A short clean phrase with no number in it is a name ("Heels",
 	// "Leather bag"). Anything longer, or anything carrying its
 	// own numbers (a size, a specification), is her description.
+	// The phrase still has to read as a name rather than a
+	// statement (see cleanListingName): "joggers are available"
+	// is her announcing them, and only the goods' name inside
+	// it belongs on the shelf.
 	if len(strings.Fields(rest)) <= 3 && len(numbersIn(rest)) == 0 {
-		d.Name = rest
-		return d
+		if cleaned, okName := cleanListingName(rest); okName {
+			d.Name = cleaned
+			return d
+		}
 	}
 	d.Description = rest
 	return d
+}
+
+var (
+	// "3 joggers in stock", "3 pieces in stock": a count with
+	// a few of her words before the stock phrase.
+	stockCountRe = regexp.MustCompile(`(?i)\b(\d+)\s+(?:[a-z]+\s+){0,3}?in stock\b`)
+	// "stock: 3", "stock is 3".
+	stockLabelRe = regexp.MustCompile(`(?i)\bstock\s*(?:is\s*)?[:=]?\s*(\d+)`)
+)
+
+// parseStockCount reads a stock count a seller states in
+// her own words: a figure standing with an in-stock phrase,
+// or a figure she labels as the stock. It reads explicit
+// statements only; "only few in stock" states no count and
+// reads none.
+func parseStockCount(text string) (int, bool) {
+	for _, re := range []*regexp.Regexp{stockCountRe, stockLabelRe} {
+		if m := re.FindStringSubmatch(text); m != nil {
+			if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+				return n, true
+			}
+		}
+	}
+	return 0, false
 }
 
 // throwReadBack is the one piece that tells the seller what the
@@ -692,6 +729,9 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	}
 	if len(flow.Sizes) == 0 {
 		flow.Sizes = draft.Sizes
+	}
+	if flow.Stock == 0 && draft.Stock > 0 {
+		flow.Stock = draft.Stock
 	}
 	// The same replacement where the dump arrived earlier,
 	// as a pasted advert now joined by its photo: the model's

@@ -111,7 +111,8 @@ func handleBuyerPhotoMatch(from, shopID, imageID, caption string) bool {
 		// plainly, and what IS here is offered instead.
 		if shopID != "" {
 			shop := catalogue.GetMerchant(shopID)
-			whatsapp.SendText(from, "I do not see anything close to that at "+shop.Name+" just now. Here is what they have:\n"+productListText(shopID))
+			whatsapp.SendText(from, "I do not see anything close to that at "+shop.Name+" just now.")
+			presentShelf(from, shop)
 		} else {
 			whatsapp.SendText(from, "I do not see anything close to that in any shop here just now. Tell me the kind of thing you are looking for and I will check every shop for it.")
 		}

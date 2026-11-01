@@ -29,14 +29,17 @@ func TestBareWantNamingAnItemOpensTheHaggle(t *testing.T) {
 }
 
 func TestBareWantForSomethingNotSoldHere(t *testing.T) {
-	_, c := setupTwoShops(t)
+	dir, c := setupTwoShops(t)
 
 	buyer := "233550004302"
 	c.say(t, buyer, "SHOP-AMA")
 	c.say(t, buyer, "I need a tv")
-	got := c.last(t, buyer)
-	if !strings.Contains(got, "Tell me which of these you are after") || !strings.Contains(got, "Smoked Tilapia") {
+	got := c.joined(t, buyer)
+	if !strings.Contains(got, "Tell me which of these you are after") {
 		t.Fatalf("want for an unstocked item = %q, want the shelf offered back", got)
+	}
+	if sheet := sheetText(t, dir, buyer); !strings.Contains(sheet, "Smoked Tilapia") {
+		t.Fatalf("want sheet = %q, want her shelf on the sheet", sheet)
 	}
 	if strings.Contains(got, "is yours for") {
 		t.Fatalf("a want alone closed a sale: %q", got)

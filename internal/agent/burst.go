@@ -41,6 +41,9 @@ type burstItem struct {
 	PriceDoubted bool
 	Unit         string
 	BaseQty      float64
+	// Stock is the count she stated for this item, when
+	// she stated one; zero saves as one, as before.
+	Stock        int
 	Sizes        []string
 	Colours      []string
 	PhotoRefs    []string
@@ -211,6 +214,7 @@ func addToBurst(from string, s *Session, draft throwDraft, imageID, caption, col
 		PriceDoubted: draft.PriceDoubted,
 		Unit:         draft.Unit,
 		BaseQty:      draft.BaseQty,
+		Stock:        draft.Stock,
 		Sizes:        draft.Sizes,
 		Caption:      caption,
 		VisionDesc:   visionDesc,
@@ -282,6 +286,7 @@ func parkPendingPhoto(from string, s *Session, draft throwDraft, imageID, captio
 		PriceDoubted: draft.PriceDoubted,
 		Unit:         draft.Unit,
 		BaseQty:      draft.BaseQty,
+		Stock:        draft.Stock,
 		Sizes:        draft.Sizes,
 		PhotoRefs:    []string{imageID},
 		Caption:      caption,
@@ -645,7 +650,7 @@ func handleBurstAnswer(from string, s *Session, text, lower string) bool {
 			ListPrice:   item.ListPrice,
 			FloorPrice:  a.floor,
 			Fixed:       fixed,
-			Stock:       1,
+			Stock:       burstStock(item),
 			Unit:        item.Unit,
 			BaseQty:     item.BaseQty,
 			Sizes:       item.Sizes,
@@ -689,4 +694,13 @@ func handleBurstAnswer(from string, s *Session, text, lower string) bool {
 		openHeldBurstItem(from, s)
 	}
 	return true
+}
+
+// burstStock is the count a burst item saves with: the
+// count she stated when she stated one, one otherwise.
+func burstStock(item burstItem) int {
+	if item.Stock > 0 {
+		return item.Stock
+	}
+	return 1
 }

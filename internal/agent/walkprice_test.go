@@ -53,14 +53,21 @@ func TestWalkRefusesAStockSentenceAtTheLastPrice(t *testing.T) {
 		t.Fatalf("want the last price question, got %q", got)
 	}
 	c.say(t, merchant, "I have 2 pairs in stock")
-	if got := c.last(t, merchant); !strings.Contains(got, "did not take a last price") {
-		t.Fatalf("a stock sentence at the last price step must be refused, got %q", got)
+	replies := c.replies(t, merchant)
+	if got := strings.Join(replies, "\n"); !strings.Contains(got, "now has 2 in stock") {
+		t.Fatalf("a stock sentence at the last price step is applied as stock, got %q", got)
+	}
+	if len(replies) == 0 || !strings.Contains(replies[len(replies)-1], "last price") {
+		t.Fatalf("the last price is still asked after the stock statement, got %q", replies)
 	}
 	c.say(t, merchant, "70")
 	finishWalkToShelf(t, c, merchant)
 	p := catalogue.FindByName(MerchantID, "Shell Sandals")
 	if p == nil || p.ListPrice != 80 || p.FloorPrice != 70 {
 		t.Fatalf("saved product = %+v, want list 80 and last 70, never the sentence's 2", p)
+	}
+	if p.Stock != 2 {
+		t.Fatalf("saved product stock = %d, want the stated 2", p.Stock)
 	}
 }
 

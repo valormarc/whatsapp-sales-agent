@@ -397,6 +397,24 @@ func parsePastedAdvert(text string) (draft throwDraft, sizeNote string, ok bool)
 		}
 		name = strings.TrimSpace(name[:idx])
 	}
+	// The first line can be a statement about the goods
+	// rather than a name for them: "Please joggers are
+	// available" is her announcing the joggers, and a shelf
+	// that takes the sentence whole misnames the goods to
+	// every buyer and every later match. The courtesy and
+	// availability framing is stripped to the name inside
+	// it; a line that stays a sentence after stripping is
+	// no name at all — it joins the description and the
+	// name stays unread, for the model's read on the photo
+	// road or her own answer on the typed road.
+	if name != "" {
+		if cleaned, okName := cleanListingName(name); okName {
+			name = cleaned
+		} else {
+			descLines = []string{strings.TrimSpace(restLines[0])}
+			name = ""
+		}
+	}
 	draft.Name = name
 	sizeNote = note
 	for _, line := range restLines[1:] {
@@ -415,7 +433,63 @@ func parsePastedAdvert(text string) (draft throwDraft, sizeNote string, ok bool)
 	if len(descLines) > 0 {
 		draft.Description = strings.Join(descLines, "\n")
 	}
+	if n, ok := parseStockCount(trimmed); ok {
+		draft.Stock = n
+	}
 	return draft, sizeNote, true
+}
+
+// availabilityTails are the statement tails a seller's line
+// can carry that announce the goods instead of naming them.
+var availabilityTails = []string{
+	" are available", " is available", " available now", " available",
+	" are in stock", " in stock", " for sale",
+}
+
+// cleanListingName judges a candidate product name taken
+// from a seller's own line — an advert's first line, a
+// caption's short phrase — the way the slogan rule judges
+// a shout line. Courtesy openers and availability tails
+// are stripped; what remains must read as a phrase: a
+// handful of words with no sentence verb standing in it.
+// Anything else is a statement, not a name, and the
+// caller leaves the name unread rather than putting her
+// sentence on the shelf.
+func cleanListingName(name string) (string, bool) {
+	s := strings.TrimSpace(name)
+	if s == "" {
+		return "", false
+	}
+	if strings.HasPrefix(strings.ToLower(s), "please ") {
+		s = strings.TrimSpace(s[len("please "):])
+	}
+	for {
+		ls := strings.ToLower(s)
+		stripped := false
+		for _, tail := range availabilityTails {
+			if strings.HasSuffix(ls, tail) {
+				s = strings.TrimSpace(s[:len(s)-len(tail)])
+				stripped = true
+				break
+			}
+		}
+		if !stripped {
+			break
+		}
+	}
+	if s == "" {
+		return "", false
+	}
+	lower := " " + strings.ToLower(s) + " "
+	for _, verb := range []string{" is ", " are ", " was ", " were ", " has ", " have "} {
+		if strings.Contains(lower, verb) {
+			return "", false
+		}
+	}
+	if len(strings.Fields(s)) > 5 {
+		return "", false
+	}
+	return s, true
 }
 
 // cleanNameText tidies a product name for the shelf: symbol

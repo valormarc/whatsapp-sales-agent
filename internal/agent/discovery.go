@@ -272,7 +272,8 @@ func verifiedMatches(u *discoveryUnderstanding) []struct {
 // product she picked when there is exactly one in that shop.
 func bindDiscoveryShop(from string, shop *catalogue.Merchant, focus *catalogue.Product) {
 	bindings.put(from, shop.ID)
-	sendPieces(from, welcomeFor(shop, from), productListText(shop.ID))
+	sendPieces(from, welcomeFor(shop, from))
+	presentShelf(from, shop)
 	if focus != nil {
 		key := sessionKey(shop.ID, from)
 		s, ok := sessions.lookup(key)

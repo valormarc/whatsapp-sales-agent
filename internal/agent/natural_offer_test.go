@@ -91,8 +91,11 @@ func TestPriceWithNoItemInSightAsksWhichItem(t *testing.T) {
 	buyer := "233550004204"
 	c.say(t, buyer, "SHOP-MULTI")
 	c.say(t, buyer, "150")
-	got := c.last(t, buyer)
+	got := c.joined(t, buyer)
 	if !strings.Contains(got, "Which item is that offer for?") {
 		t.Fatalf("bare price with nothing viewed = %q, want the which-item question", got)
+	}
+	if sheet := lastSheetText(t, dir, buyer); !strings.Contains(sheet, "Smoked Tilapia") {
+		t.Fatalf("which-item sheet = %q, want the shelf on the sheet", sheet)
 	}
 }

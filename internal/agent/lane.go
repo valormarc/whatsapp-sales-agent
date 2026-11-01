@@ -83,12 +83,17 @@ func laneStrike(from string, s *Session, merchant *catalogue.Merchant, said stri
 		// shelf when the model can be read (see clarify.go);
 		// the fixed line and the list are its fallback.
 		ask := clarifyLine(from, merchant, said)
+		fixedFallback := false
 		if ask == "" {
-			ask = "Tell me what you are after and I will sort you out.\n" + productListText(merchant.ID)
+			ask = "Tell me what you are after and I will sort you out."
+			fixedFallback = true
 		}
 		sendPieces(from,
 			"That one is outside my work here. I sell for "+merchant.Name+": the goods, their prices and delivery.",
 			ask)
+		if fixedFallback {
+			presentShelf(from, merchant)
+		}
 	case s.OffTopic == 2:
 		whatsapp.SendText(from, "I only handle the shop here: what we sell, prices and delivery. Name an item and I will price it for you.")
 	default:

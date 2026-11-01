@@ -88,7 +88,7 @@ func TestNeedRecommendsTheMatchingProductOnHerOwnShelf(t *testing.T) {
 }
 
 func TestNeedWithNoMatchOffersHerOwnShelfOnly(t *testing.T) {
-	_, c := setupTwitterShops(t)
+	dir, c := setupTwitterShops(t)
 	buyer := "233550006002"
 
 	c.say(t, buyer, "SHOP-AMA")
@@ -98,8 +98,12 @@ func TestNeedWithNoMatchOffersHerOwnShelfOnly(t *testing.T) {
 	if strings.Contains(got, "Shea") {
 		t.Fatalf("Ama recommended another shop's product: %q", got)
 	}
-	if !strings.Contains(got, "Smoked Tilapia") || !strings.Contains(got, "I will alert you") {
-		t.Fatalf("no-match need reply = %q, want Ama's shelf offered and the alert promised", got)
+	if !strings.Contains(got, "I will alert you") {
+		t.Fatalf("no-match need reply = %q, want the alert promised", got)
+	}
+	sheet := sheetText(t, dir, buyer)
+	if !strings.Contains(sheet, "Smoked Tilapia") || strings.Contains(sheet, "Shea") {
+		t.Fatalf("no-match sheet = %q, want Ama's shelf only, on the sheet", sheet)
 	}
 	// Her want went into Ama's book, and only Ama's.
 	if list := wants.Default.List("ama"); len(list) != 1 || list[0].Buyer != buyer {

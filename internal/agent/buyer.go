@@ -32,7 +32,10 @@ func offerInvite(p *catalogue.Product, invite string) string {
 // stocked shelf (productListText is stocked-only), never
 // a price presented as an offer she can take.
 func soldOutAnswer(from, shopID string, p *catalogue.Product) {
-	whatsapp.SendText(from, "That one has sold out just now. Here is what is on the shelf:\n"+productListText(shopID))
+	whatsapp.SendText(from, "That one has sold out just now.")
+	if shop := catalogue.GetMerchant(shopID); shop != nil {
+		presentShelf(from, shop)
+	}
 }
 
 func handleBuyerTurn(from, boundID, msg, lower string) {
@@ -720,7 +723,8 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 				processOffer(from, s, merchant, *offer, msg)
 				return
 			}
-			whatsapp.SendText(from, "I want to get you the right price. Which item is that offer for?\n"+productListText(shopID))
+			whatsapp.SendText(from, "I want to get you the right price. Which item is that offer for?")
+			presentShelf(from, merchant)
 			return
 		}
 	}
@@ -925,5 +929,6 @@ func handleBuyerTurn(from, boundID, msg, lower string) {
 		whatsapp.SendText(from, line)
 		return
 	}
-	whatsapp.SendText(from, "Tell me what you are after and I will sort you out.\n"+productListText(shopID))
+	whatsapp.SendText(from, "Tell me what you are after and I will sort you out.")
+	presentShelf(from, merchant)
 }

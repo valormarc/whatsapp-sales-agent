@@ -47,6 +47,10 @@ type OnboardingFlow struct {
 	Fixed       bool
 	Unit        string
 	BaseQty     float64
+	// Stock is the count she stated for these goods, in her
+	// caption, her advert or a message of its own. Zero means
+	// she stated none; the save then assumes one, as before.
+	Stock int
 	// Photo and PhotoRef mark a flow that began as a throw-in: the
 	// seller sent a photograph of her goods, with whatever words
 	// she had, instead of starting the guided walk. The fields the
@@ -478,6 +482,13 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 		if serveMerchantClearAsk(from, s, merchant, text, lower) {
 			return
 		}
+		// A stock statement about the listing she is
+		// building is applied to it here, before the walk's
+		// step readers can eat it as a step answer (see
+		// serveMerchantStockStatement).
+		if serveMerchantStockStatement(from, s, merchant, text, lower) {
+			return
+		}
 		// A price question stands open and her message is
 		// not shaped as its answer: she is doing something
 		// else — reporting a delivery, asking what needs
@@ -533,6 +544,13 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 			return
 		}
 		advanceOnboarding(from, s, text, lower)
+		return
+	}
+
+	// A stock statement with no walk open is applied to
+	// the named product on her shelf (see
+	// serveMerchantStockStatement).
+	if serveMerchantStockStatement(from, s, merchant, text, lower) {
 		return
 	}
 
@@ -676,6 +694,14 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	}
 
 	if !explainRe.MatchString(lower) && !quotingNote && handleMerchantCommand(from, s, merchant, text, lower) {
+		return
+	}
+
+	// A direct question about whether her stock is tracked
+	// is a question about the platform itself, and the
+	// platform answers it from its own truth (see
+	// serveMerchantStockQuestion).
+	if serveMerchantStockQuestion(from, lower) {
 		return
 	}
 
@@ -978,6 +1004,24 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 		// What was read is told back to her in one short message,
 		// so nothing is ever taken from her words in silence.
 		name, price, sizeNote := parseTypedNameLine(text, flow.ListPrice)
+		if name != "" {
+			// Her answer still has to read as a name: a
+			// statement about the goods ("Please joggers
+			// are available") is stripped to the name
+			// inside it, and a line that stays a sentence
+			// is no name at all. A count stated in the
+			// same breath is hers and is kept for this
+			// listing before she is asked again.
+			if cleaned, okName := cleanListingName(name); okName {
+				name = cleaned
+			} else if n, okStock := parseStockCount(text); okStock {
+				flow.Stock = n
+				whatsapp.SendText(from, "Noted, "+strconv.Itoa(n)+" in stock. What is it called?")
+				return
+			} else {
+				name = ""
+			}
+		}
 		if name == "" {
 			whatsapp.SendText(from, "What is the product called?")
 			return
@@ -1126,7 +1170,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 				ListPrice:   flow.ListPrice,
 				FloorPrice:  flow.FloorPrice,
 				Fixed:       flow.Fixed,
-				Stock:       1,
+				Stock:       flowStock(flow),
 				Unit:        flow.Unit,
 				BaseQty:     flow.BaseQty,
 				Sizes:       flowSizes(from, flow),
@@ -1432,6 +1476,118 @@ func retryPaymentSetup(from string, merchant *catalogue.Merchant, lower string) 
 	return true
 }
 
+// stockSetReply is what the merchant hears when a stock
+// count lands, by whatever road it arrived.
+func stockSetReply(name string, count int) string {
+	switch {
+	case count == 0:
+		return "Done. " + name + " is marked as none in stock."
+	case count == 1:
+		return "Done. " + name + " now has 1 in stock. With only one, I will confirm you have it in hand before each sale."
+	default:
+		return "Done. " + name + " now has " + strconv.Itoa(count) + " in stock."
+	}
+}
+
+var stockStatementFiller = map[string]bool{
+	"i": true, "have": true, "got": true, "only": true, "please": true,
+	"the": true, "a": true, "an": true, "my": true, "of": true, "in": true,
+	"stock": true, "now": true, "left": true, "available": true,
+	"pieces": true, "piece": true, "is": true, "there": true, "are": true,
+	"some": true, "them": true, "it": true, "this": true, "these": true,
+}
+
+// stockStatementIsPure reports whether a message, with
+// its stock phrase and the product's own words taken out,
+// has anything left in it: a pure statement is only the
+// statement, and anything else riding in the message
+// keeps its own road.
+func stockStatementIsPure(lower, productName string) bool {
+	rest := stockCountRe.ReplaceAllString(lower, " ")
+	rest = stockLabelRe.ReplaceAllString(rest, " ")
+	nameWords := map[string]bool{}
+	for _, w := range strings.Fields(strings.ToLower(productName)) {
+		nameWords[strings.Trim(w, ".,")] = true
+	}
+	for _, w := range strings.FieldsFunc(rest, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if w == "" || stockStatementFiller[w] || nameWords[w] {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// serveMerchantStockStatement applies a stock count the
+// merchant states in her own words — "I have 3 joggers in
+// stock" — instead of the statement being answered as
+// though stock were not tracked here. The count moves
+// three ways: what she lists, what sells in this chat,
+// and what she reports. A report is applied where it
+// belongs: to the listing she is building when one is
+// open and the statement speaks of it, otherwise to the
+// named product on her shelf. It serves only a message
+// whose whole content is the statement.
+func serveMerchantStockStatement(from string, s *Session, merchant *catalogue.Merchant, text, lower string) bool {
+	n, ok := parseStockCount(text)
+	if !ok {
+		return false
+	}
+	named := catalogue.FindProduct(merchant.ID, lower)
+	if s.Onboarding != nil {
+		flow := s.Onboarding
+		if named != nil && flow.Name != "" && !sameProductName(named.Name, flow.Name) {
+			return false
+		}
+		target := flow.Name
+		if target == "" && named != nil {
+			return false
+		}
+		if !stockStatementIsPure(lower, target) {
+			return false
+		}
+		flow.Stock = n
+		if target == "" {
+			target = "This one"
+		}
+		whatsapp.SendText(from, stockSetReply(target, n))
+		askOnboardingStep(from, flow)
+		return true
+	}
+	if named == nil || !stockStatementIsPure(lower, named.Name) {
+		return false
+	}
+	product, err := catalogue.SetStock(merchant.ID, named.Name, n)
+	if err != nil {
+		return false
+	}
+	whatsapp.SendText(from, stockSetReply(product.Name, n))
+	return true
+}
+
+var stockTrackQuestionRe = regexp.MustCompile(`(?i)\b(can|do|will|are) you\b[^.?!]{0,24}\b(track|keep track of|monitor)\b[^.?!]{0,24}\bstock\b|\btrack my stock\b|\bkeep track of my stock\b`)
+
+// serveMerchantStockQuestion answers a direct question
+// about whether her stock is tracked. It is a question
+// about the platform itself, and it is answered by code
+// from the platform's own truth — the same discipline as
+// "Still available.": the drafted answer to this question
+// twice invented a limit the platform does not have ("I
+// cannot track your stock"), against the facts and the
+// charter both, so the truth is printed, not drafted.
+// What is said is exactly true: the counts are kept here,
+// they move three ways, and the single thing the agent
+// cannot see is a sale she makes outside this chat.
+func serveMerchantStockQuestion(from, lower string) bool {
+	if !stockTrackQuestionRe.MatchString(lower) {
+		return false
+	}
+	whatsapp.SendText(from, "Yes, I track your stock. The counts on your shelf move with what you list, what sells in this chat, and what you tell me: if you say \"I have 3 joggers in stock\", I set the count to 3. The only thing I cannot see is a sale you make outside this chat.")
+	return true
+}
+
 func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant, text, lower string) bool {
 	if shopLinkRe.MatchString(lower) {
 		if link := shopEntryLink(merchant); link != "" {
@@ -1696,14 +1852,7 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 			whatsapp.SendText(from, "Nothing changed: "+err.Error()+".")
 			return true
 		}
-		switch {
-		case count == 0:
-			whatsapp.SendText(from, "Done. "+product.Name+" is marked as none in stock.")
-		case count == 1:
-			whatsapp.SendText(from, "Done. "+product.Name+" now has 1 in stock. With only one, I will confirm you have it in hand before each sale.")
-		default:
-			whatsapp.SendText(from, "Done. "+product.Name+" now has "+strconv.Itoa(count)+" in stock.")
-		}
+		whatsapp.SendText(from, stockSetReply(product.Name, count))
 		return true
 	}
 
@@ -1834,6 +1983,9 @@ func openWalkFromAdvert(from string, s *Session, flow *OnboardingFlow, text stri
 	if len(draft.Sizes) > 0 {
 		flow.Sizes = draft.Sizes
 	}
+	if flow.Stock == 0 && draft.Stock > 0 {
+		flow.Stock = draft.Stock
+	}
 	if note != "" {
 		if flow.Description != "" {
 			flow.Description += "\n" + note + "."
@@ -1878,6 +2030,17 @@ func divisibleUnit(unit string) bool {
 	return false
 }
 
+// flowStock is the count a listing saves with: the count
+// she stated when she stated one, and one when she never
+// did — a stated count is hers and is never silently
+// replaced by the assumption.
+func flowStock(flow *OnboardingFlow) int {
+	if flow.Stock > 0 {
+		return flow.Stock
+	}
+	return 1
+}
+
 // savePhotoCompactListing saves a photo listing the moment
 // its last price lands, and answers with the one saved line
 // and nothing after it: no summary to confirm, no allowance
@@ -1902,7 +2065,7 @@ func savePhotoCompactListing(from string, flow *OnboardingFlow) {
 		ListPrice:   flow.ListPrice,
 		FloorPrice:  flow.FloorPrice,
 		Fixed:       flow.Fixed,
-		Stock:       1,
+		Stock:       flowStock(flow),
 		Unit:        flow.Unit,
 		BaseQty:     flow.BaseQty,
 		Sizes:       flowSizes(from, flow),

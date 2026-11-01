@@ -85,8 +85,11 @@ func TestFailureModelGarbageFallsBackHonestly(t *testing.T) {
 	// the shelf in front of her rather than going blank.
 	c.say(t, buyer, "I need something nice for my mother's birthday")
 	got := c.joined(t, buyer)
-	if !strings.Contains(got, "Handmade Beaded Bag") {
-		t.Fatalf("a garbage model answer falls back to the shelf, got %q", got)
+	if !strings.Contains(got, "I do not have that one here yet") {
+		t.Fatalf("a garbage model answer falls back honestly, got %q", got)
+	}
+	if sheet := sheetText(t, dir, buyer); !strings.Contains(sheet, "Handmade Beaded Bag") {
+		t.Fatalf("a garbage model answer falls back to the shelf sheet, got %q", sheet)
 	}
 	// And the plain availability net still answers exactly.
 	c.say(t, buyer, "Is the handmade beaded bag available?")

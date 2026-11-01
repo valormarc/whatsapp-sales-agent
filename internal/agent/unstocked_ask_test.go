@@ -16,7 +16,7 @@ import (
 // two shops as the Twitter lessons tests.
 
 func TestDoYouHaveAnUnstockedItemRecordsTheWant(t *testing.T) {
-	_, c := setupTwitterShops(t)
+	dir, c := setupTwitterShops(t)
 	buyer := "233550007001"
 
 	c.say(t, buyer, "SHOP-AMA")
@@ -28,8 +28,8 @@ func TestDoYouHaveAnUnstockedItemRecordsTheWant(t *testing.T) {
 	if !strings.Contains(got, "I do not have that one here yet") || !strings.Contains(got, "I will alert you") {
 		t.Fatalf("availability ask = %q, want the want reply, not the generic fallback", got)
 	}
-	if !strings.Contains(got, "Smoked Tilapia") {
-		t.Fatalf("availability ask = %q, want her own shop's shelf offered", got)
+	if sheet := sheetText(t, dir, buyer); !strings.Contains(sheet, "Smoked Tilapia") {
+		t.Fatalf("availability ask sheet = %q, want her own shop's shelf offered", sheet)
 	}
 
 	// The want is in Ama's book under the buyer's own words, and

@@ -128,8 +128,9 @@ func TestBuyerWithNoCodeIsHelpedButNotSold(t *testing.T) {
 
 	// The shop name is the fallback door, and only then is she sold to.
 	c.say(t, buyer, "Efua's Store")
-	if got := c.last(t, buyer); !strings.Contains(got, "Handmade Beaded Bag") {
-		t.Fatalf("entry by shop name = %q", got)
+	c.replies(t, buyer)
+	if sheet := sheetText(t, dir, buyer); !strings.Contains(sheet, "Handmade Beaded Bag") {
+		t.Fatalf("entry by shop name sheet = %q, want her shelf on the sheet", sheet)
 	}
 	c.say(t, buyer, "How much is the beaded bag?")
 	if got := c.last(t, buyer); !strings.Contains(got, "GH₵850") {
