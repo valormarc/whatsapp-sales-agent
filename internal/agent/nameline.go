@@ -456,7 +456,12 @@ var availabilityTails = []string{
 // caller leaves the name unread rather than putting her
 // sentence on the shelf.
 func cleanListingName(name string) (string, bool) {
-	s := strings.TrimSpace(name)
+	// Decoration is stripped before the judging, not after:
+	// a caption's trailing emoji ("Lamps available 🔥") once
+	// defeated the availability tail strip below, because the
+	// sentence no longer ended in the tail, and the whole
+	// caption — emoji and all — went on the shelf as the name.
+	s := cleanNameText(strings.TrimSpace(name))
 	if s == "" {
 		return "", false
 	}

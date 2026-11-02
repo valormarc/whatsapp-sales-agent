@@ -45,6 +45,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 	"github.com/valormarc/hackathon-agent/internal/model"
@@ -69,6 +70,13 @@ type throwDraft struct {
 	// not trust (see harvestDoubt): the walk confirms it with
 	// the seller before the listing can go any further.
 	PriceDoubted bool
+	// NameFromRead marks a name the photo reading committed
+	// — its own name judgement, or one drawn from its
+	// description — as opposed to a name the seller's own
+	// words carried. It rides the draft into the flow and
+	// the burst batch, where the name is presented as read
+	// and correctable (see OnboardingFlow.NameFromRead).
+	NameFromRead bool
 }
 
 // harvestDoubt judges a price read out of the seller's own text
@@ -414,6 +422,89 @@ func parseStockCount(text string) (int, bool) {
 // description keeps the sentence that carried the count.
 var stockClauseRe = regexp.MustCompile(`(?i)[,;]?\s*(?:and\s+)?(?:i\s+have\s+|i've\s+)?(?:\d+\s+(?:[a-z]+\s+){0,8}?in stock\b|\d+\s+pieces?\s+of\s+(?:it|them|this|that)\b|\bstock\s*(?:is\s*)?[:=]\s*\d+)`)
 
+// readNameStopWords are the words that end the product
+// phrase at the head of a read description: what follows
+// them is the description doing its describing (where the
+// goods are used, what they are made of, what rides with
+// them), not the goods' name.
+var readNameStopWords = map[string]bool{
+	"for": true, "in": true, "with": true, "and": true,
+	"on": true, "at": true, "by": true, "from": true,
+	"made": true, "that": true, "which": true,
+	"sold": true, "available": true,
+}
+
+// nameFromReadDescription draws a product name out of a
+// photo read's own description: the leading product phrase,
+// the words before the description turns to describing.
+// "Nature Essence reed diffuser for home and office in
+// assorted fruity scents" names the Nature Essence Reed
+// Diffuser. A read that can describe the goods can name
+// them, and a seller who sent a photo so the agent would
+// do the looking is never asked to type the name of the
+// thing in the photograph: the name is drawn here, shown
+// to her as read, and hers to correct in one line.
+func nameFromReadDescription(desc string) string {
+	desc = strings.TrimSpace(desc)
+	if i := strings.IndexAny(desc, ",.;:"); i >= 0 {
+		desc = strings.TrimSpace(desc[:i])
+	}
+	var phrase []string
+	for _, w := range strings.Fields(desc) {
+		if readNameStopWords[strings.ToLower(strings.Trim(w, "\"'"))] {
+			break
+		}
+		phrase = append(phrase, w)
+		if len(phrase) == 5 {
+			break
+		}
+	}
+	if len(phrase) == 0 {
+		return ""
+	}
+	name := titleCaseName(strings.Join(phrase, " "))
+	if cleaned, ok := cleanListingName(name); ok {
+		return cleaned
+	}
+	return ""
+}
+
+// titleCaseName puts a drawn name in the shelf's house
+// style, word by word: the first letter of each word
+// stands up, the rest of the word keeps the reading's own
+// casing, so a brand's capitals survive ("HP" stays "HP").
+func titleCaseName(s string) string {
+	words := strings.Fields(s)
+	for i, w := range words {
+		r := []rune(w)
+		if len(r) > 0 {
+			r[0] = unicode.ToUpper(r[0])
+		}
+		words[i] = string(r)
+	}
+	return strings.Join(words, " ")
+}
+
+// photoUnreadNameQuestion is the one name question a
+// photo listing may ever be asked, and it is never bare:
+// the admission stands in the same message, first. A photo
+// the read could not make out at all — no name, no
+// description — earns the question this way; a photo that
+// was read, in whole or in part, never does.
+const photoUnreadNameQuestion = "I cannot read this photo properly. What is the name of the product?"
+
+// nameAsk returns the name question for a flow: the
+// admission form for a photo listing whose photo could
+// not be read, the caller's plain form everywhere else —
+// the guided walk's steps, and photo listings that were
+// read but whose seller's own words left the name open.
+func nameAsk(flow *OnboardingFlow, plain string) string {
+	if flow != nil && flow.PhotoUnread {
+		return photoUnreadNameQuestion
+	}
+	return plain
+}
+
 // throwReadBack is the one piece that tells the seller what the
 // agent made of her throw-in, from the flow's filled fields: the
 // name and description when there are any, the price she gave,
@@ -421,6 +512,16 @@ var stockClauseRe = regexp.MustCompile(`(?i)[,;]?\s*(?:and\s+)?(?:i\s+have\s+|i'
 func throwReadBack(flow *OnboardingFlow) string {
 	var lines []string
 	switch {
+	case flow.NameFromRead && flow.Name != "":
+		// A name the reading committed is presented as
+		// read: she should know it is the agent's
+		// reading, not her words coming back at her,
+		// so a wrong one costs her one correcting line
+		// and a right one costs her nothing.
+		lines = append(lines, "I have it as "+flow.Name+", from the photo.")
+		if flow.Description != "" {
+			lines = append(lines, "Description: "+flow.Description)
+		}
 	case flow.Name != "" && flow.Description != "":
 		lines = append(lines, flow.Name+": "+flow.Description)
 	case flow.Name != "":
@@ -545,8 +646,24 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			visionDesc = md.Description
 			photoColour = md.Colour
 			identityVerdict = md.SameAsOpen
-			if draft.Name == "" {
-				draft.Name = md.Name
+			// The read commits to a name, and the
+			// commitment is the read's duty, not the
+			// seller's: her name, when her words carried
+			// one, already stands in the draft and is
+			// never displaced. A read that returned a
+			// description but no name has still named
+			// the goods, in its description's leading
+			// phrase, and the name is drawn from there
+			// (see nameFromReadDescription) rather than
+			// asked of the woman who sent the photo so
+			// the agent would do the looking.
+			readName := md.Name
+			if readName == "" {
+				readName = nameFromReadDescription(md.Description)
+			}
+			if draft.Name == "" && readName != "" {
+				draft.Name = readName
+				draft.NameFromRead = true
 			}
 			if draft.Description == "" {
 				draft.Description = md.Description
@@ -756,6 +873,7 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	photoKept := collectFlowPhoto(flow, imageID)
 	if flow.Name == "" {
 		flow.Name = draft.Name
+		flow.NameFromRead = draft.NameFromRead
 	}
 	if flow.Description == "" {
 		flow.Description = draft.Description
@@ -782,12 +900,15 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 	if visionDesc != "" && isAdvertDump(flow.Description) {
 		flow.Description = visionDesc
 	}
-	// A drafted name she already sells cannot be saved under,
-	// so it is dropped here and the walk asks her for a name,
-	// where the duplicate is explained if she offers it again.
-	if flow.Name != "" && catalogue.FindByName(shop.ID, flow.Name) != nil {
-		flow.Name = ""
-	}
+	// A drafted name she already sells is NOT dropped here
+	// and never becomes a name question: the walk proceeds
+	// on the name as read, and the clash is put to her at
+	// the save seam by the duplicate choice (see
+	// enterDupChoice, reached from gotoNextOnboardingStep),
+	// where she replaces the old listing or renames this
+	// one with the clash explained. Dropping the name here
+	// once converted a perfectly good read of a forwarded
+	// advert into "What is it called?" on the live number.
 	s.Onboarding = flow
 
 	// The compact photo shape: one message carrying what was
@@ -816,26 +937,49 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 			}
 			return
 		}
-		switch {
-		case flow.PriceNeedsConfirm && !flow.PriceConfirmed:
-			flow.Step = "confirmprice"
-			whatsapp.SendText(from, "Got it ✅ "+flow.Name+" - "+money.GHS(flow.ListPrice)+"?\n"+flow.Description+"\nI read that price from your words. Is it right? Say yes, or give me the right price.")
-		case flow.ListPrice <= 0:
-			flow.Step = "list"
-			whatsapp.SendText(from, "Got it ✅ "+flow.Name+"\n"+flow.Description+"\nWhat is the list price, in cedis?")
-		default:
-			flow.Step = "lastprice"
-			whatsapp.SendText(from, "Got it ✅ "+flow.Name+" - "+money.GHS(flow.ListPrice)+"\n"+flow.Description+"\nWhat is your last price? If non-negotiable, say 'non-negotiable'. If list price is wrong, correct like 'price is 500'.")
-		}
+		step, msg := compactPhotoMessage(flow)
+		flow.Step = step
+		whatsapp.SendText(from, msg)
 		return
 	}
 
+	// The photo could not be read at all when nothing about
+	// the goods is known — no name and no description from
+	// the read or from her words. That, and only that, is
+	// what earns the name question, and it earns it in the
+	// admission form (see nameAsk).
+	flow.PhotoUnread = flow.Name == "" && flow.Description == ""
 	flow.RepeatAckAt = time.Now()
 	whatsapp.SendText(from, "Got your photo.")
 	if read := throwReadBack(flow); read != "" {
 		whatsapp.SendText(from, read)
 	}
 	gotoNextOnboardingStep(from, flow)
+}
+
+// compactPhotoMessage renders the compact photo listing's
+// one message — what was read, and the single question that
+// remains — and returns the step the message asks about
+// alongside the text, so the opener and a name correction's
+// re-ask render the same words (see advanceOnboarding). A
+// name the reading committed is presented as read, with
+// the correction invited in the same breath: she should
+// never have to discover that she may correct it.
+func compactPhotoMessage(flow *OnboardingFlow) (string, string) {
+	name := flow.Name
+	correction := ""
+	if flow.NameFromRead {
+		name = "I have it as " + flow.Name + ", from the photo"
+		correction = " If I have the name wrong, tell me the right one."
+	}
+	switch {
+	case flow.PriceNeedsConfirm && !flow.PriceConfirmed:
+		return "confirmprice", "Got it ✅ " + name + " - " + money.GHS(flow.ListPrice) + "?\n" + flow.Description + "\nI read that price from your words. Is it right? Say yes, or give me the right price." + correction
+	case flow.ListPrice <= 0:
+		return "list", "Got it ✅ " + name + "\n" + flow.Description + "\nWhat is the list price, in cedis?" + correction
+	default:
+		return "lastprice", "Got it ✅ " + name + " - " + money.GHS(flow.ListPrice) + "\n" + flow.Description + "\nWhat is your last price? If non-negotiable, say 'non-negotiable'. If list price is wrong, correct like 'price is 500'." + correction
+	}
 }
 
 // photoNameKey normalises a drafted product name for the
@@ -927,7 +1071,7 @@ func photoPositivelyMatches(flow *OnboardingFlow, draft throwDraft, verdict stri
 func photoStepReminder(flow *OnboardingFlow) string {
 	switch flow.Step {
 	case "name":
-		return "What is it called?"
+		return nameAsk(flow, "What is it called?")
 	case "description":
 		return "Tell me about it in a few words, whenever you are ready."
 	case "list":

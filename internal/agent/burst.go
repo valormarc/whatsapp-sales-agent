@@ -48,6 +48,13 @@ type burstItem struct {
 	Colours      []string
 	PhotoRefs    []string
 	Caption      string
+	// NameFromRead marks an item whose name the photo
+	// reading committed, as opposed to one her caption
+	// carried. It is presented as her reading's name in
+	// spirit — the batch shows it among her own items, and
+	// a correction at the presentation renames it before
+	// anything saves (see burstNameCorrection).
+	NameFromRead bool
 	// VisionDesc is what the model's own read of this
 	// item's photo said it is — construction detail the
 	// seller's caption shorthand may not carry. It is the
@@ -209,6 +216,7 @@ func addToBurst(from string, s *Session, draft throwDraft, imageID, caption, col
 	}
 	item := burstItem{
 		Name:         draft.Name,
+		NameFromRead: draft.NameFromRead,
 		Description:  draft.Description,
 		ListPrice:    draft.ListPrice,
 		PriceDoubted: draft.PriceDoubted,
@@ -281,6 +289,7 @@ func parkPendingPhoto(from string, s *Session, draft throwDraft, imageID, captio
 	}
 	item := burstItem{
 		Name:         draft.Name,
+		NameFromRead: draft.NameFromRead,
 		Description:  draft.Description,
 		ListPrice:    draft.ListPrice,
 		PriceDoubted: draft.PriceDoubted,
@@ -384,6 +393,7 @@ func openHeldBurstItem(from string, s *Session) {
 		flow := &OnboardingFlow{
 			Step:              "confirmprice",
 			Name:              item.Name,
+			NameFromRead:      item.NameFromRead,
 			Description:       item.Description,
 			ListPrice:         item.ListPrice,
 			PriceNeedsConfirm: true,
@@ -569,11 +579,76 @@ func burstAnswerShape(text string) bool {
 	return true
 }
 
+// burstOrdinalRe picks the item a batch correction means:
+// a leading figure ("2 is X", "2. X") or a leading ordinal
+// word ("second one is X"). Without one, a correction can
+// only mean a one-item batch.
+var burstOrdinalNumRe = regexp.MustCompile(`^\s*(?:(?:item|number|no\.?|#)\s*)?(\d+)\s*[.):]?\s+(.+)$`)
+var burstOrdinalWordRe = regexp.MustCompile(`(?i)^\s*(first|second|third|fourth|fifth|sixth)\s+(?:one\s+)?(.+)$`)
+
+var burstOrdinalWords = map[string]int{
+	"first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4, "sixth": 5,
+}
+
+// burstNameCorrection reads her reply to the batch
+// presentation as the correction of one item's name — the
+// batch form of the recap correction (see
+// readNameCorrection): an explicit shape ("call it X",
+// "no, it is X") aimed by an ordinal or by a one-item
+// batch, or, for a one-item batch whose name the reading
+// committed, the bare name itself. It returns the item's
+// index and her name; anything else is not a correction
+// and the batch's price answer keeps its claim.
+func burstNameCorrection(batch []burstItem, text string) (int, string, bool) {
+	idx := -1
+	rest := strings.TrimSpace(text)
+	if m := burstOrdinalNumRe.FindStringSubmatch(rest); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil && n >= 1 {
+			idx, rest = n-1, m[2]
+		}
+	} else if m := burstOrdinalWordRe.FindStringSubmatch(rest); m != nil {
+		idx, rest = burstOrdinalWords[strings.ToLower(m[1])], m[2]
+	}
+	explicit := nameCorrectionRe.MatchString(rest)
+	if idx < 0 {
+		if len(batch) != 1 {
+			return 0, "", false
+		}
+		idx = 0
+	}
+	if idx >= len(batch) {
+		return 0, "", false
+	}
+	if !explicit && !batch[idx].NameFromRead {
+		// A bare name is only ever the correction of a
+		// name the reading gave; her own captioned names
+		// are renamed in the explicit shapes.
+		return 0, "", false
+	}
+	name, ok := nameCorrectionCandidate(rest, batch[idx].ListPrice)
+	if !ok || name == batch[idx].Name {
+		return 0, "", false
+	}
+	return idx, name, true
+}
+
 func handleBurstAnswer(from string, s *Session, text, lower string) bool {
 	if controlWord(lower) == "cancel" {
 		s.BurstBatch = nil
 		s.BurstAwaiting = false
 		whatsapp.SendText(from, "Dropped the kept items. Nothing was added.")
+		return true
+	}
+	// A name correction owns the reply ahead of the
+	// figures: the batch was presented with the reading's
+	// names among hers, and a wrong one is renamed before
+	// anything is priced or saved, then the batch is
+	// presented again under the name she gave.
+	if idx, newName, ok := burstNameCorrection(s.BurstBatch, text); ok {
+		s.BurstBatch[idx].Name = newName
+		s.BurstBatch[idx].NameFromRead = false
+		whatsapp.SendText(from, "Corrected. Item "+strconv.Itoa(idx+1)+" is "+newName+" now.")
+		whatsapp.SendText(from, strings.Join(burstLines(s), "\n"))
 		return true
 	}
 	figures := allFigures(text)

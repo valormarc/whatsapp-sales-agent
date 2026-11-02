@@ -55,7 +55,12 @@ func TestThrowInBareFigure(t *testing.T) {
 	if !strings.Contains(replies[1], "List price GH₵300") {
 		t.Fatalf("readback = %q", replies[1])
 	}
-	if !strings.Contains(replies[2], "What is it called?") {
+	// The caption carried a price and nothing else, and no
+	// photo read is available in this harness: nothing about
+	// the goods could be read, so the name question is the
+	// one a photo listing may ever be asked — behind the
+	// plain admission, never bare (the photo name doctrine).
+	if !strings.Contains(replies[2], "I cannot read this photo properly. What is the name of the product?") {
 		t.Fatalf("first question = %q", replies[2])
 	}
 
@@ -148,7 +153,10 @@ func TestThrowInNoCaption(t *testing.T) {
 	if strings.Contains(strings.Join(replies, "\n"), "Here is what I have from it") {
 		t.Fatalf("nothing was sent, so nothing is read back, replies = %q", replies)
 	}
-	if got := replies[len(replies)-1]; !strings.Contains(got, "What is it called?") {
+	// Nothing was sent with the photo and no read is
+	// available: the admission form of the name question is
+	// the first question (the photo name doctrine).
+	if got := replies[len(replies)-1]; !strings.Contains(got, "I cannot read this photo properly. What is the name of the product?") {
 		t.Fatalf("first question = %q", got)
 	}
 

@@ -137,6 +137,22 @@ type OnboardingFlow struct {
 	// that arrived with it. At the save they are downloaded
 	// and kept on the product (see photos.go).
 	PhotoRefs []string
+	// NameFromRead records that this listing's name is the
+	// photo reading's own name — committed by the read, or
+	// drawn from the read's description — rather than a name
+	// the seller gave herself. A read name is presented as
+	// read wherever the listing is recapped, so she knows it
+	// is the agent's reading and can correct it in one line;
+	// her correction, or a name of her own, clears the mark.
+	NameFromRead bool
+	// PhotoUnread records that this photo listing's photo
+	// could not be read at all: the read yielded neither a
+	// name nor a description, and her words carried neither
+	// either, so nothing about the goods is known. It is the
+	// one state in which the walk may ask a photo listing's
+	// name, and then only behind the plain admission that
+	// the photo could not be read (see nameAsk).
+	PhotoUnread bool
 }
 
 var (
@@ -864,6 +880,81 @@ func walkPriceAnswerShaped(flow *OnboardingFlow, text, lower string) bool {
 	return amount != nil && *amount > 0 && walkPriceShape(text)
 }
 
+// nameCorrectionRe reads a seller correcting a name, in the
+// explicit shapes: "call it X", "name it X", "the name is X",
+// or a negated correction, "no, it is X". The candidate rides
+// in the original message, so her capitals survive.
+var nameCorrectionRe = regexp.MustCompile(`(?i)^(?:no,?\s+)?(?:it\s+is|it's|its|this\s+is)\s+(.+)$|^call\s+it\s+(.+)$|^name\s+it\s+(.+)$|^the\s+name\s+is\s+(.+)$`)
+
+// nameCorrectionCandidate reads one message as a name
+// correction and returns the judged name it carries: an
+// explicit shape (see nameCorrectionRe), or the bare shape —
+// the whole message is a short name and nothing else. A
+// bare shape carrying a figure is not a correction (at a
+// price step it is far more likely price talk or a model
+// number), and a bare yes or no is never one. settled is
+// the listing's settled list price, passed so a figure
+// woven into the name itself ("EliteBook 840") stays in
+// the name, exactly as the name line reader treats it.
+func nameCorrectionCandidate(text string, settled float64) (string, bool) {
+	// Price talk is never a correction, wherever it is
+	// offered: "fixed price" is a price answer with a
+	// name's shape, and claiming it as a rename would eat
+	// the answer whole.
+	if fixedPriceRe.MatchString(strings.ToLower(strings.TrimSpace(text))) {
+		return "", false
+	}
+	cand := ""
+	if m := nameCorrectionRe.FindStringSubmatch(strings.TrimSpace(text)); m != nil {
+		for _, g := range m[1:] {
+			if strings.TrimSpace(g) != "" {
+				cand = g
+				break
+			}
+		}
+	} else {
+		lower := strings.ToLower(strings.TrimSpace(text))
+		if figureTokenRe.MatchString(text) || len(strings.Fields(text)) > 4 ||
+			isClearYes(lower) || isClearNo(lower) || controlWord(lower) == "cancel" {
+			return "", false
+		}
+		cand = text
+	}
+	name, _, _ := parseTypedNameLine(cand, settled)
+	if name == "" {
+		return "", false
+	}
+	if cleaned, okName := cleanListingName(name); okName {
+		return cleaned, true
+	}
+	return "", false
+}
+
+// readNameCorrection judges a message at a photo listing's
+// recap steps as the correction of the read name: it
+// returns her name when the message plainly gives a
+// different one. A message shaped as the step's own price
+// answer is never a correction — the price question owns
+// its answers first.
+func readNameCorrection(flow *OnboardingFlow, text, lower string) (string, bool) {
+	if flow == nil || !flow.NameFromRead || flow.Name == "" {
+		return "", false
+	}
+	switch flow.Step {
+	case "list", "lastprice", "confirmprice", "confirm":
+	default:
+		return "", false
+	}
+	if walkPriceAnswerShaped(flow, text, lower) {
+		return "", false
+	}
+	name, ok := nameCorrectionCandidate(text, flow.ListPrice)
+	if !ok || name == flow.Name {
+		return "", false
+	}
+	return name, true
+}
+
 func advanceOnboarding(from string, s *Session, text, lower string) {
 	// When this turn ends the listing, a kept burst batch is
 	// presented next (see burst.go).
@@ -904,6 +995,31 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 				return
 			}
 		}
+	}
+
+	// A correction of the read name owns the message at the
+	// recap steps, the same way a price correction does
+	// above: the read name was presented as read precisely
+	// so this costs her one line. The name becomes hers,
+	// the read mark clears, a clash with her shelf goes to
+	// the duplicate choice, and the step she was answering
+	// is asked again under the new name. Nothing else about
+	// the listing moves.
+	if newName, ok := readNameCorrection(flow, text, lower); ok {
+		flow.Name = newName
+		flow.NameFromRead = false
+		whatsapp.SendText(from, "Corrected. "+newName+" it is.")
+		if enterDupChoice(from, s, flow) {
+			return
+		}
+		if flow.PhotoCompact {
+			step, msg := compactPhotoMessage(flow)
+			flow.Step = step
+			whatsapp.SendText(from, msg)
+		} else {
+			gotoNextOnboardingStep(from, flow)
+		}
+		return
 	}
 
 	switch flow.Step {
@@ -999,7 +1115,7 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 					return
 				}
 				flow.PendingFigure = *amount
-				whatsapp.SendText(from, "I have noted "+money.GHS(*amount)+", but I will not attach it to a product until I know what this one is called. What is it called?")
+				whatsapp.SendText(from, "I have noted "+money.GHS(*amount)+", but I will not attach it to a product until I know what this one is called. "+nameAsk(flow, "What is it called?"))
 				return
 			}
 		}
@@ -1033,14 +1149,14 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 				name = cleaned
 			} else if n, okStock := parseStockCount(text); okStock {
 				flow.Stock = n
-				whatsapp.SendText(from, "Noted, "+strconv.Itoa(n)+" in stock. What is it called?")
+				whatsapp.SendText(from, "Noted, "+strconv.Itoa(n)+" in stock. "+nameAsk(flow, "What is it called?"))
 				return
 			} else {
 				name = ""
 			}
 		}
 		if name == "" {
-			whatsapp.SendText(from, "What is the product called?")
+			whatsapp.SendText(from, nameAsk(flow, "What is the product called?"))
 			return
 		}
 		hadPrice := flow.ListPrice > 0
@@ -1325,6 +1441,16 @@ func gotoNextOnboardingStep(from string, flow *OnboardingFlow) {
 		whatsapp.SendText(from, "Do you sell the "+flow.Name+" by measure, like by the yard, litre or kilo, or only as a whole?")
 		return
 	default:
+		// The save seam is where a name clash is settled for
+		// a listing whose name arrived whole — a photo's
+		// read name, kept through the walk under the photo
+		// name doctrine, meets the duplicate choice here
+		// rather than being dropped at intake. The guided
+		// walk settled its clashes at the name step and
+		// never reaches this branch with one standing.
+		if s := sessionOfFlow(flow); s != nil && enterDupChoice(from, s, flow) {
+			return
+		}
 		if flow.PhotoCompact {
 			savePhotoCompactListing(from, flow)
 			return
@@ -1346,7 +1472,7 @@ func gotoNextOnboardingStep(from string, flow *OnboardingFlow) {
 func onboardingQuestionText(flow *OnboardingFlow) string {
 	switch flow.Step {
 	case "name":
-		return "What is it called?"
+		return nameAsk(flow, "What is it called?")
 	case "description":
 		return "Tell me about " + flow.Name + " in a few words: what it is, and what makes it worth buying. Customers will read this."
 	case "list":
@@ -1397,8 +1523,15 @@ func sessionOfFlow(flow *OnboardingFlow) *Session {
 
 func enterOnboardingConfirm(from string, flow *OnboardingFlow) {
 	flow.Step = "confirm"
+	nameLine := flow.Name + ": " + flow.Description
+	if flow.NameFromRead {
+		// The recap marks a read name as read, here as
+		// everywhere: it is the agent's reading standing
+		// in front of her, correctable before it saves.
+		nameLine = "I have it as " + flow.Name + ", from the photo: " + flow.Description
+	}
 	summary := "Here is what will go live:\n" +
-		flow.Name + ": " + flow.Description + "\n"
+		nameLine + "\n"
 	if flow.Fixed {
 		summary += "Price " + money.GHS(flow.ListPrice) + ", fixed. There is no bargaining on this one.\n"
 	} else {
