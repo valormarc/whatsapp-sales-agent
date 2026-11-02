@@ -1360,6 +1360,7 @@ func composeOrderRecap(s *Session, f fulfilment, turn string) string {
 // on somebody's package.
 func cleanPackageName(msg string) string {
 	t := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(msg), ".!?"))
+	t = stripAffirmationHead(t)
 	if t == "" || strings.ContainsAny(t, "0123456789?@") {
 		return ""
 	}

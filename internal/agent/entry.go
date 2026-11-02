@@ -42,6 +42,23 @@ const askShopText = "Hello, and welcome. I sell for many shops on this one numbe
 // who arrived with no link. An unresolvable marker resolves to no
 // shop at all: routing is never a guess.
 func parseShopEntry(lower string, allowName bool) (*catalogue.Merchant, string) {
+	return parseShopEntryMode(lower, allowName, false)
+}
+
+// parseShopEntryExplicit reads only the deliberate entry
+// markers: the SHOP-<code> token and the hyphenated code.
+// It is the parse used while a question the buyer is in the
+// middle of answering stands open in her bound shop: her
+// answer belongs to that question, so the bare word pass —
+// which would read the first word of "Efua Mensah", given
+// as a package name, as travel to Efua's shop — is never
+// run over it. Deliberate travel stays possible; an answer
+// is never mistaken for it.
+func parseShopEntryExplicit(lower string) (*catalogue.Merchant, string) {
+	return parseShopEntryMode(lower, false, true)
+}
+
+func parseShopEntryMode(lower string, allowName, explicitOnly bool) (*catalogue.Merchant, string) {
 	if m := shopTokenRe.FindStringSubmatchIndex(lower); m != nil {
 		code := lower[m[2]:m[3]]
 		if shop := catalogue.MerchantByShopCode(code); shop != nil {
@@ -56,6 +73,9 @@ func parseShopEntry(lower string, allowName bool) (*catalogue.Merchant, string) 
 			rest := strings.TrimSpace(lower[:m[0]] + " " + lower[m[1]:])
 			return shop, rest
 		}
+	}
+	if explicitOnly {
+		return nil, lower
 	}
 	for _, w := range bareWordSplit.Split(lower, -1) {
 		if len(w) < 3 {

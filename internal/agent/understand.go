@@ -1322,6 +1322,13 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 	case intentAttention:
 		whatsapp.SendText(from, merchantAttentionText(merchant, sessions.get(sessionKey(shopID, from))))
 		return true
+	case intentShelf:
+		// She asked to see her own shelf, in whatever words
+		// the reading understood: it is served the way her
+		// catalogue always is, from the shelf itself — never
+		// drafted, and never answered with the day book.
+		serveMerchantCatalogue(from, merchant)
+		return true
 	case intentClearWork:
 		// Her word to clear her standing work opens the
 		// one confirmation (see pendingquestion.go): the

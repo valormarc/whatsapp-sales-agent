@@ -141,7 +141,7 @@ type OnboardingFlow struct {
 
 var (
 	addProductRe   = regexp.MustCompile(`\b(add|new)\s+(a\s+|an\s+|another\s+)?(new\s+)?(product|item|goods?|stock)\b`)
-	myCatalogueRe  = regexp.MustCompile(`\bmy (catalogue|products|items)\b`)
+	myCatalogueRe  = regexp.MustCompile(`\bmy (catalogue|products|items|shelf)\b`)
 	changePriceRe  = regexp.MustCompile(`^change (?:the )?(?:list )?price of (.+?) to (.+)$`)
 	changeFloorRe  = regexp.MustCompile(`^change (?:the )?(?:last|floor)(?: price)? of (.+?) to (.+)$`)
 	removeRe       = regexp.MustCompile(`^remove (?:the )?(.+)$`)
@@ -163,7 +163,7 @@ var (
 	// only", "<item> whole only"), in her own words.
 	setMeasureRe  = regexp.MustCompile(`^set measure of (.+?) to (.+)$`)
 	wholeOnlyRe   = regexp.MustCompile(`^(?:sell )?(.+?) whole only$`)
-	setStockRe    = regexp.MustCompile(`^(?:set|update) stock of (.+?) to (\d+)$`)
+	setStockRe    = regexp.MustCompile(`^(?:please\s+)?(?:set|update)\s+(?:the\s+)?stock\s+(?:of|for)\s+(.+?)\s+to\s+(\d+)\s*(?:pieces?|pcs|units?)?[.!]?$`)
 	myOrdersRe    = regexp.MustCompile(`^(my )?orders[.!?]?$`)
 	cancelOrderRe = regexp.MustCompile(`^cancel order ([a-z0-9-]+)[.!?]?$`)
 	// Her shop link, asked for in the shape she would ask a
@@ -344,7 +344,8 @@ func serveRemoveAnswer(from string, s *Session, merchantID, lower string) {
 // that merely contains the words still feeds the walk.
 func walkCommandOutranks(text string) bool {
 	switch strings.TrimSpace(strings.ToLower(text)) {
-	case "my catalogue", "my catalog", "my products", "my items",
+	case "my catalogue", "my catalog", "my products", "my items", "my shelf",
+		"show me my shelf",
 		"my orders", "buyer wants", "my shop link", "shop link",
 		"send me my shop link", "send me my link",
 		"how is today", "what needs my attention", "what needs attention":
@@ -1505,6 +1506,8 @@ var stockStatementFiller = map[string]bool{
 func stockStatementIsPure(lower, productName string) bool {
 	rest := stockCountRe.ReplaceAllString(lower, " ")
 	rest = stockLabelRe.ReplaceAllString(rest, " ")
+	rest = stockPiecesOfRe.ReplaceAllString(rest, " ")
+	rest = stockForRe.ReplaceAllString(rest, " ")
 	nameWords := map[string]bool{}
 	for _, w := range strings.Fields(strings.ToLower(productName)) {
 		nameWords[strings.Trim(w, ".,")] = true

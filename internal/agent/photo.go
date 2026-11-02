@@ -325,6 +325,20 @@ func throwDraftFromCaption(caption string) throwDraft {
 	if rest == "" {
 		return d
 	}
+	// A count she states rides the throw-in itself, and the
+	// clause that carried it is lifted out of her words
+	// before they are sorted into a name or a description:
+	// "Kente Stole, and I have 3 pieces of it" names the
+	// stole and states three of it, and neither fact should
+	// be written where the other belongs.
+	if n, ok := parseStockCount(caption); ok {
+		d.Stock = n
+		rest = strings.Join(strings.Fields(stockClauseRe.ReplaceAllString(rest, " ")), " ")
+		rest = strings.Trim(rest, " /-|.")
+		if rest == "" {
+			return d
+		}
+	}
 	words := throwWordSplit.Split(strings.ToLower(rest), -1)
 	meaningful := 0
 	for _, w := range words {
@@ -356,20 +370,34 @@ func throwDraftFromCaption(caption string) throwDraft {
 }
 
 var (
-	// "3 joggers in stock", "3 pieces in stock": a count with
-	// a few of her words before the stock phrase.
-	stockCountRe = regexp.MustCompile(`(?i)\b(\d+)\s+(?:[a-z]+\s+){0,3}?in stock\b`)
+	// "3 joggers in stock", "3 pieces in stock", "I have 8
+	// pieces of the Ankara Cloth in stock": a count with her
+	// own words — the goods' name among them — before the
+	// stock phrase. The window is wide enough for a real
+	// product name to stand between the figure and the
+	// phrase; the roads that apply a count all demand the
+	// whole message be the statement, so width here cannot
+	// swallow an errand.
+	stockCountRe = regexp.MustCompile(`(?i)\b(\d+)\s+(?:[a-z]+\s+){0,8}?in stock\b`)
 	// "stock: 3", "stock is 3".
 	stockLabelRe = regexp.MustCompile(`(?i)\bstock\s*(?:is\s*)?[:=]?\s*(\d+)`)
+	// "3 pieces of it", said of the listing being built or
+	// the goods just named.
+	stockPiecesOfRe = regexp.MustCompile(`(?i)\b(\d+)\s+pieces?\s+of\s+(?:it|them|this|that)\b`)
+	// "set the stock for Ankara Cloth to 8 pieces": the
+	// command shape spoken as a sentence, the count after
+	// the "to".
+	stockForRe = regexp.MustCompile(`(?i)(?:\b(?:set|update)\s+(?:the\s+)?)?\bstock\s+(?:for|of)\s+.+?\s+to\s+(\d+)\s*(?:pieces?|pcs|units?)?\b`)
 )
 
 // parseStockCount reads a stock count a seller states in
 // her own words: a figure standing with an in-stock phrase,
-// or a figure she labels as the stock. It reads explicit
-// statements only; "only few in stock" states no count and
-// reads none.
+// a figure she labels as the stock, a count of pieces of
+// the goods, or the count in a set-the-stock sentence. It
+// reads explicit statements only; "only few in stock"
+// states no count and reads none.
 func parseStockCount(text string) (int, bool) {
-	for _, re := range []*regexp.Regexp{stockCountRe, stockLabelRe} {
+	for _, re := range []*regexp.Regexp{stockCountRe, stockLabelRe, stockPiecesOfRe, stockForRe} {
 		if m := re.FindStringSubmatch(text); m != nil {
 			if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
 				return n, true
@@ -378,6 +406,13 @@ func parseStockCount(text string) (int, bool) {
 	}
 	return 0, false
 }
+
+// stockClauseRe matches the stock clause inside a longer
+// line — the tail of "Kente Stole, and I have 3 pieces of
+// it" — so the clause can be lifted out of her words once
+// its count is read, and neither the name nor the
+// description keeps the sentence that carried the count.
+var stockClauseRe = regexp.MustCompile(`(?i)[,;]?\s*(?:and\s+)?(?:i\s+have\s+|i've\s+)?(?:\d+\s+(?:[a-z]+\s+){0,8}?in stock\b|\d+\s+pieces?\s+of\s+(?:it|them|this|that)\b|\bstock\s*(?:is\s*)?[:=]\s*\d+)`)
 
 // throwReadBack is the one piece that tells the seller what the
 // agent made of her throw-in, from the flow's filled fields: the

@@ -35,13 +35,28 @@ var affirmationHeads = map[string]bool{
 
 // stripAffirmationHead drops a leading affirmation word
 // when content follows it, and reports whether what is
-// left is a bare affirmation with nothing behind it.
+// left is a bare affirmation with nothing behind it. The
+// head is read with any punctuation it carries trimmed
+// away: "Yes, Accra" affirms exactly as "Yes accra" does,
+// and a comma after the yes must not hide it.
 func stripAffirmationHead(t string) string {
+	t = strings.TrimSpace(t)
+	// The head may be welded to its content by the very
+	// punctuation that separates them ("Yes,Accra" is one
+	// token): a short affirmation before the first mark,
+	// with content behind it, is still a head.
+	if i := strings.IndexAny(t, ",.!?"); i > 0 {
+		if affirmationHeads[strings.ToLower(strings.TrimSpace(t[:i]))] {
+			if rest := strings.TrimSpace(t[i+1:]); rest != "" {
+				return rest
+			}
+		}
+	}
 	fields := strings.Fields(t)
 	if len(fields) == 0 {
 		return t
 	}
-	if !affirmationHeads[strings.ToLower(fields[0])] {
+	if !affirmationHeads[strings.Trim(strings.ToLower(fields[0]), ",.;!?")] {
 		return t
 	}
 	return strings.Join(fields[1:], " ")
@@ -67,6 +82,11 @@ func guardPlace(loc string) string {
 // the caller asks or moves on rather than guessing.
 func cleanPlace(raw string) string {
 	t := strings.TrimSpace(raw)
+	// The affirmation head is stripped before anything is
+	// cut at punctuation: cutting first would keep only
+	// the "Yes" of "Yes, Accra" and throw the place away
+	// with the comma.
+	t = stripAffirmationHead(t)
 	if i := strings.IndexAny(t, ",.;!?"); i >= 0 {
 		t = strings.TrimSpace(t[:i])
 	}
@@ -208,6 +228,7 @@ func sentSomebody(msg string) (who string, named bool, ok bool) {
 // is no answer, and the question is asked again.
 func cleanCollector(msg string) string {
 	t := strings.TrimSpace(strings.TrimRight(strings.TrimSpace(msg), ".!?"))
+	t = stripAffirmationHead(t)
 	words := strings.Fields(t)
 	if len(words) == 0 || len(words) > 6 {
 		return ""

@@ -1169,7 +1169,29 @@ func handleInboundTurn(in Inbound) {
 	// to the right shop's door, as any code does.
 	quotingRef := boundID != "" && orderRefRe.MatchString(msg)
 	wasBound := boundID
-	if shop, rest := parseShopEntry(lower, boundID == ""); shop != nil && !quotingRef {
+	// A question standing open in her bound shop owns her next
+	// message, the precedence the merchant's questions already
+	// have: while her checkout is asking something, or a close
+	// question stands, only a deliberate entry marker may move
+	// her, and the words of her answer are read as her answer.
+	// Without this, the bare word scan below reads the first
+	// word of an ordinary answer — a package name that happens
+	// to be another shop's code word — as travel, and wipes
+	// the checkout the question belongs to.
+	openAnswer := false
+	if boundID != "" {
+		if bs, ok := sessions.lookup(sessionKey(boundID, from)); ok && bs != nil {
+			openAnswer = bs.PendingClose || (bs.Stage == "fulfilment" && bs.FulfilStep != "")
+		}
+	}
+	var shop *catalogue.Merchant
+	var rest string
+	if openAnswer {
+		shop, rest = parseShopEntryExplicit(lower)
+	} else {
+		shop, rest = parseShopEntry(lower, boundID == "")
+	}
+	if shop != nil && !quotingRef {
 		switch {
 		case boundID == "":
 			bindings.put(from, shop.ID)

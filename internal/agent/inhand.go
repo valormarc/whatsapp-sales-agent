@@ -24,6 +24,7 @@ package agent
 // wait, or walk away — the cancel law covers her.
 
 import (
+	"strings"
 	"sync"
 	"time"
 
@@ -233,6 +234,54 @@ func reopenInHand(from string, s *Session, merchant *catalogue.Merchant) {
 	}
 }
 
+// inHandDenials are the shapes of a no spoken in a
+// sentence: they are read before any affirmation, so a
+// sentence that carries one is a refusal however it opens.
+var inHandDenials = []string{
+	"not in hand", "don't have it", "do not have it",
+	"doesn't have it", "haven't got it", "not with me",
+	"can't find it", "cannot find it", "can't find the",
+	"cannot find the",
+}
+
+// readInHandSentence reads a sentence-length answer to the
+// in-hand question. The gate is open and the question was
+// asked outright, so her words about the goods themselves
+// are the answer: "in hand" spoken of the item affirms it,
+// a denial shape refuses it, and a leading yes word binds
+// when the sentence also speaks of the item or of the
+// buyer paying. Anything else is not an answer to this
+// question and the gate stands.
+func readInHandSentence(lower, item string) (yes, no bool) {
+	for _, p := range inHandDenials {
+		if strings.Contains(lower, p) {
+			return false, true
+		}
+	}
+	if strings.Contains(lower, "in hand") {
+		return true, false
+	}
+	fields := strings.Fields(lower)
+	if len(fields) == 0 {
+		return false, false
+	}
+	switch strings.Trim(fields[0], ",.!?") {
+	case "yes", "yeah", "yep", "ok", "okay", "sure", "confirm":
+	default:
+		return false, false
+	}
+	if strings.Contains(lower, "she can pay") || strings.Contains(lower, "go ahead") ||
+		strings.Contains(lower, "have it") || strings.Contains(lower, "got it") {
+		return true, false
+	}
+	for _, w := range strings.Fields(strings.ToLower(item)) {
+		if len(w) >= 4 && strings.Contains(lower, w) {
+			return true, false
+		}
+	}
+	return false, false
+}
+
 // handleMerchantInHand is the seller's word on an open
 // in-hand request, consulted in her own chat after her
 // in-progress flows. A yes completes the waiting sale
@@ -245,6 +294,14 @@ func handleMerchantInHand(from string, merchant *catalogue.Merchant, text, lower
 		return false
 	}
 	yes, no := isClearYes(lower), isClearNo(lower)
+	if !yes && !no {
+		// Her answer may be a sentence, not the bare word:
+		// the question is hers and stands open, so a reply
+		// that speaks of the goods being in hand (or not)
+		// in plain words is her answer to it, the same
+		// answer the button tap is translated into.
+		yes, no = readInHandSentence(lower, q.Item)
+	}
 	if !yes && !no {
 		return false
 	}
