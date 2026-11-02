@@ -145,27 +145,36 @@ func attachPhotos(merchantID string, product catalogue.Product, refs []string) {
 	}
 	_ = os.MkdirAll(datadir.Path(filepath.Join("photos", merchantID)), 0o755)
 	var kept []string
+	var saved []keptPhoto
 	for i, id := range refs {
 		data, mime, ok := downloadMediaBytesFn(id)
 		if !ok || len(data) == 0 {
 			continue
 		}
 		ext := ".jpg"
+		format := "jpeg"
 		switch {
 		case strings.Contains(mime, "png"):
 			ext = ".png"
+			format = "png"
 		case strings.Contains(mime, "webp"):
 			ext = ".webp"
+			format = "webp"
 		}
 		rel := scopedPhotoRel(merchantID, product.ID, i+1, ext)
 		if err := os.WriteFile(datadir.Path(rel), data, 0o600); err != nil {
 			continue
 		}
 		kept = append(kept, rel)
+		saved = append(saved, keptPhoto{rel: rel, data: data, format: format})
 	}
 	if len(kept) > 0 {
 		_ = catalogue.SetProductPhotos(merchantID, product.ID, kept)
 	}
+	// The listing stands complete on its originals; the
+	// cutouts, if the service is configured, take their
+	// place over them (see cutout.go).
+	applyCutouts(product, saved)
 }
 
 // scopedPhotoRel is where a product's photo lives: under

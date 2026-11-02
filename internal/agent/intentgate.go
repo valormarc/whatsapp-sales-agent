@@ -245,6 +245,19 @@ func servePendingPicRequest(from string, shop *catalogue.Merchant, imageID strin
 	photos := append(append([]string{}, p.Photos...), rel)
 	_ = catalogue.SetProductPhotos(shop.ID, p.ID, photos)
 	p.Photos = photos
+	// A photo accepted onto a listing takes the same
+	// cutout road as one saved with it (see cutout.go):
+	// the buyer waiting on this very picture is shown
+	// the cutout when it lands in time, and the original
+	// until then.
+	format := "jpeg"
+	switch ext {
+	case ".png":
+		format = "png"
+	case ".webp":
+		format = "webp"
+	}
+	applyCutouts(*p, []keptPhoto{{rel: rel, data: data, format: format}})
 	delete(picRequests, shop.ID)
 	if !sendProductPhotos(req.Buyer, shop.ID, p) {
 		whatsapp.SendText(req.Buyer, "The shop owner has sent the picture of the "+p.Name+", but I could not pass it on just now. Ask me for the pic once more and I will send it.")
