@@ -163,6 +163,26 @@ type webhookPayload struct {
 						} `json:"nfm_reply"`
 					} `json:"interactive"`
 				} `json:"messages"`
+				// Statuses are Meta's reports about messages
+				// THIS number sent: each names the outbound
+				// message by the id the send was given, who
+				// it went to, how far it got (sent, delivered,
+				// read) or that it failed and why. Until this
+				// field was declared the reports were dropped
+				// unseen and nothing the agent sent had a
+				// recorded fate; they are now routed to the
+				// agent's status book (agent.RecordMessageStatus).
+				Statuses []struct {
+					ID          string `json:"id"`
+					Status      string `json:"status"`
+					Timestamp   string `json:"timestamp"`
+					RecipientID string `json:"recipient_id"`
+					Errors      []struct {
+						Code    int    `json:"code"`
+						Title   string `json:"title"`
+						Message string `json:"message"`
+					} `json:"errors"`
+				} `json:"statuses"`
 			} `json:"value"`
 		} `json:"changes"`
 	} `json:"entry"`
@@ -284,6 +304,24 @@ func Handler() http.Handler {
 								agent.HandleInbound(agent.Inbound{From: msg.From, FlowReply: flowReply, MessageID: msg.ID, ContextID: contextID, ContextFrom: contextFrom})
 							}
 						}
+					}()
+				}
+				for _, st := range change.Value.Statuses {
+					func() {
+						defer func() {
+							if rec := recover(); rec != nil {
+								fmt.Fprintf(os.Stderr, "status recording failed: %v\n", rec)
+							}
+						}()
+						ev := agent.MessageStatus{MessageID: st.ID, Recipient: st.RecipientID, Status: st.Status}
+						if ts, err := strconv.ParseInt(st.Timestamp, 10, 64); err == nil {
+							ev.Timestamp = ts
+						}
+						if len(st.Errors) > 0 {
+							ev.ErrorCode = st.Errors[0].Code
+							ev.ErrorTitle = st.Errors[0].Title
+						}
+						agent.RecordMessageStatus(ev)
 					}()
 				}
 			}

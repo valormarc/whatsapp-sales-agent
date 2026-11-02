@@ -924,6 +924,7 @@ func lastN(msgs []model.Message, n int) []model.Message {
 //     shop name, and nothing is sold to her until one resolves.
 //   - A sender who asks to sell starts merchant signup, which opens
 //     her shop in chat and hands her into product onboarding.
+//
 // handleInboundTurn runs one delivery's turn. Delivery
 // discipline — the redelivery drop, the durable inbox,
 // the handled mark — belongs to HandleInbound (inbox.go),
@@ -953,6 +954,11 @@ func handleInboundTurn(in Inbound) {
 	}()
 
 	from := in.From
+
+	// Her speaking is itself one of the three clocks the
+	// status book keeps: this person's last-heard-from
+	// advances to now (see statuses.go).
+	noteHeardFrom(from)
 
 	// The turn stamps the speaker's standing sessions, the
 	// clock the idle eviction reads.

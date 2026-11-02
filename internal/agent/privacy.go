@@ -102,6 +102,10 @@ func isDeleteMyDataAsk(text string) bool {
 //   - the package names remembered for her orders: gone.
 //   - the local outbox copies that name her: gone, from
 //     the live file and its rotated siblings alike.
+//   - her delivery and read record: gone — the status
+//     book's rollup entry for her number, the per-message
+//     records addressed to her, and her lines of the
+//     status journal and its rotated siblings.
 //   - preserved copies (corrupt-book evidence, last known
 //     good backups) that carry her number: gone.
 //   - her orders: the personal details are struck (number,
@@ -138,6 +142,7 @@ func handleDeleteMyData(from string) {
 	_ = wants.Default.Forget(from)
 	forgetInHand(from)
 	forgetFeeQuotes(from)
+	forgetStatuses(from)
 	// The fifth audit's erasure gaps, closed here with
 	// the rest: her standing deliveries leave the ledger
 	// (their ids stay as handled marks, so the same
