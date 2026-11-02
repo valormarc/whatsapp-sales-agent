@@ -825,6 +825,18 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 	if key := sessionKey(shopID, from); sessions.get(key) != nil && sessions.get(key).LastMerchantNote != "" {
 		b.WriteString("The last thing the agent told her, which an \"explain this\" from her most likely points at: \"" + sessions.get(key).LastMerchantNote + "\" If she asks to explain, explain THAT, in plain words, from the facts.\n")
 	}
+	// A drafted question still awaiting her answer is a
+	// fact of this reading, the way the listing walk's
+	// standing question is below: without it the reading
+	// meets her answer cold — a bare "yes" to a question
+	// about her catalogue was read against her unset
+	// allowance instead, and the allowance became the
+	// answer's destination though it was never asked
+	// about. With the question in hand, her words are
+	// read as what they are: her answer to it.
+	if ms := sessions.get(sessionKey(shopID, from)); ms != nil && ms.PendingMerchantQ != nil && ms.PendingMerchantQ.Kind == "drafted" {
+		b.WriteString("A question you asked her is still open, and her message is her answer to it: \"" + ms.PendingMerchantQ.Body + "\" Read her message against the choices that question offered, and name the act the choice she picks calls for: seeing her catalogue is \"shelf\"; adding or listing goods is \"new_listing\"; a choice the platform performs by asking her something is the act behind that something. If her message plainly takes up something new instead of answering, name that act instead — the question is then spent, never a trap.\n")
+	}
 	if ms := sessions.get(sessionKey(shopID, from)); ms != nil && ms.Onboarding != nil {
 		flow := ms.Onboarding
 		what := "a product"

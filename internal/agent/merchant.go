@@ -1588,6 +1588,88 @@ func serveMerchantStockQuestion(from, lower string) bool {
 	return true
 }
 
+// serveMerchantCatalogue sends the merchant her own
+// catalogue: her goods in the code box every list
+// wears, her last prices, her allowance and her
+// delivery position. It is the answer the "my
+// catalogue" command gives, and the answer a drafted
+// question's catalogue choice drives when she picks
+// it inside that question's frame (see
+// pendingquestion.go).
+func serveMerchantCatalogue(from string, merchant *catalogue.Merchant) {
+	lines := []string{"Here is your catalogue:"}
+	for _, p := range merchant.Products {
+		line := p.Name + " - " + money.GHS(p.ListPrice)
+		if p.ByMeasure() {
+			line += " (" + money.GHS(p.UnitPrice()) + " per " + p.Unit + ", sold by the " + p.Unit + ")"
+		}
+		if p.Fixed {
+			line += ", fixed price"
+		} else {
+			line += ", your last price " + money.GHS(p.FloorPrice)
+		}
+		switch {
+		case p.Stock == 1:
+			line += ", only 1 in stock"
+		case p.Stock > 1:
+			line += ", " + strconv.Itoa(p.Stock) + " in stock"
+		case p.Stock == 0:
+			line += ", none in stock"
+		}
+		lines = append(lines, line)
+	}
+	lines = append(lines, "Your daily giveaway allowance is "+money.GHS(merchant.DailyGiveawayAllowance)+". Your last prices are yours only; customers never see them.")
+	if deliveryStyleOf(merchant) == "quote" {
+		line := "Delivery: quoted per order. You name the fee for each order as it comes, and the buyer sees it inside her full total before she pays."
+		if merchant.DeliveryNote != "" {
+			line += " " + merchant.DeliveryNote
+		}
+		lines = append(lines, line)
+		if deliveryPaidToOf(merchant) == "merchant" {
+			lines = append(lines, "The delivery money comes to you, inside the total your buyers pay here.")
+		} else {
+			lines = append(lines, "The delivery money is not yours: your buyers pay whoever brings the item, when it arrives.")
+		}
+	} else if merchant.DeliveryFee > 0 || merchant.DeliveryNote != "" || len(merchant.DeliveryAreas) > 0 {
+		line := "Delivery:"
+		if merchant.DeliveryFee > 0 {
+			line += " " + money.GHS(merchant.DeliveryFee) + " a trip."
+		}
+		if merchant.DeliveryNote != "" {
+			line += " " + merchant.DeliveryNote
+		}
+		lines = append(lines, line)
+		if len(merchant.DeliveryAreas) > 0 {
+			lines = append(lines, "Area fees:")
+			for _, a := range merchant.DeliveryAreas {
+				lines = append(lines, a.Area+" - "+money.GHS(a.Fee))
+			}
+			lines = append(lines, "Everywhere else pays the standard fee.")
+		}
+		if deliveryPaidToOf(merchant) == "merchant" {
+			lines = append(lines, "The delivery money comes to you, inside the total your buyers pay here.")
+		} else {
+			lines = append(lines, "The delivery money is not yours: your buyers pay whoever brings the item, when it arrives.")
+		}
+	} else {
+		lines = append(lines, "No delivery fee set yet. Say \"set delivery fee 25\" to give buyers one total to pay, \"set area fee Osu 30\" where a place costs different, or \"set delivery per order\" and I will ask you for the fee on each delivery.")
+	}
+	if merchant.SubaccountCode != "" {
+		lines = append(lines, "Your payment account is set up: link money settles to your MoMo in the name "+merchant.PayoutHolderName+".")
+	}
+			if len(merchant.Products) > 0 {
+		// The catalogue's goods sit in the code box
+		// every list wears; the heading and the notes
+		// under it stay ordinary text.
+		boxed := []string{lines[0], "```"}
+		boxed = append(boxed, lines[1:1+len(merchant.Products)]...)
+		boxed = append(boxed, "```")
+		boxed = append(boxed, lines[1+len(merchant.Products):]...)
+		lines = boxed
+	}
+	whatsapp.SendText(from, strings.Join(lines, "\n"))
+}
+
 func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant, text, lower string) bool {
 	if shopLinkRe.MatchString(lower) {
 		if link := shopEntryLink(merchant); link != "" {
@@ -1603,77 +1685,7 @@ func handleMerchantCommand(from string, s *Session, merchant *catalogue.Merchant
 	}
 
 	if myCatalogueRe.MatchString(lower) {
-		lines := []string{"Here is your catalogue:"}
-		for _, p := range merchant.Products {
-			line := p.Name + " - " + money.GHS(p.ListPrice)
-			if p.ByMeasure() {
-				line += " (" + money.GHS(p.UnitPrice()) + " per " + p.Unit + ", sold by the " + p.Unit + ")"
-			}
-			if p.Fixed {
-				line += ", fixed price"
-			} else {
-				line += ", your last price " + money.GHS(p.FloorPrice)
-			}
-			switch {
-			case p.Stock == 1:
-				line += ", only 1 in stock"
-			case p.Stock > 1:
-				line += ", " + strconv.Itoa(p.Stock) + " in stock"
-			case p.Stock == 0:
-				line += ", none in stock"
-			}
-			lines = append(lines, line)
-		}
-		lines = append(lines, "Your daily giveaway allowance is "+money.GHS(merchant.DailyGiveawayAllowance)+". Your last prices are yours only; customers never see them.")
-		if deliveryStyleOf(merchant) == "quote" {
-			line := "Delivery: quoted per order. You name the fee for each order as it comes, and the buyer sees it inside her full total before she pays."
-			if merchant.DeliveryNote != "" {
-				line += " " + merchant.DeliveryNote
-			}
-			lines = append(lines, line)
-			if deliveryPaidToOf(merchant) == "merchant" {
-				lines = append(lines, "The delivery money comes to you, inside the total your buyers pay here.")
-			} else {
-				lines = append(lines, "The delivery money is not yours: your buyers pay whoever brings the item, when it arrives.")
-			}
-		} else if merchant.DeliveryFee > 0 || merchant.DeliveryNote != "" || len(merchant.DeliveryAreas) > 0 {
-			line := "Delivery:"
-			if merchant.DeliveryFee > 0 {
-				line += " " + money.GHS(merchant.DeliveryFee) + " a trip."
-			}
-			if merchant.DeliveryNote != "" {
-				line += " " + merchant.DeliveryNote
-			}
-			lines = append(lines, line)
-			if len(merchant.DeliveryAreas) > 0 {
-				lines = append(lines, "Area fees:")
-				for _, a := range merchant.DeliveryAreas {
-					lines = append(lines, a.Area+" - "+money.GHS(a.Fee))
-				}
-				lines = append(lines, "Everywhere else pays the standard fee.")
-			}
-			if deliveryPaidToOf(merchant) == "merchant" {
-				lines = append(lines, "The delivery money comes to you, inside the total your buyers pay here.")
-			} else {
-				lines = append(lines, "The delivery money is not yours: your buyers pay whoever brings the item, when it arrives.")
-			}
-		} else {
-			lines = append(lines, "No delivery fee set yet. Say \"set delivery fee 25\" to give buyers one total to pay, \"set area fee Osu 30\" where a place costs different, or \"set delivery per order\" and I will ask you for the fee on each delivery.")
-		}
-		if merchant.SubaccountCode != "" {
-			lines = append(lines, "Your payment account is set up: link money settles to your MoMo in the name "+merchant.PayoutHolderName+".")
-		}
-				if len(merchant.Products) > 0 {
-			// The catalogue's goods sit in the code box
-			// every list wears; the heading and the notes
-			// under it stay ordinary text.
-			boxed := []string{lines[0], "```"}
-			boxed = append(boxed, lines[1:1+len(merchant.Products)]...)
-			boxed = append(boxed, "```")
-			boxed = append(boxed, lines[1+len(merchant.Products):]...)
-			lines = boxed
-		}
-		whatsapp.SendText(from, strings.Join(lines, "\n"))
+		serveMerchantCatalogue(from, merchant)
 		return true
 	}
 

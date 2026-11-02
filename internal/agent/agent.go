@@ -782,6 +782,16 @@ func answerMerchantDayQuestion(from, text, merchantID string) {
 		if reply != nil && voiceClean(*reply) && recapFiguresClean(*reply, moneyPool, countPool) {
 			whatsapp.SendText(from, *reply)
 			answered = true
+			// A day answer that ends by asking her
+			// something has put a question to her like
+			// any other drafted question: it registers,
+			// so her next message is read inside its
+			// frame and never cold (see
+			// pendingquestion.go). The plain fallback
+			// below asks nothing and arms nothing.
+			if s, hasSession := sessions.lookup(sessionKey(merchantID, from)); hasSession {
+				armDraftedQuestion(s, strings.TrimSpace(*reply))
+			}
 		}
 	}
 	if !answered {

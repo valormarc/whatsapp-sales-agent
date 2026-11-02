@@ -34,6 +34,18 @@ package agent
 // against it before any walk step may consume them), and
 // only when that reading declines does the message fall
 // through to the ordinary dispatch, the question spent.
+// The reading is GIVEN the question (see
+// understandMerchantMessage): a reading that meets her
+// answer cold has nothing to bind it to, and the live
+// failure that taught this was a "yes" owed to a catalogue
+// question landing on the allowance clarifier, because the
+// unset allowance was the loudest fact in a reading that
+// never saw the question. A choice she picks inside the
+// frame is driven to the same action the platform performs
+// when she names that choice outright — her catalogue for
+// a "show it" choice, the add path for an "add" choice —
+// so the frame settles the matter, not merely discusses
+// it.
 
 import (
 	"regexp"
@@ -75,7 +87,19 @@ func noteMerchantActQuestion(s *Session, u *understood) {
 	if u.Intent != intentAsk && u.Intent != intentUnclear {
 		return
 	}
-	body := strings.TrimSpace(u.Reply)
+	armDraftedQuestion(s, strings.TrimSpace(u.Reply))
+}
+
+// armDraftedQuestion registers a question the agent has
+// just sent the merchant as the pending drafted question,
+// when it is a question and none already stands: every
+// question the agent puts to her is registered, so her
+// next message is resolved inside its frame (see
+// servePendingMerchantQuestion) and never read cold.
+func armDraftedQuestion(s *Session, body string) {
+	if s == nil || s.PendingMerchantQ != nil {
+		return
+	}
 	if !strings.HasSuffix(body, "?") {
 		return
 	}
@@ -114,10 +138,41 @@ func servePendingMerchantQuestion(from string, s *Session, merchant *catalogue.M
 			s.PendingMerchantQ = nil
 			return false
 		}
-		if u := think(); u != nil && actOnMerchantUnderstanding(from, merchant, merchantID, text, u) {
-			s.PendingMerchantQ = nil
-			noteMerchantActQuestion(s, u)
-			return true
+		if u := think(); u != nil {
+			// A choice she picks inside the frame is
+			// driven to the action that choice names
+			// outright elsewhere in the platform: seeing
+			// her catalogue is the catalogue the "my
+			// catalogue" command serves, and choosing to
+			// add opens the add path — from the goods in
+			// her own message when it carries them, else
+			// at the walk's first question, the answer
+			// the taught "add a product" gets. Read
+			// without the question, these same words fell
+			// out of the frame entirely: a "new" owed to
+			// an add-or-update question was answered with
+			// a fresh greeting.
+			if u.Intent == intentShelf {
+				s.PendingMerchantQ = nil
+				serveMerchantCatalogue(from, merchant)
+				return true
+			}
+			if u.Intent == intentNewListing && s.Onboarding == nil {
+				s.PendingMerchantQ = nil
+				flow := &OnboardingFlow{Step: "name"}
+				s.Onboarding = flow
+				if openWalkFromAdvert(from, s, flow, text) {
+					return true
+				}
+				s.Onboarding = flow
+				whatsapp.SendText(from, "Let us add a new product. What is it called? You can say cancel at any point and nothing will be saved.")
+				return true
+			}
+			if actOnMerchantUnderstanding(from, merchant, merchantID, text, u) {
+				s.PendingMerchantQ = nil
+				noteMerchantActQuestion(s, u)
+				return true
+			}
 		}
 		// The frame's own reading declines: the question
 		// is spent and her words fall through to the
