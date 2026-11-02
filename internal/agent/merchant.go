@@ -401,6 +401,19 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 	}
 
 
+	// The photo edit offer owns a bare yes or no the way
+	// every armed question does; any other message spends
+	// the offer standing in front of her (see
+	// cutoutoffer.go): she has moved on, and the photo it
+	// concerned keeps its original. The lapse runs
+	// before every other reading of her words, so an
+	// unrelated answer can never be mistaken for the
+	// offer's yes in some later turn.
+	if s.YesNoQ != nil && s.YesNoQ.Kind == cutoutKind && !isClearYes(lower) && !isClearNo(lower) {
+		lapseCutoutOffer(s)
+		sessions.put(key, s)
+	}
+
 	// Question ownership: a question already awaiting her
 	// answer owns this turn before any flow below may read
 	// it (see pendingquestion.go). The armed button
@@ -440,6 +453,9 @@ func handleMerchantMessageCtx(from, text, merchantID, contextID string) {
 			s.YesNoQ = nil
 			sessions.put(key, s)
 			serveDispatchAllAnswer(from, merchant, isClearYes(lower))
+			return
+		case cutoutKind:
+			serveCutoutAnswer(from, s, merchant, s.YesNoQ.Ref, isClearYes(lower))
 			return
 		}
 		// A remove question whose handler declined is
@@ -1196,6 +1212,10 @@ func advanceOnboarding(from string, s *Session, text, lower string) {
 			// a Status caption and a forwardable broadcast,
 			// ready the moment the listing is live.
 			announceListing(from, s.MerchantID, product)
+			// The listing's photos stand as she sent them;
+			// the cutout edit is offered, never assumed
+			// (see cutoutoffer.go).
+			offerCutoutsAfterSave(from, s, s.MerchantID, []catalogue.Product{product})
 		case isClearNo(lower) && s.yesNoFor("listing"):
 			s.Onboarding = nil
 			s.clearYesNo("listing")
@@ -2098,4 +2118,8 @@ func savePhotoCompactListing(from string, flow *OnboardingFlow) {
 	whatsapp.SendText(from, "Saved ✅ "+product.Name+" - "+money.GHS(product.ListPrice)+", last price "+money.GHS(product.FloorPrice)+", unit "+unit)
 	alertWaitingBuyers(s.MerchantID, product)
 	announceListing(from, s.MerchantID, product)
+	// The listing's photos stand as she sent them; the
+	// cutout edit is offered, never assumed (see
+	// cutoutoffer.go).
+	offerCutoutsAfterSave(from, s, s.MerchantID, []catalogue.Product{product})
 }

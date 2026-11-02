@@ -315,7 +315,12 @@ func presentBurstIfReady(from string, s *Session) {
 	}
 	if len(s.BurstHeld) > 0 {
 		openHeldBurstItem(from, s)
+		return
 	}
+	// Nothing else is being listed and no question of any
+	// flow's stands: a photo edit offer still waiting from
+	// a save is the turn's last word (see cutoutoffer.go).
+	armNextCutoutOffer(from, s)
 }
 
 // presentBurstBatch shows the kept items in one message and
@@ -688,10 +693,20 @@ func handleBurstAnswer(from string, s *Session, text, lower string) bool {
 		alertWaitingBuyers(s.MerchantID, product)
 		announceListing(from, s.MerchantID, product)
 	}
+	// The saved items' photos stand as she sent them; the
+	// cutout edit is offered for each, never assumed (see
+	// cutoutoffer.go).
+	offerCutoutsAfterSave(from, s, s.MerchantID, saved)
 	// The batch is finished; any held items open next, in
 	// their own gated listings.
 	if len(s.BurstBatch) == 0 && len(s.BurstHeld) > 0 {
 		openHeldBurstItem(from, s)
+	}
+	// With nothing else standing — no batch question, no
+	// held listing opened — the first waiting edit offer
+	// is the turn's last word.
+	if len(s.BurstBatch) == 0 && len(s.BurstHeld) == 0 && s.Onboarding == nil {
+		armNextCutoutOffer(from, s)
 	}
 	return true
 }

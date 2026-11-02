@@ -85,6 +85,7 @@ const (
 	intentDelivery       = "delivery"        // a buyer asks how delivery works at this shop: its cost, its reach, its note
 	intentChangePrice    = "change_price"    // the owner asks, in her own words, for a product's price to change
 	intentChangeLast     = "change_last_price" // the owner asks, in her own words, for a product's last price to change
+	intentCutout         = "cutout"          // the owner tells the agent to cut a listed product's photo out onto a clean white background
 )
 
 // modelFigure is a figure in a model's JSON reading. The
@@ -847,8 +848,8 @@ func understandMerchantMessage(from string, merchant *catalogue.Merchant, shopID
 			b.WriteString("She is in the middle of listing " + what + " for her shop; it is not saved yet, and the listing is waiting on this question: \"" + q + "\" A message of hers that answers that question belongs to the listing and the flow will take it after you. A question ABOUT that step is an \"ask\": explain the step plainly in \"reply\" — her list price is the price customers see first, and her last price is the lowest she will accept when a customer bargains, which customers never see. Anything else she raises — an order she has sent, a question about her day, what needs her attention — is its own act, served with the listing kept open behind it.\n")
 		}
 	}
-	b.WriteString("Things she can ask the agent to do: show her catalogue, change a price or a last price, set her daily giveaway allowance, remove a product, add a product by describing it or sending a photo, tell her how today is going, report on the payment of an order, ask a buyer a question on her behalf, and tell her what needs her attention.\n")
-	b.WriteString("Use \"order_payment\" when she is asking about the payment on an order, \"ask_buyer\" when she is telling the agent to ask her buyer something, and \"attention\" when she is asking what needs her or what is outstanding. Use \"change_price\" when she asks for a product's price to change, in any words of her own, and \"change_last_price\" for its last price, naming the product in \"item\" and the new figure in \"figure\". Use \"ask\" for any other question her shelf, her day, her allowance or those abilities can answer, drafting the reply from the facts only.\n")
+	b.WriteString("Things she can ask the agent to do: show her catalogue, change a price or a last price, set her daily giveaway allowance, remove a product, add a product by describing it or sending a photo, cut the goods in a listed product's photo out onto a clean white background, tell her how today is going, report on the payment of an order, ask a buyer a question on her behalf, and tell her what needs her attention.\n")
+	b.WriteString("Use \"order_payment\" when she is asking about the payment on an order, \"ask_buyer\" when she is telling the agent to ask her buyer something, and \"attention\" when she is asking what needs her or what is outstanding. Use \"change_price\" when she asks for a product's price to change, in any words of her own, and \"change_last_price\" for its last price, naming the product in \"item\" and the new figure in \"figure\". Use \"cutout\" when she tells the agent to cut out, clean up, or set on a white background the photo of a product already on her shelf, naming the product in \"item\". Use \"ask\" for any other question her shelf, her day, her allowance or those abilities can answer, drafting the reply from the facts only.\n")
 	b.WriteString("\nThe owner's message: " + msg)
 	sys := thinkSystem
 	out := model.Chat([]model.Message{{Role: "user", Content: b.String()}}, model.Options{System: &sys, Turn: turnTokenFor(from)})
@@ -894,7 +895,7 @@ func parseUnderstood(out *string) *understood {
 	}
 	switch u.Intent {
 	case intentPaymentBlocked, intentPaymentExpired, intentPaymentLater, intentPaymentWant, intentPaymentClaim,
-		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentRecommend, intentTooExpensive, intentOrderPayment, intentAskBuyer, intentAttention, intentClearWork, intentNewListing, intentShelf, intentBasketView, intentBasketClear, intentCourtesy, intentAsk, intentOffTopic, intentUnclear, intentDelivery, intentChangePrice, intentChangeLast:
+		intentItem, intentPicture, intentOrderStatus, intentOrderSent, intentOrderReceived, intentOrderMissing, intentOrderDispute, intentReorder, intentRecommend, intentTooExpensive, intentOrderPayment, intentAskBuyer, intentAttention, intentClearWork, intentNewListing, intentShelf, intentBasketView, intentBasketClear, intentCourtesy, intentAsk, intentOffTopic, intentUnclear, intentDelivery, intentChangePrice, intentChangeLast, intentCutout:
 		return &u
 	}
 	return nil
@@ -1336,6 +1337,14 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 		// standing it declines, so her words fall through
 		// to the ordinary readings.
 		return openClearWorkConfirmation(from, sessions.get(sessionKey(shopID, from)))
+	case intentCutout:
+		// Her own instruction to edit a listed product's
+		// photo: the one road besides her yes to the offer
+		// on which a cutout may run at all (see
+		// cutoutoffer.go). The reading named the product;
+		// the act settles it against her shelf before any
+		// edit is made.
+		return serveCutoutInstruction(from, merchant, shopID, u)
 	case intentAsk, intentUnclear:
 		if strings.TrimSpace(u.Reply) == "" {
 			return false
@@ -1377,7 +1386,7 @@ func actOnMerchantUnderstanding(from string, merchant *catalogue.Merchant, shopI
 // merchantHelpText is the last resort for a merchant message
 // nothing understood: plain, honest, and it names what she can
 // ask for, in her own chat.
-const merchantHelpText = "I did not catch that one. I can show your catalogue, add a product when you describe it or send its photo, change a price or a last price, set your daily allowance, set or change your payout details, tell you how today is going, and tell you what needs your attention. Say \"my catalogue\", \"payout details\", or ask me what needs your attention."
+const merchantHelpText = "I did not catch that one. I can show your catalogue, add a product when you describe it or send its photo, change a price or a last price, cut the goods in a product's photo out onto a clean white background when you tell me to, set your daily allowance, set or change your payout details, tell you how today is going, and tell you what needs your attention. Say \"my catalogue\", \"payout details\", or ask me what needs your attention."
 
 // courtesyRe reads a closing pleasantry in the no-model net:
 // thanks and goodbyes are part of the shop's conversation and

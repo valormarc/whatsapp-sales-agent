@@ -10,20 +10,18 @@ import (
 	"image/jpeg"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
 )
 
-// The cutout road: when the service is configured, a
-// listing's photo is replaced by the service's cutout of
-// the product, the original is kept untouched beside it,
-// and every failure along the road leaves the listing
-// exactly as it was.
+// The cutout road's contract: the photo and the product's
+// own name go to the configured service, and the cutout
+// it answers with comes back. The behaviour around the
+// road — that it runs only on her instruction, and what
+// her yes, her no and her silence each settle — is proven
+// in cutout_offer_test.go.
 
 // makeCutoutJPEG builds a real, decodable JPEG comfortably
 // past the plausibility floor, to stand in for a service
@@ -93,138 +91,6 @@ func listedSlides(t *testing.T) *catalogue.Product {
 	}
 	t.Fatal("the slides were never listed")
 	return nil
-}
-
-func TestCutoutTakesTheListingsPhotoPlace(t *testing.T) {
-	t.Setenv("SAM_SEGMENT_URL", "http://segment.invalid/cut")
-	cut := makeCutoutJPEG(t)
-	var gotPrompt, gotFormat string
-	var gotPhoto []byte
-	stubSegment(t, func(ctx context.Context, photo []byte, prompt, format string) ([]byte, bool) {
-		gotPhoto, gotPrompt, gotFormat = photo, prompt, format
-		return cut, true
-	})
-	owner := "233550003101"
-	dir := saveSlidesListing(t, owner)
-
-	slides := listedSlides(t)
-	if len(slides.Photos) != 1 {
-		t.Fatalf("the listing should keep its one photo, got %v", slides.Photos)
-	}
-	rel := slides.Photos[0]
-	stored, err := os.ReadFile(filepath.Join(dir, "data", rel))
-	if err != nil {
-		t.Fatalf("read the stored photo: %v", err)
-	}
-	if !bytes.Equal(stored, cut) {
-		t.Fatal("the stored photo is not the cutout the service returned")
-	}
-	orig, err := os.ReadFile(filepath.Join(dir, "data", originalPhotoRel(rel)))
-	if err != nil {
-		t.Fatalf("the original was not retained beside the cutout: %v", err)
-	}
-	if string(orig) != "fake-jpeg-bytes-slides-a" {
-		t.Fatalf("the retained original is not the seller's photo: %q", orig)
-	}
-	if string(gotPhoto) != "fake-jpeg-bytes-slides-a" {
-		t.Fatalf("the service was not sent the seller's photo: %q", gotPhoto)
-	}
-	if gotPrompt != slides.Name {
-		t.Fatalf("the prompt should be the listing's own name %q, got %q", slides.Name, gotPrompt)
-	}
-	if gotFormat != "jpeg" {
-		t.Fatalf("the format should ride along as jpeg, got %q", gotFormat)
-	}
-}
-
-func TestCutoutOffWithoutAnEndpoint(t *testing.T) {
-	os.Unsetenv("SAM_SEGMENT_URL")
-	called := false
-	stubSegment(t, func(ctx context.Context, photo []byte, prompt, format string) ([]byte, bool) {
-		called = true
-		return makeCutoutJPEG(t), true
-	})
-	owner := "233550003102"
-	dir := saveSlidesListing(t, owner)
-
-	slides := listedSlides(t)
-	rel := slides.Photos[0]
-	stored, err := os.ReadFile(filepath.Join(dir, "data", rel))
-	if err != nil {
-		t.Fatalf("read the stored photo: %v", err)
-	}
-	if string(stored) != "fake-jpeg-bytes-slides-a" {
-		t.Fatalf("with no endpoint the photo should stay as taken, got %d bytes", len(stored))
-	}
-	if called {
-		t.Fatal("the service was called with no endpoint configured")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "data", originalPhotoRel(rel))); !os.IsNotExist(err) {
-		t.Fatal("no original sibling should exist when no cutout was made")
-	}
-}
-
-func TestCutoutFailureKeepsTheOriginal(t *testing.T) {
-	t.Setenv("SAM_SEGMENT_URL", "http://segment.invalid/cut")
-	stubSegment(t, func(ctx context.Context, photo []byte, prompt, format string) ([]byte, bool) {
-		return nil, false
-	})
-	owner := "233550003103"
-	dir := saveSlidesListing(t, owner)
-
-	slides := listedSlides(t)
-	rel := slides.Photos[0]
-	stored, err := os.ReadFile(filepath.Join(dir, "data", rel))
-	if err != nil {
-		t.Fatalf("read the stored photo: %v", err)
-	}
-	if string(stored) != "fake-jpeg-bytes-slides-a" {
-		t.Fatal("a failed cutout must leave the seller's photo exactly as taken")
-	}
-	if _, err := os.Stat(filepath.Join(dir, "data", originalPhotoRel(rel))); !os.IsNotExist(err) {
-		t.Fatal("no original sibling should exist when the cutout failed")
-	}
-}
-
-func TestCutoutLandsInTheBackgroundAfterTheGrace(t *testing.T) {
-	t.Setenv("SAM_SEGMENT_URL", "http://segment.invalid/cut")
-	oldGrace := cutoutGrace
-	cutoutGrace = 50 * time.Millisecond
-	t.Cleanup(func() { cutoutGrace = oldGrace })
-	cut := makeCutoutJPEG(t)
-	release := make(chan struct{})
-	stubSegment(t, func(ctx context.Context, photo []byte, prompt, format string) ([]byte, bool) {
-		<-release
-		return cut, true
-	})
-	owner := "233550003104"
-	dir := saveSlidesListing(t, owner)
-
-	slides := listedSlides(t)
-	rel := slides.Photos[0]
-	stored, err := os.ReadFile(filepath.Join(dir, "data", rel))
-	if err != nil {
-		t.Fatalf("read the stored photo: %v", err)
-	}
-	if string(stored) != "fake-jpeg-bytes-slides-a" {
-		t.Fatal("the save should have carried on with the original once the grace ran out")
-	}
-	close(release)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		stored, err = os.ReadFile(filepath.Join(dir, "data", rel))
-		if err == nil && bytes.Equal(stored, cut) {
-			break
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	if !bytes.Equal(stored, cut) {
-		t.Fatal("the cutout never swapped in in the background")
-	}
-	orig, err := os.ReadFile(filepath.Join(dir, "data", originalPhotoRel(rel)))
-	if err != nil || string(orig) != "fake-jpeg-bytes-slides-a" {
-		t.Fatalf("the background swap must retain the original too: %v", err)
-	}
 }
 
 func TestSegmentRequestContract(t *testing.T) {

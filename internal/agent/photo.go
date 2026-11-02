@@ -466,6 +466,14 @@ func startPhotoOnboarding(from string, shop *catalogue.Merchant, imageID, captio
 		s = &Session{Stage: "merchant", MerchantID: shop.ID}
 		sessions.put(key, s)
 	}
+	// A photo is new business taken up instead of
+	// answering: a photo edit offer still standing from
+	// her last save lapses unanswered, and the photo it
+	// concerned keeps its original (see cutoutoffer.go).
+	if s.YesNoQ != nil && s.YesNoQ.Kind == cutoutKind {
+		lapseCutoutOffer(s)
+		sessions.put(key, s)
+	}
 	flow := s.Onboarding
 	if flow == nil {
 		flow = &OnboardingFlow{PhotoOpened: true}

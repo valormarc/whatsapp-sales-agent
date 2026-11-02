@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/valormarc/hackathon-agent/internal/catalogue"
@@ -21,13 +22,22 @@ import (
 
 // Listing cutouts: a seller's photo is taken where her
 // goods are — a crowded table, a busy stall, other stock
-// behind them. When a photo is accepted into a listing,
-// the segmentation service is asked for the product
-// itself, cut out along its outline and set on a clean
-// background, and that cutout becomes the picture buyers
-// and sellers are shown for the product. The ask is made
-// with the product's own name, the one the walk's reading
-// settled on, so what gets cut is the thing she listed.
+// behind them. The segmentation service can cut the
+// product itself out along its outline and set it on a
+// clean background, and that cutout can take the photo's
+// place so buyers and sellers see the goods clean. The
+// ask is made with the product's own name, the one the
+// walk's reading settled on, so what gets cut is the
+// thing she listed.
+//
+// The edit is hers to instruct, never the platform's to
+// assume (her ruling, 2 November): not everything in a
+// photo is background — the bowls were photographed with
+// their box as part of the goods, and a dress on the
+// woman wearing it sells as it is worn — so a photo is
+// stored and shown exactly as she sent it until she says
+// yes to the edit Stall offers, or asks for it in her own
+// words (see cutoutoffer.go). No instruction, no cutout.
 //
 // The seller's original photo is always retained: before
 // a cutout takes a photo's place, the untouched bytes are
@@ -36,13 +46,12 @@ import (
 // so every existing reader shows the cutout without
 // knowing anything changed.
 //
-// The whole path is best effort by design. With no
+// The road itself is best effort by design. With no
 // service configured, or on any failure along the way —
 // the service unreachable, a slow cold start, no outline
 // found, a reply that is not a picture — the listing
-// keeps the original photo and nothing about the save
-// changes. A listing never waits on, blocks on, or
-// breaks because of a cutout.
+// keeps the original photo, and she is told plainly the
+// edit could not be done.
 
 // segmentEndpoint is the segmentation service's address,
 // the single config value the feature hangs on. Empty
@@ -55,18 +64,9 @@ func segmentEndpoint() string {
 // one speaks HTTP to the configured service.
 var segmentCutoutFn = requestSegmentCutout
 
-// cutoutGrace is how long a save waits for cutouts to
-// land before it carries on: warm calls finish well
-// inside it, so the announce and the buyer alerts that
-// follow a save show the cutout, while a cold service
-// never holds the conversation up — its cutouts still
-// swap in whenever they arrive.
-var cutoutGrace = 12 * time.Second
-
-// cutoutCallTimeout bounds one segmentation call,
-// background ones included. A service that scales up
-// from cold takes its time; past this, the photo simply
-// keeps its original.
+// cutoutCallTimeout bounds one segmentation call. A
+// service that scales up from cold takes its time; past
+// this, the photo simply keeps its original.
 var cutoutCallTimeout = 3 * time.Minute
 
 // keptPhoto is one photo a save has just stored: where it
@@ -77,41 +77,55 @@ type keptPhoto struct {
 	format string
 }
 
-// applyCutouts asks the service for a cutout of each kept
-// photo and swaps each one in as it lands. It returns
-// once every cutout is in place or the grace has run
-// out, whichever comes first; calls still in flight
-// finish their swaps in the background.
-func applyCutouts(product catalogue.Product, saved []keptPhoto) {
-	if len(saved) == 0 || segmentEndpoint() == "" {
-		return
+// cutOutProductPhotos runs the instructed edit over
+// every photo a product holds: each stored photo goes to
+// the service under the product's own listed name, and
+// each cutout that comes back sound takes its photo's
+// place, the original kept beside it. It reports how
+// many photos were cut out of how many the product
+// holds. It is only ever called on her instruction —
+// her yes to the offer, or her own words (see
+// cutoutoffer.go) — never at acceptance.
+func cutOutProductPhotos(shopID string, p *catalogue.Product) (cut, total int) {
+	if p == nil || segmentEndpoint() == "" {
+		return 0, 0
 	}
-	prompt := strings.TrimSpace(product.Name)
+	prompt := strings.TrimSpace(p.Name)
 	if prompt == "" {
-		return
+		return 0, 0
 	}
-	done := make(chan struct{}, len(saved))
-	for _, kp := range saved {
-		go func(kp keptPhoto) {
-			defer func() { done <- struct{}{} }()
+	total = len(p.Photos)
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	for _, rel := range p.Photos {
+		data, ok := readStoredPhoto(shopID, p, rel)
+		if !ok {
+			continue
+		}
+		format := "jpeg"
+		switch {
+		case strings.HasSuffix(rel, ".png"):
+			format = "png"
+		case strings.HasSuffix(rel, ".webp"):
+			format = "webp"
+		}
+		wg.Add(1)
+		go func(rel string, data []byte, format string) {
+			defer wg.Done()
 			ctx, cancel := context.WithTimeout(context.Background(), cutoutCallTimeout)
 			defer cancel()
-			cut, ok := segmentCutoutFn(ctx, kp.data, prompt, kp.format)
-			if !ok || !plausibleCutout(cut, kp.format) {
+			cutBytes, ok := segmentCutoutFn(ctx, data, prompt, format)
+			if !ok || !plausibleCutout(cutBytes, format) {
 				return
 			}
-			swapInCutout(kp, cut)
-		}(kp)
+			swapInCutout(keptPhoto{rel: rel, data: data, format: format}, cutBytes)
+			mu.Lock()
+			cut++
+			mu.Unlock()
+		}(rel, data, format)
 	}
-	timer := time.NewTimer(cutoutGrace)
-	defer timer.Stop()
-	for i := 0; i < len(saved); i++ {
-		select {
-		case <-done:
-		case <-timer.C:
-			return
-		}
-	}
+	wg.Wait()
+	return cut, total
 }
 
 // swapInCutout puts a cutout in a kept photo's place. The

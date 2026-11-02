@@ -177,6 +177,15 @@ type Session struct {
 	// question it names (see askYesNo and routeYesNoTap).
 	YesNoQ *YesNoQuestion
 
+	// CutoutQueue holds the product ids whose photo edit
+	// offer is still to be made, in the order their
+	// listings saved (see cutoutoffer.go). The offer in
+	// front of her now is the armed YesNoQ of kind
+	// "cutout"; the queue is only what has not been put
+	// to her yet, each entry naming its own product when
+	// its turn comes.
+	CutoutQueue []string
+
 	// Basket holds the items already agreed in this same
 	// order while the buyer haggles over one more: each was
 	// settled on its own (its own haggle, its own draw on
@@ -665,6 +674,8 @@ func routeMerchantYesNoTap(from string, shop *catalogue.Merchant, buttonID strin
 		if q.Ref == shop.ID {
 			serveDispatchAllAnswer(from, merchant, yes)
 		}
+	case cutoutKind:
+		serveCutoutAnswer(from, s, merchant, q.Ref, yes)
 	case "listing":
 		if s.Onboarding != nil && s.Onboarding.Step == "confirm" && s.Onboarding.Name == q.Ref {
 			if serveSellerWalkTurn(from, s, merchant, word, word) {
