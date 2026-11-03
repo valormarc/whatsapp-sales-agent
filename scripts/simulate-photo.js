@@ -207,7 +207,7 @@ try {
   r = await photo(MERCHANT, 'merchant', '');
   check(
     'nothing is invented from a bare photo: the walk starts at the name',
-    last(r).includes('What is it called?') && !r.join('\n').includes('List price'),
+    last(r).includes('I cannot read this photo properly. What is the name of the product?') && !r.join('\n').includes('List price'),
     JSON.stringify(r),
   );
   r = await say(MERCHANT, 'merchant', 'cancel');
